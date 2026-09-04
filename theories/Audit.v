@@ -42,3 +42,5 @@ Print Assumptions contraction_fixed_point.
 Print Assumptions newton_fixed_is_zero.
 Print Assumptions kantorovich_is_gauge_fixed.
 Print Assumptions gauge_is_fixed_on_the_ball.
+Print Assumptions newton_contracts.
+Print Assumptions gauge_quotient_equilibrium.

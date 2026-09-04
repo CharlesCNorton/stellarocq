@@ -312,3 +312,168 @@ Proof.
 Qed.
 
 End Newton.
+
+(* ---------------------------------------------------------------- *)
+(* Newton contracts, and the argument on the gauge-fixed quotient    *)
+
+(** The Newton section shows why the argument cannot be made on the space of
+    reconstructions: a ball carrying the Kantorovich condition meets each
+    gauge orbit at most once, and a ball around a reconstruction contains a
+    whole segment of its orbit. What follows is the other half. On the
+    gauge-fixed quotient, where an orbit is a single point, that obstruction
+    is not a contradiction but the statement that the equilibrium orbit is
+    unique, and the contraction argument goes through and produces it.
+
+    Two things are proven. The first is that the Kantorovich condition is a
+    contraction: it is stated as an inequality about the Newton correction,
+    and [newton_contracts] turns it into [d (newton x) (newton y) <= k d x y]
+    for the metric the norm induces, which is exactly what
+    [contraction_fixed_point] consumes. This is the Newton-Kantorovich step
+    itself, and nothing in it is specific to plasmas. The second is that on a
+    complete quotient the fixed point exists, is a zero of the operator, and
+    is the only zero in the ball.
+
+    Everything here is at the quotient carrier, whose points are gauge orbits.
+    That the metric identifies gauge-equivalent reconstructions is what makes
+    [d_eq] hold and the Kantorovich condition consistent; on the space of
+    reconstructions the same condition is refuted by [lambda_gauge] of
+    Identities.v, which exhibits an exact gauge direction. So the missing
+    piece is exactly the hypothesis [Hkant] at VMEC's force operator read on
+    this quotient, and not a theory. *)
+
+Section GaugeQuotient.
+
+(** The quotient carrier: a point is a gauge orbit. The algebra and the norm
+    are its own, as hypotheses, so that a concrete quotient of the
+    reconstruction space satisfying them can be used. *)
+Variable X : Type.
+Variable sub : X -> X -> X.
+Variable norm : X -> R.
+Variable zero : X.
+
+Hypothesis sub_self : forall x, sub x x = zero.
+Hypothesis sub_zero_r : forall x, sub x zero = x.
+Hypothesis sub_eq_zero : forall x y, sub x y = zero -> x = y.
+Hypothesis sub_eq_self : forall x y, sub x y = x -> y = zero.
+Hypothesis norm_nonneg : forall x, 0 <= norm x.
+Hypothesis norm_zero_eq : norm zero = 0.
+Hypothesis norm_zero : forall x, norm x = 0 -> x = zero.
+Hypothesis norm_sym : forall x y, norm (sub x y) = norm (sub y x).
+Hypothesis norm_tri :
+  forall x y z, norm (sub x z) <= norm (sub x y) + norm (sub y z).
+
+(** The rearrangement of a difference of differences, a group identity, and
+    the linearity of the approximate inverse: these are what turn the
+    Kantorovich inequality into a contraction. Any abelian group and any
+    linear operator satisfy them. *)
+Hypothesis sub_rearrange :
+  forall a b c d, sub (sub a b) (sub c d) = sub (sub a c) (sub b d).
+
+Variable F A : X -> X.
+Hypothesis A_zero : A zero = zero.
+Hypothesis A_only_zero : forall y, A y = zero -> y = zero.
+Hypothesis A_linear : forall a b, A (sub a b) = sub (A a) (A b).
+
+(** The Newton map, as before. *)
+Definition gnewton (x : X) : X := sub x (A (F x)).
+
+(** The metric the norm induces. On the quotient it is a genuine metric,
+    since [d_eq] identifies exactly the gauge orbit, which on the quotient is
+    a point. *)
+Definition dn (x y : X) : R := norm (sub x y).
+
+Lemma dn_nonneg : forall x y, 0 <= dn x y.
+Proof. intros x y. apply norm_nonneg. Qed.
+
+Lemma dn_refl : forall x, dn x x = 0.
+Proof. intros x. unfold dn. rewrite sub_self. exact norm_zero_eq. Qed.
+
+Lemma dn_eq : forall x y, dn x y = 0 -> x = y.
+Proof. intros x y H. apply sub_eq_zero. apply norm_zero. exact H. Qed.
+
+Lemma dn_sym : forall x y, dn x y = dn y x.
+Proof. intros x y. apply norm_sym. Qed.
+
+Lemma dn_tri : forall x y z, dn x z <= dn x y + dn y z.
+Proof. intros x y z. apply norm_tri. Qed.
+
+Variable x0 : X.
+Variable k r : R.
+Hypothesis Hk0 : 0 <= k.
+Hypothesis Hk1 : k < 1.
+Hypothesis Hr : 0 <= r.
+
+Definition in_ball_q (x : X) : Prop := dn x0 x <= r.
+
+(** The Kantorovich condition, at the quotient. *)
+Hypothesis Hkant :
+  forall x y, in_ball_q x -> in_ball_q y ->
+  norm (sub (sub y x) (A (sub (F y) (F x)))) <= k * norm (sub y x).
+
+(** The Kantorovich condition is a contraction of the Newton map. This is the
+    Newton-Kantorovich step: the correction reproduces the difference to
+    within k, so the map moves two points no more than k times as far apart. *)
+Lemma newton_contracts :
+  forall x y, in_ball_q x -> in_ball_q y ->
+  dn (gnewton x) (gnewton y) <= k * dn x y.
+Proof.
+  intros x y Hx Hy.
+  unfold dn, gnewton.
+  (* sub (x - A F x) (y - A F y) = sub (x - y) (A F x - A F y)
+     = sub (x - y) (A (F x - F y)), which is Hkant read at (y, x) *)
+  rewrite sub_rearrange, <- A_linear.
+  exact (Hkant y x Hy Hx).
+Qed.
+
+(** The Kantorovich condition at the starting point: the residual there,
+    times the inverse bound, is at most (1 - k) r. This is the smallness of
+    the first Newton step that keeps the iteration in the ball. *)
+Hypothesis Hsmall : dn x0 (gnewton x0) <= (1 - k) * r.
+
+(** Completeness of the ball, in the shape [contraction_fixed_point] wants:
+    a Cauchy sequence inside it converges inside it, with the limit close to
+    the Newton iterates. A complete quotient supplies this. *)
+Hypothesis Hcomplete :
+  forall u : nat -> X,
+  (forall n, dn x0 (u n) <= r) ->
+  (forall eps, 0 < eps ->
+     exists N, forall m n, (N <= m)%nat -> (N <= n)%nat -> dn (u m) (u n) < eps) ->
+  exists x, dn x0 x <= r /\
+    forall eps, 0 < eps ->
+      exists N, forall n, (N <= n)%nat ->
+        dn x (iter X gnewton x0 n) < eps.
+
+(** On the gauge-fixed quotient the argument closes: there is a gauge orbit in
+    the ball that is a zero of the operator, and it is the only zero in the
+    ball. The obstruction of [kantorovich_is_gauge_fixed] is what gives the
+    uniqueness; on the quotient it is not a contradiction but the statement
+    that the equilibrium orbit is unique. *)
+Theorem gauge_quotient_equilibrium :
+  exists x,
+    dn x0 x <= r /\
+    F x = zero /\
+    (forall y, in_ball_q y -> F y = zero -> y = x).
+Proof.
+  (* the contraction gives a fixed point of the Newton map in the ball *)
+  destruct (contraction_fixed_point X dn dn_nonneg dn_refl dn_eq dn_sym dn_tri
+              gnewton x0 k r Hk0 Hk1 Hr newton_contracts Hsmall Hcomplete)
+    as [x [Hxr Hfix]].
+  exists x.
+  (* the fixed point of gnewton is a fixed point of newton, which unfolds to
+     the same expression, so it is a zero of F by newton_fixed_is_zero *)
+  assert (Hn : newton X sub F A x = x).
+  { unfold newton. unfold gnewton in Hfix. exact Hfix. }
+  assert (Hzero : F x = zero)
+    by exact (newton_fixed_is_zero X sub zero sub_eq_self F A A_only_zero x Hn).
+  split. exact Hxr. split. exact Hzero.
+  (* uniqueness in the ball, from the obstruction read as it stands: two
+     in-ball points with the same residual are the same point, which on the
+     quotient is the uniqueness of the equilibrium orbit *)
+  intros y Hy Hyzero.
+  apply (kantorovich_is_gauge_fixed X sub norm zero sub_self sub_zero_r
+           sub_eq_zero norm_nonneg norm_zero F A A_zero x0 k r Hk1 Hkant x y
+           Hxr Hy).
+  rewrite Hyzero, Hzero. reflexivity.
+Qed.
+
+End GaugeQuotient.

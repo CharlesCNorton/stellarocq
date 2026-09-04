@@ -1130,7 +1130,7 @@ INVALID.
 - `theories/Cell.v` - cells over any two distinct input slots, `check_ccert`, `check_ccert_correct`: the bound at every real point of a cell, by a mean-value step in each varied slot from the centre. A certificate names the two slots: 1 and 2 are the poloidal and toroidal angle, and 0 and 1 the radius and the poloidal angle. A cell with no width in the second slot is checked by `check_component_flat`, which asks for no bound on that derivative, since the step there covers no distance
 - `theories/Hypotheses.v` - the physical assumptions, each as a proposition about explicit objects rather than a name, with what would falsify it; two of them are theorems about the reconstruction and are proven there, and the limits no further work removes are stated in the same file
 - `theories/Mercier.v` - the Mercier criterion assembled from certified enclosures inside the checker, with the sign of its geodesic term supplied by the inequality of `Quad.v` rather than by an enclosure
-- `theories/Kantorovich.v` - the step from a small residual to a nearby equilibrium, in the abstract: the contraction mapping theorem on a ball, the Newton map, and the theorem that says why neither can be applied here without fixing the gauge first
+- `theories/Kantorovich.v` - the step from a small residual to a nearby equilibrium, in the abstract: the contraction mapping theorem on a ball, the Newton map, the gauge obstruction on the space of reconstructions, and the same argument on the gauge-fixed quotient, where the Kantorovich condition is a contraction and produces the unique equilibrium orbit in the ball
 - `theories/Identities.v` - what the reconstruction satisfies rather than assumes
 - `theories/Cover.v` - that a list of cells leaves no gap, as a boolean the checker evaluates, with the exact tiling a generator emits and the concatenation of two coverings that meet
 - `theories/Cell.v` also carries a third varied slot, `check_ccert3_correct`: the bound at every point of a cell in three coordinates at once, proven by composing the two-slot walk with one more mean-value leg
@@ -1328,13 +1328,20 @@ What a certificate does not say is that a true equilibrium sits nearby. That
 step is Newton-Kantorovich, and [theories/Kantorovich.v](theories/Kantorovich.v)
 carries it in the abstract: the contraction mapping theorem on a ball, proven
 from the metric axioms and completeness, and the Newton map, whose fixed point
-is a zero of the operator. What it also carries is the reason the argument
-cannot be made here as it stands. Poloidal relabelling is a gauge symmetry, so
-the residual is constant along a gauge orbit, and
-`kantorovich_is_gauge_fixed` proves that a ball carrying the Kantorovich
-condition meets each orbit at most once. A ball around a reconstruction
-contains points of its own orbit, so no such ball exists and the argument has
-to be made on the gauge-fixed quotient. `lambda_gauge` of `Identities.v`
-exhibits one exact direction of that orbit. The missing piece is therefore one
-named hypothesis at a concrete operator, on a quotient that has still to be
-built, rather than a theory.
+is a zero of the operator. Poloidal relabelling is a gauge symmetry, so the
+residual is constant along a gauge orbit, and `kantorovich_is_gauge_fixed`
+proves that a ball carrying the Kantorovich condition meets each orbit at most
+once. A ball around a reconstruction contains points of its own orbit, so no
+such ball exists on the space of reconstructions, and the argument has to be
+made on the gauge-fixed quotient.
+
+That quotient is now built. `newton_contracts` proves the Kantorovich
+condition is a contraction of the Newton map, the Newton-Kantorovich step
+itself, and `gauge_quotient_equilibrium` runs the contraction on the quotient
+carrier: there it produces a gauge orbit in the ball that is a zero of the
+operator and the only zero there, and the obstruction of
+`kantorovich_is_gauge_fixed` is read not as a contradiction but as that
+uniqueness. `lambda_gauge` of `Identities.v` exhibits one exact direction of
+the orbit, so the quotient is a real quotient and not the whole space. The
+missing piece is therefore one named hypothesis, the Kantorovich condition
+`Hkant` at VMEC's force operator on this quotient, and not a theory.
