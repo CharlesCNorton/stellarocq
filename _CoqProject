@@ -1,0 +1,13 @@
+-R theories Stellarocq
+-arg -w -arg -deprecated-from-Coq,-deprecated-since-9.0
+theories/Expr.v
+theories/Physics.v
+theories/Checker.v
+theories/Deriv.v
+theories/Cover.v
+theories/Cell.v
+theories/Hypotheses.v
+theories/Identities.v
+theories/Quad.v
+theories/Mercier.v
+theories/Kantorovich.v

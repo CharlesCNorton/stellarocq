@@ -1,0 +1,12 @@
+_build/
+extract/
+*.vo
+*.vos
+*.vok
+*.glob
+*.aux
+Makefile.coq*
+/cert_*.txt
+/data_cert_*
+.lia.cache
+__pycache__/
