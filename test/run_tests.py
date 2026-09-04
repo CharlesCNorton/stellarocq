@@ -260,12 +260,17 @@ CANCEL = [
     ("cancel/up_down_asym", "wout_up_down_asym.nc", "--nodes 5 --nu 128",
      (0.4, 6.0)),
     ("cancel/li383", "wout_li383_low_res.nc", "--nodes 5 --nu 128", (0.4, 3.0)),
-    # the same two equilibria at their largest mode sets, where the
-    # cancellation the coarse spectra never showed has appeared
-    ("cancel/li383_98", "wout_li383_m8n6.nc", "--nodes 4 --nu 128",
-     (0.5, 30.0)),
-    ("cancel/cth_9x8", "wout_cthS_ns51_m9n8.nc", "--nodes 4 --nu 128",
-     (1.0, 40.0)),
+]
+
+
+# The claim itself, that enlarging the mode set raises the cancellation: the
+# largest ratio over the profile at the largest mode set has to exceed the one
+# at the smallest by the recorded factor.
+MODESETS = [
+    ("modes/cth_like_rises", "wout_cthS_ns51_m5n4.nc", "wout_cthS_ns51_m9n8.nc",
+     "--nodes 4 --nu 128", 2.0),
+    ("modes/li383_rises", "wout_li383_m4n3.nc", "wout_li383_m8n6.nc",
+     "--nodes 4 --nu 128", 5.0),
 ]
 
 
@@ -342,6 +347,11 @@ CORRESPOND = [
     # term is on and truncates to its polynomial when the width switches it off
     ("correspond/pedestal", "wout_solovev_pedestal.nc",
      "wout_solovev_pedestal.nc", "--node 22 --nu 8 --nv 4", True),
+    # a profile run with PRES_SCALE, which the wout does not carry: the
+    # certificate's amplitude differs from the file's am by that factor and
+    # the guard reads the pressure back against pres instead
+    ("correspond/pres_scale", "wout_cth_like_fixed_bdy.nc",
+     "wout_cth_like_fixed_bdy.nc", "--node 12 --nu 8 --nv 4", True),
 ]
 
 # The Mercier criterion, assembled inside the checker by theories/Mercier.v.
@@ -367,7 +377,17 @@ STANDALONE = [
     ("standalone/cells_taylor", "cert_solovev_cells.txt", ("--taylor",), "VALID"),
 ]
 
-ALL = POINT + CELLS + INTEGRALS + RADIAL
+# The Taylor bound carried in a certificate file, which another party
+# re-checks with check_ccert_t rather than trusting the run that wrote it, the
+# way a SLOT3 file is re-checked. The generator marks the file, --tighten
+# --taylor writes the ten-number bounds, and an ordinary run establishes them.
+TAYLORFILE = [
+    Case("taylor/solovev_file", "wout_solovev.nc",
+         "--cells --node 22 --nu 256 --taylor", tighten=True,
+         run_args=("--taylor",), worst=3.706373e-04),
+]
+
+ALL = POINT + CELLS + INTEGRALS + RADIAL + TAYLORFILE
 
 
 def run(cmd, cwd=None):
@@ -679,24 +699,26 @@ def check_halfgrid(name, wout, node, main, python, tmp):
                   f'--half-grid')
     if rc != 0:
         return "fail", "reference: " + out.strip().splitlines()[-1]
-    m = re.search(r"worst \|r\| over 8 angles: ([0-9.e+-]+)", out)
+    m = re.search(r"worst per component: ([0-9.e+-]+) ([0-9.e+-]+) "
+                  r"([0-9.e+-]+)", out)
     if not m:
         return "fail", "the reference printed no value"
-    want = float(m.group(1))
+    want = [float(m.group(i)) for i in (1, 2, 3)]
 
     src = tmp / (name.replace("/", "_") + ".txt")
     rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" --node {node} '
                   f'--nu 8 --nv 1 --slack 1.0001')
     if rc != 0:
         return "fail", "generator: " + out.strip().splitlines()[-1]
-    m = re.search(r"\|r\|max = ([0-9.e+-]+)", out)
+    m = re.search(r"\|r\|max = ([0-9.e+-]+) ([0-9.e+-]+) ([0-9.e+-]+)", out)
     if not m:
         return "fail", "the generator printed no maximum"
-    got = float(m.group(1))
+    got = [float(m.group(i)) for i in (1, 2, 3)]
     # the generator prints three decimals, which is what limits this
-    if abs(got - want) > 1e-3 * abs(want):
-        return "fail", (f"the generator says {got:.9e}, the reference "
-                        f"{want:.9e}")
+    for k, (g, w_) in enumerate(zip(got, want, strict=True)):
+        if abs(g - w_) > 1e-3 * abs(w_):
+            return "fail", (f"component {k}: the generator says {g:.9e}, the "
+                            f"reference {w_:.9e}")
     rc, out = run(f'"{main}" "{src}"')
     if "verdict: VALID" not in out:
         return "fail", "a bound a hair above the reference was rejected"
@@ -709,7 +731,7 @@ def check_halfgrid(name, wout, node, main, python, tmp):
     rc, out = run(f'"{main}" "{tight}"')
     if "verdict: INVALID" not in out:
         return "fail", "a bound below the reference was accepted"
-    return "ok", f"brackets the reference {want:.6e} from both sides"
+    return "ok", f"brackets the reference {want[0]:.6e} from both sides"
 
 
 def check_terms_reference(name, wout, node, nu, main, python):
@@ -747,13 +769,14 @@ def check_terms_reference(name, wout, node, nu, main, python):
     row = None
     for line in out.splitlines():
         f = line.split()
-        if len(f) == 7:
+        # s u t1 t2 t3 r_s ratio share
+        if len(f) == 8:
             try:
                 s = float(f[0])
             except ValueError:
                 continue
             if 0.0 <= s <= 1.0:
-                row = [float(x) for x in f[1:4]]
+                row = [float(x) for x in f[2:5]]
     if row is None:
         return "fail", "no terms row in the output"
     # each certified magnitude is an upper bound grown until the check passed,
@@ -769,31 +792,112 @@ def check_terms_reference(name, wout, node, nu, main, python):
                   "difference is its r_s")
 
 
-def check_cancellation(name, wout, args, band, main, python):
-    """The residual against the terms it is the difference of."""
-    if not wout.exists():
-        return "skip", f"{wout.name} absent"
+def cancellation_ratios(wout, args, main, python):
+    """The per-node cancellation factors gen/cancellation.py prints."""
     tool = ROOT / "gen" / "cancellation.py"
     rc, out = run(f'"{python}" "{tool}" "{wout}" {args} --main "{main}"')
     if rc != 0:
-        return "fail", "cancellation: " + out.strip().splitlines()[-1]
+        return None, "cancellation: " + out.strip().splitlines()[-1]
     got = []
     for line in out.splitlines():
         f = line.split()
-        if len(f) == 7:
+        # s u t1 t2 t3 r_s ratio share
+        if len(f) == 8:
             try:
-                s, ratio = float(f[0]), float(f[5])
+                s, ratio = float(f[0]), float(f[6])
             except ValueError:
                 continue
             if 0.0 <= s <= 1.0:
                 got.append(ratio)
     if not got:
-        return "fail", "no cancellation column in the output"
+        return None, "no cancellation column in the output"
+    return got, None
+
+
+def check_terms_reference_radial(name, wout, node, nu, nrad, main, python):
+    """The three certified terms of the free-radius residual against the float
+    reference at the same point.
+
+    A volume covering's worst cell sits at a radius between the half points and
+    an angle between the samples, so the reference is read at exactly that
+    point rather than on a grid of its own.
+    """
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "cancellation.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --radial --node {node} '
+                  f'--nu {nu} --nrad {nrad} --exact --main "{main}"')
+    if rc != 0:
+        return "fail", "cancellation: " + out.strip().splitlines()[-1]
+    rows = []
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        f = line.split()
+        if len(f) == 8:
+            try:
+                s = float(f[0])
+            except ValueError:
+                continue
+            if 0.0 <= s <= 1.0 and i + 1 < len(lines):
+                m = re.search(r"exact s=([0-9.e+-]+) u=([0-9.e+-]+)",
+                              lines[i + 1])
+                if m:
+                    rows.append((float(m.group(1)), float(m.group(2)),
+                                 [float(x) for x in f[2:5]]))
+    if not rows:
+        return "fail", "no worst cell with an exact position"
+    ref = ROOT / "proto" / "continuum_ref.py"
+    for s, u, got in rows:
+        rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --nu 1 '
+                      f'--at {s!r} --u {u!r}')
+        if rc != 0:
+            return "fail", "reference: " + out.strip().splitlines()[-1]
+        m = re.search(r"terms\s+([0-9.e+-]+)\s+([0-9.e+-]+)\s+([0-9.e+-]+)",
+                      out)
+        if not m:
+            return "fail", "the reference printed no terms"
+        want = [float(m.group(i)) for i in (1, 2, 3)]
+        for k, (g, w) in enumerate(zip(got, want, strict=True)):
+            if g < w * (1 - 1e-9):
+                return "fail", (f"term {k} certified {g:.9e} below the "
+                                f"reference {w:.9e} at s={s:.5f}")
+            if g > w * 1.001:
+                return "fail", (f"term {k} certified {g:.9e} far above the "
+                                f"reference {w:.9e} at s={s:.5f}")
+    return "ok", (f"{len(rows)} radial cells, the three terms bracket the "
+                  f"reference at each")
+
+
+def check_cancellation(name, wout, args, band, main, python):
+    """The residual against the terms it is the difference of."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    got, why = cancellation_ratios(wout, args, main, python)
+    if got is None:
+        return "fail", why
     lo, hi = band
     bad = [x for x in got if not (lo <= x <= hi)]
     if bad:
         return "fail", f"a factor of {bad[0]:.3g} outside [{lo:g}, {hi:g}]"
     return "ok", f"{min(got):.3g} to {max(got):.3g}"
+
+
+def check_modesets(name, coarse, fine, args, factor, main, python):
+    """Adding modes has to raise the cancellation by the recorded factor."""
+    for w in (coarse, fine):
+        if not w.exists():
+            return "skip", f"{w.name} absent"
+    lo, why = cancellation_ratios(coarse, args, main, python)
+    if lo is None:
+        return "fail", why
+    hi, why = cancellation_ratios(fine, args, main, python)
+    if hi is None:
+        return "fail", why
+    gain = max(hi) / max(lo)
+    if gain < factor:
+        return "fail", (f"the largest factor rose from {max(lo):.3g} to "
+                        f"{max(hi):.3g}, under the recorded {factor:g}")
+    return "ok", f"the largest factor rises from {max(lo):.3g} to {max(hi):.3g}"
 
 
 def swap_coefficients(lines):
@@ -823,6 +927,18 @@ def rescale_pressure_piece(lines):
     return lines, None
 
 
+def unscale_amplitude(lines):
+    """The profile's amplitude halved, which is a certificate about a
+    pressure the equilibrium does not balance, with every other coefficient
+    the file's own."""
+    idx = next((i for i, l in enumerate(lines) if l.startswith("AM ")), None)
+    if idx is None:
+        return None, "no AM block in the certificate"
+    f = lines[idx + 1].split()
+    lines[idx + 1] = f"{f[0]} {int(f[1]) - 1}"
+    return lines, None
+
+
 def relabel_output(lines):
     """A volume covering called a surface one. Every number stays where it is
     and the statement the file makes changes, which is the one error a verdict
@@ -848,6 +964,8 @@ MUTATE = [
     ("correspond/relabelled", "wout_solovev.nc",
      "--radial --node 22 --nu 32 --nrad 4", relabel_output,
      "evaluated radius"),
+    ("correspond/unscaled_pressure", "wout_cth_like_fixed_bdy.nc",
+     "--node 12 --nu 8 --nv 4", unscale_amplitude, "certificate's pressure"),
 ]
 
 
@@ -993,6 +1111,7 @@ def main():
                 + [len(r[0]) for r in REFUSALS]
                 + [len(r[0]) for r in FIELD]
                 + [len(r[0]) for r in CANCEL]
+                + [len(r[0]) for r in MODESETS]
                 + [len("reference/terms_node22"),
                    len("reference/halfgrid_node22"),
                    len("correspond/swapped_radial"),
@@ -1117,12 +1236,35 @@ def main():
         print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
               flush=True)
 
+    for name, wout, node, nu, nrad in [("reference/terms_radial",
+                                        "wout_solovev.nc", 22, 32, 4)]:
+        if a.only and a.only not in name:
+            continue
+        t = time.time()
+        status, detail = check_terms_reference_radial(
+            name, data / wout, node, nu, nrad, a.main, a.python)
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
+              flush=True)
+
     for name, wout, args, band in CANCEL:
         if a.only and a.only not in name:
             continue
         t = time.time()
         status, detail = check_cancellation(name, data / wout, args, band,
                                             a.main, a.python)
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
+              flush=True)
+
+    for name, coarse, fine, args, factor in MODESETS:
+        if a.only and a.only not in name:
+            continue
+        t = time.time()
+        status, detail = check_modesets(name, data / coarse, data / fine, args,
+                                        factor, a.main, a.python)
         counts[status] += 1
         mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
         print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
@@ -1150,8 +1292,13 @@ def main():
         print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
               flush=True)
 
-    for name, wout, node in [("reference/halfgrid_node22",
-                             "wout_solovev.nc", 22)]:
+    # every pressure parameterization, since the pressure gradient is the one
+    # term of the residual that differs between them and the one the wout
+    # constrains only through its stored pressure
+    for name, wout, node in (
+            [("reference/halfgrid_node22", "wout_solovev.nc", 22)]
+            + [(f"reference/halfgrid_{n}", w, 22) for n, w, _ in FAMILIES
+               if n != "power_series"]):
         if a.only and a.only not in name:
             continue
         t = time.time()

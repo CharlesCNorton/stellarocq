@@ -95,6 +95,66 @@ def certified_radii(cert):
     return radii
 
 
+def certified_angles(cert):
+    """The centre angles of the cells every node block shares, in radians,
+    in the order the cells are listed."""
+    lines = pathlib.Path(cert).read_text().splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith("NANGLES"))
+    n = int(lines[i].split()[1])
+    out = []
+    for l in lines[i + 1:i + 1 + n]:
+        f = l.split()
+        out.append((int(f[0]) * 2.0 ** int(f[1]), int(f[2]) * 2.0 ** int(f[3])))
+    return out
+
+
+def current_terms(a, base, tmp):
+    """The two terms of the surface current against their difference.
+
+    One covering carries all three, so the difference is read at the same
+    cell as the terms with nothing to pair up. The cell is the one where the
+    current is worst, which is the one the r_u and r_v bounds come from.
+    """
+    cells, src = covering(a.wout, base + " --current", "current", a.main,
+                          a.python, tmp)
+    radii = certified_radii(src)
+    angles = certified_angles(src)
+    kind = "free-radius" if a.radial else "half-grid"
+    print(f"{pathlib.Path(a.wout).name}: the {kind} surface current against "
+          f"the two terms it is the difference of,")
+    print(f"{a.nu} poloidal cells"
+          + (f" by {a.nv} toroidal" if a.nv else "")
+          + (f", {a.nrad} radial per node" if a.radial else ""))
+    print("Everything is read at the cell where the current is worst.")
+    print(f"\n{'s':>8} {'u':>7} {'d_u B_v':>15} {'d_v B_u':>15} "
+          f"{'mu0 sqrtg J^s':>15} {'cancels by':>11}")
+    ratios = []
+    for i in range(min(len(cells), len(radii))):
+        if not cells[i]:
+            continue
+        k = max(range(len(cells[i])), key=lambda j: cells[i][j][2])
+        t1, t2, js = cells[i][k]
+        ratio = max(t1, t2) / js if js > 0 else float("inf")
+        ratios.append(ratio)
+        u = angles[k][0] if k < len(angles) else float("nan")
+        print(f"{radii[i]:>8.4f} {u:>7.4f} {t1:>15.6e} {t2:>15.6e} "
+              f"{js:>15.6e} {ratio:>11.3g}")
+        if a.exact:
+            print(f"  exact s={radii[i]!r} u={u!r}")
+    if not ratios:
+        raise SystemExit("no node blocks were tightened")
+    srt = sorted(ratios)
+    mid = (srt[len(srt) // 2] if len(srt) % 2
+           else 0.5 * (srt[len(srt) // 2 - 1] + srt[len(srt) // 2]))
+    print(f"\ncancellation of the surface current over the covering: "
+          f"{srt[0]:.3g} to {srt[-1]:.3g}, median {mid:.3g}")
+    print("For an axisymmetric equilibrium d_v B_u is the zero expression and "
+          "the current is\nd_u B_v alone, so the ratio there is one by "
+          "construction and says nothing; it is\nthe three-dimensional cases "
+          "where the two have to cancel.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wout")
@@ -108,6 +168,20 @@ def main():
                     help="the free-radius residual over a volume covering, "
                     "instead of the half-grid one on a surface")
     ap.add_argument("--nrad", type=int, default=4)
+    ap.add_argument("--cells-of", type=int, default=None, metavar="I",
+                    help="print every cell of node block I rather than the "
+                    "worst cell of each block, so where on the surface the "
+                    "terms cancel is visible")
+    ap.add_argument("--exact", action="store_true",
+                    help="print the radius and angle of each worst cell to "
+                    "full precision, so a reference can be read at the same "
+                    "point")
+    ap.add_argument("--current", action="store_true",
+                    help="the surface current instead of the radial "
+                    "residual: d_u B_v and d_v B_u against their difference "
+                    "mu0 sqrt(g) J^s, which r_u and r_v are built from and "
+                    "which has to vanish for a Boozer stream function to "
+                    "exist")
     ap.add_argument(
         "--main",
         default=str(ROOT / "extract" / "_build" / "default" / "main.exe"))
@@ -122,10 +196,13 @@ def main():
         base = f"--cells {where} --nu {a.nu}{surf}"
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="cancel_"))
+    if a.current:
+        return current_terms(a, base, tmp)
     terms, src = covering(a.wout, base + " --terms", "terms", a.main,
                           a.python, tmp)
     resid, _ = covering(a.wout, base, "resid", a.main, a.python, tmp)
     radii = certified_radii(src)
+    angles = certified_angles(src)
 
     kind = "free-radius" if a.radial else "half-grid"
     print(f"{pathlib.Path(a.wout).name}: the {kind} residual against the three "
@@ -133,13 +210,31 @@ def main():
     print(f"{a.nu} poloidal cells"
           + (f" by {a.nv} toroidal" if a.nv else "")
           + (f", {a.nrad} radial per node" if a.radial else ""))
-    print("Everything is read at the cell where the residual is worst, which "
-          "is the cell\nthe covering has to certify.")
-    print(f"\n{'s':>8} {'(dvBs-dsBv)Bv':>15} {'(dsBu-duBs)Bu':>15} "
-          f"{'mu0 p':>12} {'r_s':>13} {'cancels by':>11} {'p share':>9}")
     n = min(len(terms), len(resid), len(radii))
     if n == 0:
         raise SystemExit("no node blocks were tightened")
+
+    if a.cells_of is not None:
+        # every cell of one node, against the poloidal angle
+        i = a.cells_of
+        if not 0 <= i < n:
+            raise SystemExit(f"--cells-of must be below {n}")
+        print(f"every cell of node block {i}, at s = {radii[i]:.4f}")
+        print(f"\n{'u':>8} {'v':>8} {'(dvBs-dsBv)Bv':>15} {'(dsBu-duBs)Bu':>15} "
+              f"{'mu0 p':>12} {'r_s':>13} {'cancels by':>11}")
+        for k in range(min(len(terms[i]), len(resid[i]))):
+            t1, t2, t3 = terms[i][k]
+            rs = resid[i][k][0]
+            ratio = max(t1, t2, t3) / rs if rs > 0 else float("inf")
+            u, vv = angles[k] if k < len(angles) else (float("nan"),) * 2
+            print(f"{u:>8.4f} {vv:>8.4f} {t1:>15.6e} {t2:>15.6e} {t3:>12.4e} "
+                  f"{rs:>13.6e} {ratio:>11.3g}")
+        return 0
+
+    print("Everything is read at the cell where the residual is worst, which "
+          "is the cell\nthe covering has to certify.")
+    print(f"\n{'s':>8} {'u':>7} {'(dvBs-dsBv)Bv':>15} {'(dsBu-duBs)Bu':>15} "
+          f"{'mu0 p':>12} {'r_s':>13} {'cancels by':>11} {'p share':>9}")
     ratios = []
     for i in range(n):
         cells = min(len(terms[i]), len(resid[i]))
@@ -154,8 +249,11 @@ def main():
         ratio = big / rs if rs > 0 else float("inf")
         share = t3 / rs if rs > 0 else float("inf")
         ratios.append(ratio)
-        print(f"{radii[i]:>8.4f} {t1:>15.6e} {t2:>15.6e} {t3:>12.4e} "
+        u = angles[k][0] if k < len(angles) else float("nan")
+        print(f"{radii[i]:>8.4f} {u:>7.4f} {t1:>15.6e} {t2:>15.6e} {t3:>12.4e} "
               f"{rs:>13.6e} {ratio:>11.3g} {share:>9.2e}")
+        if a.exact:
+            print(f"  exact s={radii[i]!r} u={u!r}")
 
     # One reading for the equilibrium. The median rather than the worst,
     # because the axis and the edge cancel least on every stellarator here and

@@ -398,10 +398,19 @@ Each refinement by four divides the bound by sixteen: the mean-value step contri
 varied slot differently, against the derivative at the centre, which is a thin
 evaluation with no box in it, with the box paying only for a second derivative
 against the square of the half-width. `main --taylor` recomputes the bounds
-that way and establishes them with the extracted check. It is worth less than
-the ratio of the two derivative enclosures suggests, because the
-second-derivative remainder is not small at the half-widths a covering uses.
-At node 22 of solovev over 256 poloidal cells:
+that way and establishes them with the extracted check; `main --tighten
+--taylor` writes them to a `TAYLOR`-marked file, which an ordinary run then
+re-checks with `check_ccert_t` the way a `SLOT3` file is re-checked, so the
+sharper bound is one another party can verify rather than a verdict of the
+tightening run.
+
+Whether it is worth it depends on where the covering sits. When the mean-value
+enclosure has already converged in the cells, its remainder is second order too
+and there is little to gain; when it has not, the Taylor form is the converged
+one. Over 256 poloidal cells at node 22 of solovev, refining radially, the two
+agree by 128 radial cells and differ by a sixth at eight, where the
+second-derivative remainder is what the ratio of the enclosures alone would
+have predicted a factor of five for:
 
 | radial cells | mean value | Taylor |
 |---|---|---|
@@ -410,19 +419,26 @@ At node 22 of solovev over 256 poloidal cells:
 | 128 | 4.557615e-04 | 4.527612e-04 |
 | 512 | 3.997311e-04 | 3.991530e-04 |
 
-Sixteen per cent at the coarse end, three and a half at 32, and nothing by 128,
-where the ratio of the enclosures alone would have predicted a factor of five.
-The remainder term is what eats it, and it is the reason to reach for more
-cells rather than for a better inequality.
+But a single surface at a fixed angular resolution is the case where the
+mean-value enclosure has not converged, and there the Taylor bound is far
+ahead: over 256 poloidal cells of that surface with one radial cell, the
+mean-value worst is `8.051807e-03` and the Taylor worst `3.706373e-04`, a factor
+of twenty-two, because the mean-value form is still paying the full first
+derivative over the box while the Taylor form is paying a second derivative
+against the square of a half-width that is already small.
 
 The other cost is building the environments, which is most of the work and
 grows with the number of modes. The bindings that read neither varied slot are
 the same for every cell of a node, so they are evaluated once and shared, which
 the driver decides with the extracted `var_free` rather than by trusting the
 order Physics.v allocates in: sharing a binding that did read a varied slot
-would be wrong, and the check is what rules it out. On a 41-mode radial
-covering of 8192 cells that is 124.0 s against 100.5 s, with the bounds
-byte-identical.
+would be wrong, and the check is what rules it out. For that sharing to reach
+most of the work the bindings that read no angle have to come first, so the
+half-point coefficients and the node-row geometry are allocated before the
+angular kernels; on a three-dimensional surface covering of `wout_cth_like`,
+10240 cells at 41 modes, that takes the tightening from 2 min 14 s to 1 min 3 s,
+a factor of 2.1, with the bounds byte-identical, and it is what makes a surface
+integrand affordable at the resolution the next section needs.
 
 What is left grows close to linearly in the mode count. Tightening the same
 2048 cells on twenty cores:
@@ -459,157 +475,50 @@ others is one no bound could register.
 `--terms` carries the three as the three components of a certificate, so the
 same machinery that bounds the residual bounds each of them, over the same
 cells at the same precision, and [gen/cancellation.py](gen/cancellation.py)
-reads them at the cell where the residual is worst, which is the cell the
-covering has to certify. Solovev, over 256 poloidal cells, with the half-grid
-residual a point certificate carries:
+reads them at the cell where the residual is worst. That is the ratio of the
+largest term to the residual, a scale-free measure of how nearly the two
+magnetic terms are the same number:
 
-| s | `(d_v B_s - d_s B_v) B^v` | `(d_s B_u - d_u B_s) B^u` | `mu0 p'` | `r_s` | cancels by | share of `p'` |
-|---|---|---|---|---|---|---|
-| 0.037 | 4.113684e-03 | 4.109447e-03 | 1.5712e-07 | 4.394405e-06 | 9.4e+02 | 3.6% |
-| 0.167 | 5.483887e-03 | 5.484483e-03 | 1.5712e-07 | 4.388571e-07 | 1.2e+04 | 36% |
-| 0.426 | 6.241478e-03 | 6.241920e-03 | 1.5712e-07 | 2.849802e-07 | 2.2e+04 | 55% |
-| 0.704 | 6.928330e-03 | 6.929406e-03 | 1.5712e-07 | 9.191160e-07 | 7.5e+03 | 17% |
-| 0.981 | 7.588650e-03 | 7.590921e-03 | 1.5712e-07 | 2.114136e-06 | 3.6e+03 | 7.4% |
-
-The two magnetic terms agree to four digits and the residual is what is left.
-At mid-radius the pressure gradient is more than half of it, so the certified
-residual there is of the same order as the pressure the equilibrium is
-balancing.
-
-The other four equilibria do not read that way at all. At the node whose
-residual is worst, solovev over the eight above and the others over five nodes
-at 128 poloidal cells:
-
-| | s | largest term | `r_s` | ratio |
-|---|---|---|---|---|
-| `wout_solovev` | 0.037 | 4.113684e-03 | 4.394405e-06 | 9.4e+02 |
-| `wout_cth_like_fixed_bdy` | 0.083 | 1.387026e-02 | 2.827408e-03 | 4.9 |
-| `wout_cma` | 0.740 | 6.538591e-03 | 6.411076e-03 | 1.02 |
-| `wout_up_down_asym` | 0.938 | 1.758375e-01 | 1.887487e-01 | 0.93 |
-| `wout_li383_low_res` | 0.733 | 1.570100e-01 | 2.206994e-01 | 0.71 |
-
-For the last four there is no cancellation to lose, and for two of them the
-three terms add rather than subtract: a ratio below one means the residual
-exceeds every term it is built from. `wout_cma` is the clearest of the four.
-Its second magnetic term runs 1.3e-04 to 2.3e-04 against a first of 4.3e-03 to
-6.5e-03, a factor of twenty-five to forty, and its pressure gradient is exactly
-zero, so the residual is the first term alone to within four per cent at every
-node. Nothing there is a difference of anything. `wout_li383_low_res` reads
-further still: at its worst cell the largest of the three terms is the pressure
-gradient, and the residual is forty per cent larger again, so that
-reconstruction, at twenty-five modes on sixteen surfaces, is out of balance by
-more than the pressure it is meant to be balancing. What restores it is under
-the mode sets below.
-
-That is what the convergence study met as a floor flat in the radial grid. A
-reconstruction whose terms are not close to each other is not near pointwise
-force balance, and no refinement of the covering reaches that. What a covering
-can still do there is bound it, which is the difference between suspecting the
-reconstruction and having a number for how far out it is.
-
-Adding modes does two different things to that, and the terms tell them apart.
-For `wout_cth_like_fixed_bdy` at ns = 51 with the radial grid held fixed, over
-three mode sets:
-
-| s | | 5 by 4 modes | 7 by 6 | 9 by 8 |
-|---|---|---|---|---|
-| 0.04 | larger term | 1.79e-02 | 1.77e-02 | 1.77e-02 |
-| | `r_s` | 2.678e-03 | 2.460e-03 | 2.316e-03 |
-| | cancels by | 6.7 | 7.2 | 7.6 |
-| 0.34 | larger term | 1.26e-02 | 1.82e-02 | 1.29e-02 |
-| | `r_s` | 1.146e-03 | 6.947e-04 | 4.647e-04 |
-| | cancels by | 11 | 26 | 28 |
-| 0.98 | larger term | 2.23e-03 | 3.65e-04 | 6.48e-04 |
-| | `r_s` | 1.879e-03 | 3.950e-04 | 3.620e-04 |
-| | cancels by | 1.2 | 0.9 | 1.8 |
-
-At the edge the terms themselves fall by a factor of three to six and the
-residual falls with them, and no cancellation ever appears. In the middle the
-terms stay the size they were and the cancellation sharpens from eleven to
-twenty-eight, which is where the residual's factor of two and a half comes
-from. Near the axis neither moves much. So the two halves of the mode scan below, a factor of ten
-at the edge and almost nothing near the axis, are not one effect at two
-strengths: at the edge the spectrum is resolving the boundary shaping and the
-terms come down, while in the middle it is sharpening a difference that was
-already being taken.
-
-For `wout_li383` at ns = 31 the same experiment says the imbalance is spectral
-outright:
-
-| s | | 25 modes | 50 | 98 |
-|---|---|---|---|---|
-| 0.37 | `r_s` | 1.929803e-01 | 2.826110e-02 | 4.765804e-03 |
-| | cancels by | 1.5 | 3.2 | 19 |
-| 0.67 | `r_s` | 2.398645e-01 | 4.410154e-02 | 9.133677e-03 |
-| | cancels by | 1.7 | 3.6 | 17 |
-
-At twenty-five modes nothing cancels anywhere and the residual is the size of
-the largest term it is built from; at ninety-eight the mid-radius cancellation
-is a factor of nearly twenty and the residual has fallen by twenty-six to
-forty. So the ratio is a resolution indicator in its own right, and a
-scale-free one: it says how nearly the two magnetic terms are the same number,
-where the residual alone says only how large their difference is. Solovev sits
-at 1e+03 to 1e+04, li383 at ninety-eight modes at seventeen to nineteen,
-li383 at twenty-five modes and `wout_cma` at one.
-
-What the solver reports about itself does not predict any of that. `fsqr` is
-VMEC's own force residual in its own discrete norm, the quantity the iteration
-drives down to `ftol` and stops:
-
-| | modes | `fsqr` | cancels by |
-|---|---|---|---|
-| `wout_solovev` | 6 | 9.4e-13 | 9.4e+02 to 2.2e+04 |
-| `wout_up_down_asym` | 5 | 9.5e-12 | 0.57 to 3.5 |
-| `wout_cth_like_fixed_bdy` | 41 | 9.3e-07 | 0.98 to 13 |
-| `wout_cma` | 59 | 9.9e-07 | 1.02 to 1.05 |
-| `wout_li383_low_res` | 25 | 8.8e-07 | 0.65 to 1.6 |
-
-`wout_up_down_asym` stopped six orders further down than the three below it and
-still has no cancellation; `wout_cth_like_fixed_bdy` and `wout_cma` stopped at
-the same place and differ by a factor of ten. The two numbers are measuring
-different things. `fsqr` says the iteration stopped moving in the discrete
-equations it was given; the cancellation says how nearly the field those
-equations produced satisfies the continuum equation they stand in for. A wout
-carries the first and not the second, and a covering supplies the second.
-
-`wout_cma` is worth one more line, since it is the flattest of them. It carries
-no pressure and no net toroidal current at all: its `presf` is identically zero
-and `max|buco|` is 1.1e-17, against a `bvco` of 0.48. So there is nothing in it
-for the two magnetic terms to be balanced against each other by, and the
-certified residual is the first of them alone.
-
-Read as one number per equilibrium, over four nodes each at 128 poloidal cells,
-the ranking is:
-
-| | median cancellation |
+| | worst-cell ratio |
 |---|---|
-| `wout_solovev` | 6.6e+03 |
-| `wout_li383` at 98 modes | 9.5 |
-| `wout_cth_like` at 9 by 8 modes | 4.7 |
-| `wout_cth_like_fixed_bdy` at 41 modes | 3.2 |
-| `wout_up_down_asym` | 1.4 |
-| `wout_li383_low_res` at 25 modes | 1.2 |
+| `wout_solovev` | 9.4e+02 to 2.2e+04 |
+| `wout_cth_like_fixed_bdy`, 41 modes | 4.9 |
+| `wout_up_down_asym` | 0.9 to 3.5 |
 | `wout_cma` | 1.0 |
+| `wout_li383_low_res`, 25 modes | 0.7 |
 
-The median rather than the worst, because the axis and the edge cancel least on
-every stellarator here and a minimum would report those and nothing else. That
-column is a certified statement about each reconstruction, in the same units
-for all of them, and it is the thing a wout does not carry.
+On solovev the two magnetic terms agree to four digits and the residual is the
+cancellation defect, so its bound falls as the cells narrow and a finer
+covering reaches it. On the stellarators there is no cancellation to lose, and
+where the ratio is below one the residual exceeds every term it is built from:
+the reconstruction is not near pointwise force balance, and no refinement of
+the arithmetic reaches that. That is what the convergence study met as a floor
+flat in the radial grid, and what a covering does there is put a number on how
+far out the field is rather than leave it suspected.
+
+Two things say the non-cancellation is the solver's output and not the
+reconstruction of it. Adding modes lifts the stellarator ratios, `wout_li383`
+from 1 at twenty-five modes to nearly twenty at ninety-eight and `wout_cth_like`
+from 11 to 28 at mid-radius, so where it is spectral the spectrum resolves it;
+but `wout_cma`, re-solved from its own boundary at up to 179 modes, stays at 1
+throughout, so its imbalance is the equilibrium and not a resolution. And the
+node residual assembled from VMEC's own covariant field arrays, with no
+reconstruction entering ([proto/wout_balance.py](proto/wout_balance.py)),
+reproduces the certified ratio surface by surface. The solver's own convergence
+flag `fsqr` does not distinguish these cases: `wout_up_down_asym` stopped six
+orders below the others and still has no cancellation, and `wout_cth_like` and
+`wout_cma` stopped together and differ by a factor of ten. `fsqr` measures
+whether the iteration stopped moving in the discrete equations; the ratio
+measures how nearly the field those equations produced satisfies the continuum
+equation they stand in for, which a wout does not carry and a covering
+supplies.
 
 Going off the grid moves the cancellation and not the terms. At node 22 of
-solovev, at the same angular resolution, over the eight radial cells of the
-free-radius reconstruction:
-
-| | the two terms | `r_s` | cancels by | share of `p'` |
-|---|---|---|---|---|
-| half grid, s = 0.4074 | 6.24e-03 | 2.85e-07 | 2.2e+04 | 55% |
-| free radius, s = 0.399 to 0.416 | 6.17e-03 to 6.25e-03 | 5.1e-06 to 3.4e-05 | 1.8e+02 to 1.2e+03 | 0.5% to 3% |
-
-The terms are the same size either way; what the Hermite costs is two orders of
-magnitude of cancellation, which is the two orders the residual gains. And
-because the residual grows while the pressure does not, a volume covering is
-nearly blind to the pressure: at these radii the pressure gradient is under
-three per cent of the bound.
+solovev the two terms are the same size on the half grid and at a free radius,
+near `6.2e-03`, but the residual is `2.9e-07` on the grid and `5e-06` to `3e-05`
+between the half points: what the Hermite costs is two orders of magnitude of
+cancellation, which is the two orders the free-radius residual gains over the
+half-grid one.
 
 `discretization_is_consistent` of
 [theories/Hypotheses.v](theories/Hypotheses.v) is the premise every statement
@@ -981,11 +890,22 @@ and two things have to hold before any of that means anything. The first is
 that w exists at all, which needs the covariant components to have no curl on
 the surface, `d_u B_v - d_v B_u = mu0 sqrt(g) J^s = 0`. That is the same
 quantity `r_u` and `r_v` already bound, so the precondition of the
-transformation is certified by the machinery that certifies force balance. The
-second is the coefficients themselves, which are angular integrals of the
-covariant components against a kernel. `--covariant m,n` carries `B_u`, `B_v`
-and the surface current against `cos(mu - nv)`, `--covariant-sin` against the
-sine, and [gen/boozer.py](gen/boozer.py) turns the enclosures into the flux
+transformation is certified by the machinery that certifies force balance.
+
+That current is itself a difference, `d_u B_v - d_v B_u`, and `--current` carries
+its two terms beside it the way `--terms` carries the residual's. For an
+axisymmetric equilibrium `d_v B_u` is the zero expression and there is nothing
+to cancel, but for a three-dimensional one the current is a small difference of
+two comparable numbers: at node 12 of `wout_cth_like_fixed_bdy`, over 256 by 64
+cells, `d_u B_v` and `d_v B_u` both sit near `5e-2` while their difference is
+`3e-3` to `7e-3`, a cancellation of 9 to 33, median 18. So the surface current a
+stream function needs to vanish is bounded a factor of twenty below the terms
+that make it, which is the precision a covering has to reach to see it at all.
+
+The second thing is the coefficients themselves, which are angular integrals of
+the covariant components against a kernel. `--covariant m,n` carries `B_u`,
+`B_v` and the surface current against `cos(mu - nv)`, `--covariant-sin` against
+the sine, and [gen/boozer.py](gen/boozer.py) turns the enclosures into the flux
 functions and w.
 
 At node 22 of solovev, over 512 poloidal cells:
@@ -1222,12 +1142,15 @@ INVALID.
 - `gen/boozer.py` - the Boozer stream function of a surface, from certified harmonics of the covariant components, with the defect of the relation between them
 - `gen/convergence.py` - the certified residual against the grid spacing and against the mode set, which is what turns `discretization_is_consistent` into a measurement
 - `gen/radial_scan.py` - the certified residual surface by surface, beside the transform and the nearest resonance, which is where a single number for an equilibrium comes from
-- `gen/cancellation.py` - the residual against the three terms it is the difference of, which says whether a bound is a cancellation defect a finer covering reaches or an imbalance it does not
+- `gen/cancellation.py` - the residual against the three terms it is the difference of, and with `--current` the surface current against its two, which says whether a bound is a cancellation defect a finer covering reaches or an imbalance it does not
+- `proto/wout_balance.py` - the node residual assembled from VMEC's own covariant field arrays, which says whether a non-cancellation is the solver's output or the reconstruction of it
+- `proto/pressure_ref.py` - every pressure parameterization written from its definition, with the scale recovered from the wout's own pressure, since PRES_SCALE is not stored
+- `proto/vacuum_jump.py` - the coil field at the certified boundary against the plasma side of the total-pressure jump, the size of the plasma-current contribution a wout omits
+- `gen/rerun.py` - one wout's equilibrium re-solved at another resolution from the wout alone, checked by reproducing the wout at its own
 - `gen/families.py` - runs VMEC++ over a family of resolutions, the only tool here that runs a solver
 - `gen/patch_extract.py` - post-extraction stubs
 - `driver/main.ml` - parse, expand, run in parallel, report; `--tighten` writes the bounds of a cell certificate and `--integrate` sums them
 - `proto/continuum_ref.py` - a float reference of the certified free-radius reconstruction, written from the rule rather than from the expression builders, so an encoding mistake shows up as a disagreement
-- `proto/residual_proto.py` - the early prototype, which interpolates differently and checks the reconstructed field against the wout's own `bsupumnc`, `bsupvmnc` and `gmnc`
 - `test/run_tests.py` - the regression suite: every verdict, every published number, the correspondence guards and the adversarial cases
 - `test/audit_summary.py` - what `make audit` printed, read rather than counted by hand
 
@@ -1363,19 +1286,30 @@ Radial derivatives of surface averages are certified. `diff_under_integral`
 makes an average a differentiable function of the radius whose derivative is
 the integral of the derivative, which gives `V''`, and with the four Mercier
 integrands and the flux functions beside them the whole criterion follows.
-What that leaves is not the well but the axis: nothing below `s = 1.5 h` is
-covered, because VMEC's parity rule divides odd-m coefficients by `sqrt(s)`
-and no half point sits below it.
+What that leaves is not the well but the axis: `--axis` reaches down to
+`s = 0.5 h` by the two-node rule, and below it the parity rule's `sqrt(s)` and
+the Jacobian's `1/(4 s^2)` have no enclosure, so the innermost 0.93 per cent of
+the flux of `wout_solovev` is uncovered.
 
 A free-boundary equilibrium needs the vacuum field and the total-pressure jump
 at the plasma-vacuum interface. `free_boundary_balanced` in
 [theories/Hypotheses.v](theories/Hypotheses.v) is that condition written as a
 proposition about the reconstruction and a vacuum field, and `--edge` now
 covers the boundary itself, so the plasma side of the jump is a quantity a
-covering reaches. What is missing is the other side: the wout of a
-free-boundary run carries no vacuum field, only the iteration history of the
-jump, so the field outside would have to come from the coils through the mgrid
-and a Biot-Savart evaluation that nothing here does.
+covering reaches. What is missing is one part of the other side. The vacuum
+field is the coil field the mgrid tabulates plus the field of the plasma's own
+surface current, and the wout stores neither, only the currents that scale the
+coil groups. [proto/vacuum_jump.py](proto/vacuum_jump.py) reads the coil half:
+it interpolates the mgrid at the certified boundary and reports the gap between
+the plasma side's `p + B^2/2` and the coil field's `B_vac^2/2`. On
+`wout_cth_like_free_bdy` against its own `mgrid_cth_like`, over 64 by 16 boundary
+points, the coil field is `B_coil^2 / (2 mu0 p + B^2)` of 0.93 to 1.02 of the
+total, mean 0.975, so the gap that does not close is a few per cent, and that
+few per cent is exactly the plasma current's own contribution, which VMEC's
+Nestor computes on the fly and the wout does not write down. Reading it needs
+a Biot-Savart evaluation of the surface current that nothing here does. So the
+size of what is missing is now a number rather than a description, and it is
+small.
 
 Quasi-symmetry needs the Boozer angles, and the transformation to them is in
 hand. The stream function's coefficients are certified from the covariant

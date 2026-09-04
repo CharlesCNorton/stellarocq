@@ -531,6 +531,60 @@ let tighten_cell_lower xu xv _node ctx (c : Cell.ccert) (cl : Cell.ccell)
                  n0 q0 ndu qdu ndv qdv nc qc, f nc qc) in
   [ line r3.Physics.r_s; line r3.Physics.r_u; line r3.Physics.r_v ]
 
+(* The three ten-number bound lines of one cell, charged the Taylor way: the
+   first varied slot against its derivative at the centre, a thin evaluation,
+   with the box paying only for a second derivative against the square of the
+   half-width. The second slot keeps the mean-value step. This is the same
+   computation the "--taylor" verdict does, written to a file so that another
+   party re-checks it with Cell.check_ccert_t rather than trusting this run. *)
+let tighten_cell_taylor xu xv _node ctx (c : Cell.ccert) (cl : Cell.ccell)
+    (du_i : int64) (dv_i : int64) =
+  let prec = Cell.cprec_of c in
+  let ms = cl.Cell.cc_pt.Checker.pt_ms in
+  let r3 = ctx.nc_r3 in
+  let binds = r3.Physics.r_binds in
+  let len = ctx.nc_len in
+  let base = ctx.nc_base in
+  let box = Cell.box_ienv xu xv prec ms cl.Cell.cc_du cl.Cell.cc_dv in
+  let d2 = Deriv.with_derivs2 xu base len binds in
+  let env0 = Expr.iextend prec (Checker.ienv_of prec ms) binds in
+  let envd = Expr.iextend prec (Checker.ienv_of prec ms) d2 in
+  let envb = Expr.iextend prec box d2 in
+  let envv = Expr.iextend prec box (Deriv.with_derivs xv base len binds) in
+  let f m e = Int64.to_float m *. (2.0 ** Int64.to_float e) in
+  let line r =
+    match Cell.slot_of r with
+    | None -> prerr_endline "residual component is not a slot reference"; exit 2
+    | Some n ->
+        let (n0, q0) = bound_for prec env0 r in
+        let (nu, qu) = bound_for prec envd (Expr.Evar (n + len)) in
+        let (nuu, quu) = bound_for prec envb (Expr.Evar (n + 2 * len)) in
+        let (nv, qv) = bound_for prec envv (Expr.Evar (n + len)) in
+        let total =
+          f n0 q0
+          +. Int64.to_float du_i *. f nu qu
+          +. Int64.to_float du_i *. Int64.to_float du_i *. f nuu quu
+          +. Int64.to_float dv_i *. f nv qv in
+        let at nc qc =
+          { Cell.tb_N0 = z_of_int64 n0; Cell.tb_q0 = z_of_int64 q0;
+            Cell.tb_Nu = z_of_int64 nu; Cell.tb_qu = z_of_int64 qu;
+            Cell.tb_Nuu = z_of_int64 nuu; Cell.tb_quu = z_of_int64 quu;
+            Cell.tb_Nv = z_of_int64 nv; Cell.tb_qv = z_of_int64 qv;
+            Cell.tb_Nc = z_of_int64 nc; Cell.tb_qc = z_of_int64 qc } in
+        let rec grow (nc, qc) k =
+          if k > 200 then (prerr_endline "no Taylor cell bound accepted"; exit 2)
+          else if Checker.nonneg
+                    (Expr.ieval prec Expr.eempty
+                       (Cell.combination_t cl.Cell.cc_du cl.Cell.cc_dv
+                          (at nc qc)))
+          then (nc, qc)
+          else grow (renorm (Int64.add nc (Int64.add 1L (Int64.div nc 4096L)),
+                             qc)) (k + 1) in
+        let (nc, qc) = grow (renorm (dyadic_ge total)) 0 in
+        (Printf.sprintf "%Ld %Ld %Ld %Ld %Ld %Ld %Ld %Ld %Ld %Ld"
+           n0 q0 nu qu nuu quu nv qv nc qc, f nc qc) in
+  [ line r3.Physics.r_s; line r3.Physics.r_u; line r3.Physics.r_v ]
+
 (* Copy a certificate, replacing the bound lines of every cell. The file is
    line oriented inside a CELLS block: a count, then three lines per cell. *)
 let rewrite_bounds src dst (lines : string array) =
@@ -1003,7 +1057,17 @@ let () =
       let dw = int64 () in
       Some (w, dw)
     end else None in
-  let n_bound = match slot3_file with Some _ -> 10 | None -> 8 in
+  (* A TAYLOR line marks a certificate whose first varied slot is charged
+     against its derivative at the centre, so every bound line carries ten
+     numbers rather than eight: N0 q0 Nu qu Nuu quu Nv qv Nc qc. "--tighten
+     --taylor" writes such a file and an ordinary run of it establishes it
+     with Cell.check_ccert_t, the way a SLOT3 file is checked by
+     check_ccert3. *)
+  let taylor_file =
+    if !p < Array.length toks && toks.(!p) = "TAYLOR"
+    then (ignore (tok ()); true) else false in
+  let n_bound =
+    match slot3_file with Some _ -> 10 | None -> if taylor_file then 10 else 8 in
   expect "OUTPUT";
   let out =
     match tok () with
@@ -1017,6 +1081,8 @@ let () =
     | "radial-axis" -> Physics.RRadialAxis
     | "terms" -> Physics.RTerms
     | "radial-terms" -> Physics.RRadialTerms
+    | "current-terms" -> Physics.RJsTerms
+    | "radial-current-terms" -> Physics.RRadialJsTerms
     | "covariant" ->
         let hm = int64 () in
         let hn = int64 () in
@@ -1078,6 +1144,15 @@ let () =
   (* the third slot's derivative bound, when the file carries one *)
   let mk_w (a : int array) =
     (z_of_int64 (Int64.of_int a.(8)), z_of_int64 (Int64.of_int a.(9))) in
+  (* a Taylor bound line: value, first and second derivative in the first
+     slot, the mean-value step in the second, and the cell bound *)
+  let mk_tb (a : int array) =
+    let z i = z_of_int64 (Int64.of_int a.(i)) in
+    { Cell.tb_N0 = z 0; Cell.tb_q0 = z 1;
+      Cell.tb_Nu = z 2; Cell.tb_qu = z 3;
+      Cell.tb_Nuu = z 4; Cell.tb_quu = z 5;
+      Cell.tb_Nv = z 6; Cell.tb_qv = z 7;
+      Cell.tb_Nc = z 8; Cell.tb_qc = z 9 } in
   (* Everything a node block fixes. Consecutive radial cells of one node
      differ only in their radius and half-width, so a block may say SAME and
      take the coefficients of the one before it, which is what keeps a volume
@@ -1217,6 +1292,17 @@ let () =
       Cell.c3_Nws = nws; Cell.c3_qws = qws;
       Cell.c3_Nwu = nwu; Cell.c3_qwu = qwu;
       Cell.c3_Nwv = nwv; Cell.c3_qwv = qwv } in
+  (* the same cell as a Taylor cell, when the file carries ten-number bounds *)
+  let tcell_at k =
+    let b = node_at (k / na) in
+    let a = angles.(k mod na) in
+    let (_, _, du, dv) = a in
+    let (_, _, _, _, _, _, _, _, bounds, ndu, _) = b in
+    let du = match ndu with Some d -> d | None -> du in
+    let (bs, bu, bv) = bounds.(k mod na) in
+    { Cell.tc_pt = env_of b a;
+      Cell.tc_du = z_of_int64 du; Cell.tc_dv = z_of_int64 dv;
+      Cell.tc_s = mk_tb bs; Cell.tc_u = mk_tb bu; Cell.tc_v = mk_tb bv } in
   let ccert_of cl =
     { Cell.cc_prec = z_of_int64 prec; Cell.cc_cfg = cfg;
       Cell.cc_modes = coq_modes; Cell.cc_cells = [cl] } in
@@ -1464,6 +1550,8 @@ let () =
                     let lines =
                       if lower then
                         tighten_cell_lower xu xv (k / na) ctx ct cl du dv
+                      else if taylor || taylor_file then
+                        tighten_cell_taylor xu xv (k / na) ctx ct cl du dv
                       else
                         tighten_cell ?slot3:slot3_file xu xv (k / na) ctx ct cl
                           du dv in
@@ -1493,12 +1581,14 @@ let () =
           (try
              while true do
                let l = input_line ic in
-               (* the cell bound is the fourth pair, and a third slot adds a
-                  fifth pair after it *)
+               (* the cell bound is the fourth pair of an ordinary line, and
+                  the fifth of a Taylor line, whose value, first and second
+                  derivative in the first slot push it two fields along *)
                let fields = Array.of_list (String.split_on_char ' ' l) in
+               let ci = if taylor || taylor_file then 8 else 6 in
                (match
-                  (if Array.length fields >= 8
-                   then Some (fields.(6), fields.(7)) else None)
+                  (if Array.length fields > ci + 1
+                   then Some (fields.(ci), fields.(ci + 1)) else None)
                 with
                 | Some (nc, qc) when
                     (try ignore (float_of_string nc);
@@ -1628,6 +1718,8 @@ let () =
            | Physics.RRadialShear -> [ "iota'"; "dB_u/ds"; "mu0 p'" ]
            | Physics.RTerms | Physics.RRadialTerms ->
                [ "(dvBs-dsBv)Bv"; "(dsBu-duBs)Bu"; "mu0 p'" ]
+           | Physics.RJsTerms | Physics.RRadialJsTerms ->
+               [ "d_u B_v"; "d_v B_u"; "mu0 sqrtg J^s" ]
            | Physics.RCovHarm (_, _) -> [ "B_u k"; "B_v k"; "mu0 sqrtg J^s k" ]
            | Physics.RCovHarmS (_, _) -> [ "B_u k"; "B_v k"; "mu0 sqrtg J^s k" ]
            | Physics.RStreamDefect ->
@@ -1829,6 +1921,24 @@ let () =
              (if ok then "VALID" else "INVALID") (t1 -. t0);
            exit (if ok then 0 else 1)
        | None -> ());
+      if taylor_file then begin
+        (* the file carries ten-number bounds a "--tighten --taylor" run
+           wrote, so this one only establishes them, with the first slot
+           charged against its derivative at the centre *)
+        Printf.printf
+          "the file carries a Taylor bound, checked against the derivative at \
+           each cell centre\n%!";
+        let ok = over_shards (fun k ->
+            let cl_t = tcell_at k in
+            let ct_t =
+              { Cell.tc_prec = z_of_int64 prec; Cell.tc_cfg = cfg;
+                Cell.tc_modes = coq_modes; Cell.tc_cells = [cl_t] } in
+            Cell.check_ccert_t xu xv ct_t) in
+        let t1 = Unix.gettimeofday () in
+        Printf.printf "verdict: %s   (%.1f s)\n%!"
+          (if ok then "VALID" else "INVALID") (t1 -. t0);
+        exit (if ok then 0 else 1)
+      end;
       if lower then
         Printf.printf
           "the floor is claimed at every angle of every cell: no field of this form balances there\n%!"

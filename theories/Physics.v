@@ -354,14 +354,22 @@ Inductive rout : Type :=
   | RStreamDefect
   | RBoozer (m n : Z)
   | RTerms
-  | RRadialTerms.
+  | RRadialTerms
+  | RJsTerms
+  | RRadialJsTerms.
 
 (** True when the output is read from the reconstruction at a free radius. *)
 Definition is_radial (o : rout) : bool :=
   match o with
-  | RRadial | RRadialGeom | RRadialShear | RRadialAxis | RRadialTerms => true
+  | RRadial | RRadialGeom | RRadialShear | RRadialAxis | RRadialTerms
+  | RRadialJsTerms => true
   | _ => false
   end.
+
+(** The same for the surface current, mu0 sqrt(g) J^s = d_u B_v - d_v B_u,
+    which r_u and r_v are built from and which has to vanish for a Boozer
+    stream function to exist: [RJsTerms] carries d_u B_v, d_v B_u and their
+    difference as the three components. *)
 
 (** The three terms the radial residual is the difference of:
 
@@ -669,6 +677,8 @@ Record halfq := HalfQ {
   q_B_u : expr ; q_B_v : expr ;        (* covariant B_u, B_v *)
   q_B_s : expr ;                       (* covariant B_s *)
   q_B_s_u : expr ; q_B_s_v : expr ;    (* angular derivatives of B_s *)
+  q_B_v_u : expr ; q_B_u_v : expr ;    (* d_u B_v and d_v B_u, whose
+                                          difference is the surface current *)
   q_mu0Js : expr ;                     (* mu0 sqrtg J^s = d_u B_v - d_v B_u *)
   q_sqrtg : expr ;                     (* the Jacobian sqrt(g) = R tau *)
   q_R : expr ; q_Ru : expr ; q_Rv : expr ;   (* the cylindrical embedding *)
@@ -698,12 +708,19 @@ Definition q_B2 (q : halfq) : expr :=
 (** The integrand of the Jacobian-weighted mean square field. *)
 Definition q_sqrtg_B2 (q : halfq) : expr := Emul (q_sqrtg q) (q_B2 q).
 
-(** Allocate the field of the half point s_h between the node rows ra and rb
-    (R and Z), with the lambda row rl and iota. *)
-Definition half_point_b (b : builder) (lasym : bool)
-    (kers : list mode_kernels)
-    (modes : list (Z * Z)) (K ra rb rl : nat) (s_a s_b s_h iota : expr)
-    : builder * halfq :=
+(** The coefficients of the half point s_h between the node rows ra and rb
+    (R and Z), with the lambda row rl. They read the knots and the wout's own
+    numbers and no angle, and they are allocated before the kernels so that
+    every cell of a node shares them: the driver evaluates the leading run of
+    bindings that read neither varied slot once per node, and for a covering
+    of a surface this stage is most of the bindings. *)
+Record half_coefs := HCoefs {
+  hc_R : list coef2 ; hc_Z : list coef2 ; hc_L : list expr ;
+  hc_Ra : list coef2 ; hc_Za : list coef2 ; hc_La : list expr }.
+
+Definition half_coefs_b (b : builder) (lasym : bool)
+    (modes : list (Z * Z)) (K ra rb rl : nat) (s_a s_b s_h : expr)
+    : builder * half_coefs :=
   let (b, hs) := half_scalars_b b s_a s_b s_h in
   let (b, cR) := halfcoefs_b b hs (base_R K) K ra rb modes 0 in
   let (b, cZ) := halfcoefs_b b hs (base_Z K) K ra rb modes 0 in
@@ -718,6 +735,14 @@ Definition half_point_b (b : builder) (lasym : bool)
                   else (b, @nil coef2) in
   let (b, cLa) := if lasym then lambdacoefs_b b (base_La K) K rl modes 0
                   else (b, @nil expr) in
+  (b, HCoefs cR cZ cL cRa cZa cLa).
+
+(** The field of a half point from its coefficients, the kernels and iota. *)
+Definition half_point_b (b : builder) (lasym : bool)
+    (kers : list mode_kernels) (hc : half_coefs) (iota : expr)
+    : builder * halfq :=
+  let cR := hc_R hc in let cZ := hc_Z hc in let cL := hc_L hc in
+  let cRa := hc_Ra hc in let cZa := hc_Za hc in let cLa := hc_La hc in
   let (b, pR) := partials_b b
       (if lasym then padd (assemble kers cR true) (assemble kers cRa false)
        else assemble kers cR true) in
@@ -791,8 +816,8 @@ Definition half_point_b (b : builder) (lasym : bool)
   let (b, lam) :=
     alloc b (esum (map (fun kc => Emul (snd kc) (mk_sin (fst kc)))
                        (combine kers cL))) in
-  (b, HalfQ Bu Bv B_u B_v B_s B_s_u B_s_v mu0Js sqrtg R R_u R_v Z_u Z_v guu
-        lam L_u L_v).
+  (b, HalfQ Bu Bv B_u B_v B_s B_s_u B_s_v B_v_u B_u_v mu0Js sqrtg
+        R R_u R_v Z_u Z_v guu lam L_u L_v).
 
 (* ---------------------------------------------------------------- *)
 (* Geometry at the node, and the Mercier integrands                  *)
@@ -804,15 +829,27 @@ Definition half_point_b (b : builder) (lasym : bool)
     antisymmetric halves are added first, R gaining a sine series and Z a
     cosine one, over the same modes; the symmetric path keeps exactly the
     expressions it had. *)
-Definition node_geom_b (b : builder) (lasym : bool) (kers : list mode_kernels)
-    (modes : list (Z * Z)) (K : nat)
-    : builder * (expr * expr * expr * expr * expr) :=
+(** The node-row coefficients the Mercier geometry reads, allocated before the
+    kernels for the same reason the half-point coefficients are. *)
+Record node_coefs := NCoefs {
+  ncf_R : list expr ; ncf_Z : list expr ;
+  ncf_Ra : list expr ; ncf_Za : list expr }.
+
+Definition node_coefs_b (b : builder) (lasym : bool)
+    (modes : list (Z * Z)) (K : nat) : builder * node_coefs :=
   let (b, cR) := lambdacoefs_b b (base_R K) K 1 modes 0 in
   let (b, cZ) := lambdacoefs_b b (base_Z K) K 1 modes 0 in
   let (b, cRa) := if lasym then lambdacoefs_b b (base_Ra K) K 1 modes 0
                   else (b, @nil expr) in
   let (b, cZa) := if lasym then lambdacoefs_b b (base_Za K) K 1 modes 0
                   else (b, @nil expr) in
+  (b, NCoefs cR cZ cRa cZa).
+
+Definition node_geom_b (b : builder) (lasym : bool) (kers : list mode_kernels)
+    (nc : node_coefs)
+    : builder * (expr * expr * expr * expr * expr) :=
+  let cR := ncf_R nc in let cZ := ncf_Z nc in
+  let cRa := ncf_Ra nc in let cZa := ncf_Za nc in
   let pR := combine kers cR in
   let pZ := combine kers cZ in
   let pRa := combine kers cRa in
@@ -878,10 +915,10 @@ Record mercq := MercQ {
   m_gf : expr ; m_b2 : expr }.
 
 Definition merc_b (b : builder) (lasym : bool) (kers : list mode_kernels)
-    (modes : list (Z * Z)) (K : nat) (qm qp : halfq)
+    (nc : node_coefs) (qm qp : halfq)
     (dBsv dBvs dBus dBsu half : expr) : builder * mercq :=
   let avg x y := Emul half (Eadd x y) in
-  let (b, geo) := node_geom_b b lasym kers modes K in
+  let (b, geo) := node_geom_b b lasym kers nc in
   let rr := fst (fst (fst (fst geo))) in
   let ru := snd (fst (fst (fst geo))) in
   let rv := snd (fst (fst geo)) in
@@ -1384,6 +1421,10 @@ Definition full_point_b (b : builder) (lasym : bool)
           Residual3 (bindings_of b) iotap B_u_s mu0pp
       | RRadialGeom => Residual3 (bindings_of b) sqrtg g_s B_u_cov
       | RRadialTerms => Residual3 (bindings_of b) (fst tt) (snd tt) mu0pp
+      | RRadialJsTerms =>
+          (* the two terms of the surface current and their difference; both
+             terms already occupy slots, so this allocates nothing *)
+          Residual3 (bindings_of b) B_v_u B_u_v mu0Js
       | _ => Residual3 (bindings_of b) rs_ ru rv
       end).
 
@@ -1403,13 +1444,28 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
          kernels, after the stage no angle or radius reaches. *)
       snd (full_point_b b lasym modes K (pc_prof cfg) (pc_out cfg))
   else
+  (* The bindings that read no angle come first: the coefficients of both
+     half points, and the node-row coefficients the Mercier geometry reads.
+     The driver evaluates that leading run once per node and shares it across
+     the node's cells, deciding where the run ends with the extracted
+     var_free rather than by trusting this order. Rows of the R/Z node
+     blocks: 0 = j-1, 1 = j, 2 = j+1; rows of the lambda block: 0 = h-,
+     1 = h+. *)
+  let (b, hcm) := half_coefs_b b lasym modes K 0 1 0
+                    slot_s_a slot_s_j slot_s_hm in
+  let (b, hcp) := half_coefs_b b lasym modes K 1 2 1
+                    slot_s_j slot_s_b slot_s_hp in
+  let want_merc :=
+    match pc_out cfg with
+    | RMercierA => true | RMercierB => true | _ => false
+    end in
+  let (b, ncf) :=
+    if want_merc then node_coefs_b b lasym modes K
+    else (b, NCoefs [] [] [] []) in
+  (* the angles enter here *)
   let (b, kers) := kernels_b b modes in
-  (* rows of the R/Z node blocks: 0 = j-1, 1 = j, 2 = j+1;
-     rows of the lambda block: 0 = h-, 1 = h+ *)
-  let (b, qm) := half_point_b b lasym kers modes K 0 1 0
-                   slot_s_a slot_s_j slot_s_hm slot_iota_m in
-  let (b, qp) := half_point_b b lasym kers modes K 1 2 1
-                   slot_s_j slot_s_b slot_s_hp slot_iota_p in
+  let (b, qm) := half_point_b b lasym kers hcm slot_iota_m in
+  let (b, qp) := half_point_b b lasym kers hcp slot_iota_p in
   let (b, half) := alloc b (Ediv e1 e2) in
   let (b, inv_h) := alloc b (Ediv e1 (Esub slot_s_hp slot_s_hm)) in
   let avg x y := Emul half (Eadd x y) in
@@ -1421,13 +1477,9 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
   let (b, B_u_s) := alloc b (dif (q_B_u qm) (q_B_u qp)) in
   let (b, B_v_s) := alloc b (dif (q_B_v qm) (q_B_v qp)) in
   let (b, mu0pp) := alloc b (Emul mu0 (pprime (pc_prof cfg))) in
-  let want_merc :=
-    match pc_out cfg with
-    | RMercierA => true | RMercierB => true | _ => false
-    end in
   let (b, mq) :=
     if want_merc
-    then merc_b b lasym kers modes K qm qp B_s_v B_v_s B_u_s B_s_u half
+    then merc_b b lasym kers ncf qm qp B_s_v B_v_s B_u_s B_s_u half
     else (b, MercQ e0 e0 e0 e0 e0 e0) in
   let (b, rs) := alloc b (Esub (Esub (Emul (Esub B_s_v B_v_s) Bv)
                                      (Emul (Esub B_u_s B_s_u) Bu))
@@ -1449,6 +1501,14 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
      the per-cell bounds into an enclosure of the harmonic itself. *)
   match pc_out cfg with
   | RResidual => Residual3 (bindings_of b) rs ru rv
+  | RJsTerms =>
+      (* d_u B_v and d_v B_u at the outer half point, and their difference the
+         surface current. q_mu0Js is that difference, and the two terms are
+         allocated here since the half point exposes only the difference. *)
+      let (b, j1) := alloc b (q_B_v_u qp) in
+      let (b, j2) := alloc b (q_B_u_v qp) in
+      let (b, js) := alloc b (q_mu0Js qp) in
+      Residual3 (bindings_of b) j1 j2 js
   | RHarmonic hm hn =>
       let (b, k) := alloc b (Ecos (kern_arg hm hn)) in
       let (b, hs) := alloc b (Emul rs k) in
@@ -1544,6 +1604,7 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
   | RRadialShear => Residual3 (bindings_of b) rs ru rv
   | RRadialAxis => Residual3 (bindings_of b) rs ru rv
   | RRadialTerms => Residual3 (bindings_of b) rs ru rv
+  | RRadialJsTerms => Residual3 (bindings_of b) rs ru rv
   end.
 
 End WithExponents.
