@@ -37,18 +37,23 @@ interpolant. It is written here from the same rule and shares no code with
 gen/make_cert.py, so the two disagreeing means one of them has the physics
 wrong.
 
-The pressure is the one term this does not state for every equilibrium.
-Borrowing the ten closed forms from the generator would give two copies of one
-transcription and nothing to compare, so a wout whose pmass_type is not a
-power series is refused rather than read against a power series.
+The pressure comes from proto/pressure_ref.py, which writes every
+parameterization VMEC++ admits from its definition, and which recovers the
+scale VMEC applied from the file's own half-grid pressure, since PRES_SCALE is
+not written to a wout.
 
 Usage:  python proto/continuum_ref.py wout.nc --node 22 --nu 8
         python proto/continuum_ref.py wout.nc --node 22 --nu 8 --half-grid
 """
 
 import argparse
+import pathlib
+import sys
 
 import numpy as np
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from pressure_ref import Profile  # noqa: E402
 
 MU0 = 4e-7 * np.pi
 
@@ -77,29 +82,25 @@ class Wout:
         self.pmass_type = (
             v["pmass_type"][:].tobytes().decode().replace(chr(0), "").strip()
             if "pmass_type" in v else "")
+        self.pres_half = g("pres")
+        self.aux_s = g("am_aux_s") if "am_aux_s" in v else None
+        self.aux_f = g("am_aux_f") if "am_aux_f" in v else None
         self.h = 1.0 / (self.ns - 1)
         self.s_full = np.arange(self.ns) * self.h
         self.s_half = (np.arange(self.ns) - 0.5) * self.h
         d.close()
+        self.profile = Profile.from_wout(self)
 
 
 def pressure_gradient(w, s):
-    """dp/ds of a power-series profile, or a refusal.
+    """dp/ds of the wout's profile, from proto/pressure_ref.py.
 
-    The value of a second implementation is that it was written from the rule
-    and not from the expression builders, so the ten closed forms of
-    theories/Physics.v cannot be borrowed here: doing that would give two
-    copies of one transcription and nothing to compare. Until each of them is
-    written out a second time this refuses the ones it cannot state, rather
-    than returning a power series that looks like a reference for a profile
-    that is not one.
+    That module writes every parameterization from its definition rather than
+    from the expression builders of theories/Physics.v or the float pass of
+    gen/make_cert.py, and it carries the scale VMEC applied, recovered from the
+    file's own half-grid pressure.
     """
-    if w.pmass_type not in ("power_series", ""):
-        msg = (f"this reference states dp/ds for a power series, and the wout "
-               f"carries {w.pmass_type!r}. Nothing here would compare its "
-               f"pressure against the certificate's.")
-        raise SystemExit(msg)
-    return sum(k * w.am[k] * s ** (k - 1) for k in range(1, len(w.am)))
+    return w.profile.derivative(s)
 
 
 def half_coef(m, ya, yb, s_a, s_b, s_h):
@@ -231,8 +232,11 @@ def residual_at(w, j, s, u, vv):
     mu0Js = B_v_u - B_u_v
 
     pp = pressure_gradient(w, s)
-    r_s = (B_s_v - B_v_s) * Bv - (B_u_s - B_s_u) * Bu - MU0 * pp
-    return r_s, -mu0Js * Bv, mu0Js * Bu, sqrtg, g_s
+    t1 = (B_s_v - B_v_s) * Bv
+    t2 = (B_u_s - B_s_u) * Bu
+    t3 = MU0 * pp
+    r_s = t1 - t2 - t3
+    return r_s, -mu0Js * Bv, mu0Js * Bu, sqrtg, g_s, (t1, t2, t3)
 
 
 def half_point_fields(w, j_in, j_out, row_l, u, vv):
@@ -342,24 +346,32 @@ def main():
                     help="sample at the centres of the cells a covering of "
                     "this many lays out, (2k+1) pi / nu, rather than at "
                     "2 pi k / nu, so the two can be read against each other")
+    ap.add_argument("--u", type=float, default=None,
+                    help="one poloidal angle in radians instead of a sweep, "
+                    "which with --at reads the reconstruction at the centre "
+                    "of one cell of a volume covering")
     a = ap.parse_args()
     w = Wout(a.wout)
     j = a.node
     if a.half_grid:
         print(f"ns={w.ns} node={j} s={float(w.s_full[j]):.9f} half grid")
         worst = 0.0
+        per = [0.0, 0.0, 0.0]
         best = None
         for k in range(a.nu):
             u = ((2 * k + 1) * np.pi / a.nu if a.cells
                  else 2 * np.pi * k / a.nu)
             rs, ru, rv, terms = residual_half_grid(w, j, u, a.v)
             worst = max(worst, abs(rs), abs(ru), abs(rv))
+            per = [max(per[0], abs(rs)), max(per[1], abs(ru)),
+                   max(per[2], abs(rv))]
             if best is None or abs(rs) > abs(best[0]):
                 best = (rs, terms)
             if k < 4:
                 print(f"  u={u:.6f}  r_s={rs:+.9e}  r_u={ru:+.9e}  "
                       f"r_v={rv:+.9e}")
         print(f"worst |r| over {a.nu} angles: {worst:.9e}")
+        print(f"worst per component: {per[0]:.9e} {per[1]:.9e} {per[2]:.9e}")
         # the three terms the radial component is the difference of, at the
         # angle where it is largest, which is where a covering reads them
         t1, t2, t3 = best[1]
@@ -372,13 +384,28 @@ def main():
     print(f"ns={w.ns} node={j} s={s:.9f} "
           f"inside [{w.s_half[j]:.9f}, {w.s_half[j + 1]:.9f}]")
     worst = 0.0
+    best = None
     for k in range(a.nu):
-        u = 2 * np.pi * k / a.nu
-        rs, ru, rv, sg, gs = residual_at(w, j, s, u, a.v)
+        if a.u is not None:
+            u = a.u
+        elif a.cells:
+            u = (2 * k + 1) * np.pi / a.nu
+        else:
+            u = 2 * np.pi * k / a.nu
+        rs, ru, rv, sg, gs, terms = residual_at(w, j, s, u, a.v)
         worst = max(worst, abs(rs), abs(ru), abs(rv))
+        if best is None or abs(rs) > abs(best[0]):
+            best = (rs, terms)
         if k < 4:
             print(f"  u={u:.6f}  r_s={rs:+.9e}  r_u={ru:+.9e}  r_v={rv:+.9e}")
+        if a.u is not None:
+            break
     print(f"worst |r| over {a.nu} angles: {worst:.9e}")
+    t1, t2, t3 = best[1]
+    print(f"worst r_s over {a.nu} angles: {abs(best[0]):.9e}")
+    print(f"  terms  {abs(t1):.9e}  {abs(t2):.9e}  {abs(t3):.9e}")
+    print(f"  their difference {t1 - t2 - t3:+.9e} against "
+          f"r_s {best[0]:+.9e}")
 
 
 if __name__ == "__main__":

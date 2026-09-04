@@ -36,9 +36,28 @@ Usage:  python gen/verify_cert.py wout.nc cert.txt
 """
 
 import argparse
+import pathlib
 import sys
 
 import numpy as np
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "proto"))
+from pressure_ref import Profile  # noqa: E402
+
+# The coefficients that carry a profile's amplitude, per closed form. VMEC
+# multiplies the profile by PRES_SCALE and does not write that to the wout, so
+# the generator puts it back into these; every other coefficient is an
+# exponent, a position, a width or a mixing fraction and has to be the file's
+# own exactly. The pressure itself is then read back against the file's `pres`.
+AMPLITUDE_SLOTS = {
+    "POWER": set(range(21)),
+    "TWOPOWER": {0},
+    "TWOPOWERGS": {0},
+    "GAUSSTRUNC": {0},
+    "TWOLORENTZ": {0},
+    "PEDESTAL": set(range(16)) | {17},
+    "RATIONAL": set(range(10)),
+}
 
 # The OUTPUT names whose line carries a mode pair after the name.
 OUTPUT_WITH_MODE = ("harmonic", "covariant", "covariant-sin", "boozer")
@@ -119,6 +138,7 @@ def main():
     pmass = (v["pmass_type"][:].tobytes().decode().replace(chr(0), "").strip()
              if "pmass_type" in v else "")
     presf = g("presf") if "presf" in v else None
+    pres = g("pres") if "pres" in v else None
     buco = g("buco") if "buco" in v else None
     bvco = g("bvco") if "bvco" in v else None
     lasym_w = bool(int(v["lasym__logical__"][:])) if "lasym__logical__" in v else False
@@ -149,7 +169,12 @@ def main():
     if r.peek() == "SLOT3":
         r.next()
         slot3 = (r.int(), r.int())
-    n_bound = 10 if slot3 else 8
+    # a Taylor file marks that every bound line carries ten numbers rather
+    # than eight, the first slot's value and its first two derivatives
+    taylor = r.peek() == "TAYLOR"
+    if taylor:
+        r.next()
+    n_bound = 10 if (slot3 or taylor) else 8
     r.expect("OUTPUT")
     out = r.next()
     if out in OUTPUT_WITH_MODE:
@@ -197,17 +222,21 @@ def main():
     # of that block is zero by construction rather than the file's own.
     pedestal_off = prof == "POWER" and pmass == "pedestal"
     file_am = []
+    shape = set(range(21)) - AMPLITUDE_SLOTS.get(prof, set(range(21)))
     for j in range(21):
         want = am[j] if j < len(am) else 0.0
         if pedestal_off and j >= 16:
             want = 0.0
         got = r.dyadic()
         file_am.append(got)
-        if prof in ("POWER", "TWOPOWER", "TWOPOWERGS", "GAUSSTRUNC",
-                    "RATIONAL", "PEDESTAL", "TWOLORENTZ"):
+        if j in shape:
             check(f"am[{j}]", got, want)
-        # a piecewise profile is resolved into a cubic, so its am are not the
-        # file's; that cubic is read against presf at each node instead
+        # the amplitude coefficients carry PRES_SCALE, which the wout does
+        # not, so they are read back as a pressure against `pres` per node
+        # below; a piecewise profile is resolved into a cubic, which is read
+        # against presf the same way
+    file_profile = (Profile(pmass, file_am) if prof in AMPLITUDE_SLOTS
+                    else None)
 
     if not cells:
         for tag in ("EPS_S", "EPS_U", "EPS_V"):
@@ -268,6 +297,24 @@ def main():
             check(f"node {j} s_(j+1/2)", sh[1], s_half[j + 1])
             check(f"node {j} iota-", io[0], iotas[j])
             check(f"node {j} iota+", io[1], iotas[j + 1])
+
+            # The pressure the certificate's coefficients give at the two half
+            # points around the node, against the pressure the wout stores
+            # there. VMEC evaluated its profile at exactly those radii with
+            # PRES_SCALE in, so this is an equality and not an interpolation.
+            if file_profile is not None:
+                if pres is None:
+                    problems.append("the wout carries no pres to read the "
+                                    "pressure against")
+                else:
+                    for row in (j, j + 1):
+                        got_p = file_profile.raw(float(s_half[row]))[0]
+                        want_p = float(pres[row])
+                        if not close(got_p, want_p, 1e-9):
+                            problems.append(
+                                f"node {j}: the certificate's pressure at "
+                                f"s={s_half[row]:.6f} is {got_p!r}, the "
+                                f"wout's pres {want_p!r}")
 
             blocks = [("RNODES", rmnc, (j - 1, j, j + 1)),
                       ("ZNODES", zmns, (j - 1, j, j + 1)),

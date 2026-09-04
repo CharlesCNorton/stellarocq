@@ -331,8 +331,106 @@ def pprime_ref(profile, am, s):
     raise SystemExit(msg)
 
 
+def pvalue_ref(profile, am, s):
+    """p(s) of the certified profile, in floating point, before the scale.
+
+    This mirrors [pprime_ref] case by case. It exists for one purpose: VMEC
+    multiplies every profile by PRES_SCALE and does not write that number to
+    the wout, so the coefficients a wout carries describe the input profile
+    and not the pressure the solver balanced. The scale is recovered from the
+    file's own half-grid pressure, which VMEC evaluated with it in, and that
+    needs the value where the derivative alone would not give it.
+    """
+    parts = profile.split()
+    kind = parts[0]
+    q = [int(x) for x in parts[1:]]
+    if kind == "POWER":
+        return _poly(am, 0, 21, s)
+    if kind == "TWOPOWER":
+        p, r = q
+        return _amj(am, 0) * (1.0 - s**p) ** r
+    if kind == "CUBIC":
+        t = s - _amj(am, 4)
+        return _amj(am, 0) + t * (_amj(am, 1) + t * (_amj(am, 2) + t * _amj(am, 3)))
+    if kind == "RATIONAL":
+        nn, nd = q
+        return _poly(am, 0, nn, s) / _poly(am, 10, nd, s)
+    if kind == "GAUSSTRUNC":
+        inv1 = 1.0 / _amj(am, 1)
+        e1 = np.exp(-(inv1**2))
+        return _amj(am, 0) * (np.exp(-((s * inv1) ** 2)) - e1) / (1.0 - e1)
+    if kind == "TWOPOWERGS":
+        p, r, g = q
+        gv = 1.0
+        for j in range(g):
+            amp, ctr, wid = (_amj(am, 3 + 3 * j), _amj(am, 4 + 3 * j), _amj(am, 5 + 3 * j))
+            gv += amp * np.exp(-(((s - ctr) / wid) ** 2))
+        return _amj(am, 0) * (1.0 - s**p) ** r * gv
+    if kind == "PEDESTAL":
+        ctr, wid = _amj(am, 18), _amj(am, 19)
+        t1 = np.tanh(2.0 * (ctr - np.sqrt(s)) / wid)
+        te = np.tanh(2.0 * (ctr - 1.0) / wid)
+        t0 = np.tanh(2.0 * ctr / wid)
+        return _poly(am, 0, 16, s) + _amj(am, 17) * (t1 - te) / (t0 - te)
+    if kind == "TWOLORENTZ":
+        p, r, rr, tt = q
+
+        def fac(a, pp, qq, x):
+            return 1.0 / (1.0 + (x / (a * a)) ** pp) ** qq
+
+        a1 = _amj(am, 1)
+        A, A1 = fac(_amj(am, 2), p, r, s), fac(_amj(am, 2), p, r, 1.0)
+        B, B1 = fac(_amj(am, 5), rr, tt, s), fac(_amj(am, 5), rr, tt, 1.0)
+        return _amj(am, 0) * (a1 * (A - A1) / (1.0 - A1) + (1.0 - a1) * (B - B1) / (1.0 - B1))
+    msg = f"no float value for profile {profile!r}"
+    raise SystemExit(msg)
+
+
+# The coefficients that carry the pressure's amplitude, per closed form. Every
+# other coefficient of the family is an exponent, a position, a width or a
+# mixing fraction, and stays as the wout wrote it.
+AMPLITUDE_SLOTS = {
+    "POWER": list(range(21)),
+    "TWOPOWER": [0],
+    "TWOPOWERGS": [0],
+    "GAUSSTRUNC": [0],
+    "TWOLORENTZ": [0],
+    "PEDESTAL": list(range(16)) + [17],
+    "RATIONAL": list(range(10)),
+}
+
+
+def calibrate_pressure(w):
+    """Put PRES_SCALE back into the coefficients, from the wout's own pressure.
+
+    VMEC evaluates the profile at the half points, multiplies by PRES_SCALE and
+    stores the result as `pres`, so the ratio of `pres` at the first half point
+    to the profile there is the scale. A certificate that carried the raw
+    coefficients would be a theorem about a different pressure from the one the
+    equilibrium balances, and the correspondence guard reads the value back
+    against `pres` rather than the coefficients against `am` for that reason.
+    """
+    kind = w.profile.split()[0]
+    if kind not in AMPLITUDE_SLOTS:
+        return 1.0
+    s1 = float(w.s_half[1])
+    raw = pvalue_ref(w.profile, w.am, s1)
+    if raw == 0.0:
+        return 1.0
+    scale = float(w.pres_half[1]) / raw
+    if abs(scale - 1.0) > 1e-12:
+        am = np.array(w.am, dtype=float)
+        for j in AMPLITUDE_SLOTS[kind]:
+            if j < len(am):
+                am[j] *= scale
+        w.am = am
+    return scale
+
+
 def output_line(a):
     """The OUTPUT line: what the three components of the certificate carry."""
+    if a.current:
+        return "radial-current-terms" if a.radial else "current-terms"
     if a.terms:
         return "radial-terms" if a.radial else "terms"
     if a.stream_defect:
@@ -453,10 +551,10 @@ class Wout:
             self.lmnc = g("lmnc")
         ptype = v["pmass_type"][:].tobytes().decode().replace(chr(0), "").strip()
         self.profile = classify_pressure(ptype, self.am)
+        self.pres_half = g("pres")
         if self.profile in ("SPLINE", "AKIMA", "SEGMENT"):
             self.aux_s = g("am_aux_s")
             self.aux_f = g("am_aux_f")
-            self.pres_half = g("pres")
         d.close()
 
     def _from_h5(self, path):
@@ -490,10 +588,10 @@ class Wout:
         ptype = w["pmass_type"][()]
         ptype = ptype.decode() if isinstance(ptype, bytes) else str(ptype)
         self.profile = classify_pressure(ptype.replace(chr(0), "").strip(), self.am)
+        self.pres_half = g("pres")
         if self.profile in ("SPLINE", "AKIMA", "SEGMENT"):
             self.aux_s = g("am_aux_s")
             self.aux_f = g("am_aux_f")
-            self.pres_half = g("pres")
         f.close()
 
 
@@ -842,6 +940,8 @@ def write_ccert(a, w, K, phip, idx, us, vs, nv, three_d):
     P(f"SLOTS {a.slots}")
     if a.slot3 is not None:
         P(f"SLOT3 {a.slot3} {slot3_width(a)}")
+    if a.taylor:
+        P("TAYLOR")
     P("OUTPUT " + output_line(a))
     P(f"MODES {K}")
     for m, n in zip(w.xm, w.xn, strict=True):
@@ -897,7 +997,8 @@ def write_ccert(a, w, K, phip, idx, us, vs, nv, three_d):
         # enclosures the checker computes, because the width of an interval
         # enclosure of a cancelling expression is a property of the arithmetic
         # and cannot be predicted from a float sample of the function.
-        blank = "1 0 1 0 1 0 4 0" + (" 1 0" if a.slot3 is not None else "")
+        blank = ("1 0 1 0 1 0 1 0 4 0" if a.taylor
+                 else "1 0 1 0 1 0 4 0" + (" 1 0" if a.slot3 is not None else ""))
         for _ in angles:
             for _ in range(3):
                 P(blank)
@@ -1001,6 +1102,8 @@ def write_rcert(a, w, K, phip, idx, us, v0):
     P("SLOTS 0 1")
     if a.slot3 is not None:
         P(f"SLOT3 {a.slot3} {slot3_width(a)}")
+    if a.taylor:
+        P("TAYLOR")
     P("OUTPUT " + output_line(a))
     P(f"MODES {K}")
     for m, n in zip(w.xm, w.xn, strict=True):
@@ -1095,7 +1198,8 @@ def write_rcert(a, w, K, phip, idx, us, v0):
                     P(" ".join("{} {}".format(*dyadic(x)) for x in row))
         prev_j = j
         P(f"CELLS {len(us)}")
-        blank = "1 0 1 0 1 0 4 0" + (" 1 0" if a.slot3 is not None else "")
+        blank = ("1 0 1 0 1 0 1 0 4 0" if a.taylor
+                 else "1 0 1 0 1 0 4 0" + (" 1 0" if a.slot3 is not None else ""))
         for _ in us:
             for _ in range(3):
                 P(blank)
@@ -1262,6 +1366,15 @@ def main():
         "every point of a cell in three coordinates at once",
     )
     ap.add_argument(
+        "--taylor",
+        action="store_true",
+        help="mark the file so that 'main --tighten --taylor' writes bounds "
+        "charged against the derivative at the cell centre, ten numbers per "
+        "line, which an ordinary run then establishes with check_ccert_t. A "
+        "file another party re-checks, where 'main --taylor' on a plain "
+        "certificate gives only a verdict.",
+    )
+    ap.add_argument(
         "--dw3",
         type=float,
         default=None,
@@ -1288,6 +1401,14 @@ def main():
         "of the residual itself, so that how much they cancel is a certified "
         "number rather than a remark. A term far below the others is one the "
         "bound does not answer to.",
+    )
+    ap.add_argument(
+        "--current",
+        action="store_true",
+        help="carry the two terms of the surface current, d_u B_v and d_v B_u, "
+        "beside their difference mu0 sqrt(g) J^s, which is what r_u and r_v "
+        "are built from and what has to vanish for a Boozer stream function "
+        "to exist",
     )
     ap.add_argument(
         "--geometry",
@@ -1332,13 +1453,13 @@ def main():
         a.cells = True
     if (a.geometry or a.mercier or a.shear or a.covariant
             or a.covariant_sin or a.stream_defect or a.boozer
-            or a.terms) and not a.cells:
+            or a.terms or a.current) and not a.cells:
         msg = "these outputs carry integrands, so they need --cells"
         raise SystemExit(msg)
-    if a.terms and (a.axis or a.edge):
+    if (a.terms or a.current) and (a.axis or a.edge):
         msg = ("the innermost and outermost intervals are reconstructed from "
-               "two nodes rather than through the Hermite, and --terms reads "
-               "the Hermite path")
+               "two nodes rather than through the Hermite, and --terms and "
+               "--current read the Hermite path")
         raise SystemExit(msg)
     if a.surface and not a.cells:
         msg = "--surface widens cells, so it needs --cells"
@@ -1359,6 +1480,10 @@ def main():
         w.am = am
         w.profile = "POWER"
         print("pedestal with a nonpositive width: only the polynomial remains")
+    scale = calibrate_pressure(w)
+    if abs(scale - 1.0) > 1e-12:
+        print(f"pressure scaled by {scale:.9f}, read off the wout's own pres, "
+              f"since PRES_SCALE is not stored")
     # A radial covering may cross a knot of a piecewise profile, in which case
     # no single piece describes the whole range. The pieces are kept here and
     # the covering is split at the knots below, so each node block carries the
