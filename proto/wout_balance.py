@@ -1,24 +1,19 @@
 """Force balance read off VMEC's own covariant field arrays.
 
-A wout stores the covariant field the solver computed from its own solution:
-`bsubumnc` and `bsubvmnc` on the half grid, `bsubsmns` on the full grid, and
-the contravariant `bsupumnc`, `bsupvmnc` on the half grid, all as Nyquist
-series. With those in hand the node residual of theories/Physics.v,
+The node residual of theories/Physics.v,
 
   r_s = (d_v B_s - d_s B_v) B^v - (d_s B_u - d_u B_s) B^u - mu0 dp/ds,
 
-can be assembled from the file's own field rather than from a reconstruction of
-it: the angular derivatives are exact derivatives of VMEC's series, the radial
-ones the same centred differences of the two half points across the node that
-the certified residual uses, and the pressure gradient a centred difference of
-the file's own `presf`. Nothing built from `rmnc`, `zmns` or `lmns` enters.
+assembled from the file's own bsubumnc, bsubvmnc, bsubsmns, bsupumnc, bsupvmnc
+and presf rather than from a reconstruction: angular derivatives exact from
+VMEC's series, radial ones the centred differences the certified residual uses,
+pressure a centred difference of presf. Nothing from rmnc, zmns or lmns enters.
 
-So the three terms and their difference are the solver's own, and the ratio of
-the largest to the difference is directly comparable with the certified one of
-gen/cancellation.py. Where the two agree, what the covering says about the
-reconstruction is what the solver's own field says about itself. Where the
-file's own terms do not cancel and the pressure gradient is zero, the field
-VMEC wrote is not in pointwise force balance, before anything is done to it.
+The three terms and their difference are the solver's own, and their ratio is
+directly comparable with the certified one of gen/cancellation.py: agreement
+means the covering reports what the solver's field already says, and a
+non-cancelling ratio at zero pressure means the field VMEC wrote is not in
+pointwise force balance.
 
   python proto/wout_balance.py wout.nc [--nodes 6] [--nu 64] [--nv 16]
 """

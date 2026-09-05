@@ -1,12 +1,9 @@
 """Rerun a wout's equilibrium at another resolution, from the wout alone.
 
-An equilibrium whose input file is lost is not lost: the wout carries its
-boundary, its axis, its profiles and its flux, which is everything a
-fixed-boundary run needs. This rebuilds a VMEC++ input from those and runs it,
-first at the wout's own resolution, where the result has to reproduce the wout
-it came from, and then at whatever resolution is asked for. The first run is
-the check on the second: a boundary transcribed with the wrong sign or the
-wrong ordering of `n` would not reproduce the file, and the tool stops there.
+The wout carries the boundary, axis, profiles and flux a fixed-boundary run
+needs, so an equilibrium whose input file is lost can be rebuilt and rerun.
+The first run reproduces the wout at its own resolution, which checks the
+transcription of the boundary; the tool stops if it does not.
 
   python gen/rerun.py wout_cma.nc --out DIR --mpol 9 --ntor 6 [--ns 51]
 
@@ -58,14 +55,12 @@ def input_from_wout(path, template):
         if k in v:
             setattr(vi, k, g(k))
     vi.curtor = float(v["ctor"][:]) if "ctor" in v else 0.0
-    # which of iota and current is prescribed: a wout carries both arrays,
-    # and the one the run used is the one that is not all zero
+    # the prescribed profile is the array that is not all zero
     vi.ncurr = 0 if np.any(g("ai") != 0) and not np.any(g("ac") != 0) else 1
     vi.lfreeb = False
     vi.mgrid_file = "NONE"
 
-    # the boundary, from the last surface: rbc[m, n + ntor], with n in units
-    # of the field period, as the input file writes it
+    # the boundary from the last surface: rbc[m, n + ntor], n in field periods
     rbc = np.zeros((mpol, 2 * ntor + 1))
     zbs = np.zeros((mpol, 2 * ntor + 1))
     rbs = np.zeros((mpol, 2 * ntor + 1))
@@ -129,8 +124,7 @@ def resize_modes(vi, mpol, ntor):
 
 
 def compare(wout_path, out):
-    """The rerun's coefficients against the source's, at the boundary and at
-    mid radius, over the modes both carry."""
+    """Rerun coefficients against the source's, at the boundary and mid radius, over shared modes."""
     d = netCDF4.Dataset(wout_path)
     d.set_auto_mask(False)
     v = d.variables

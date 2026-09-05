@@ -1,19 +1,13 @@
-"""The pressure profile and its gradient, for every parameterization VMEC++
-admits, written from the formulas.
+"""Pressure profile and gradient for every VMEC++ parameterization, from the formulas.
 
-theories/Physics.v states dp/ds for each closed form as an expression tree,
-and gen/make_cert.py writes the same derivatives in floating point to choose
-the bounds a point certificate claims. This is a third writing, from the
-profile definitions rather than from either, and it carries the value as well
-as the derivative: the value is what a wout constrains directly, through
-`presf` and `pres`, and the derivative is what the residual reads.
+A third independent writing of dp/ds, beside the expression trees of
+theories/Physics.v and the float pass of gen/make_cert.py, taken from the
+profile definitions and carrying the value as well as the derivative.
 
-The scale is the one thing a wout does not carry. VMEC multiplies every
-profile by `PRES_SCALE`, which is not written to the output, so a profile read
-from `am` alone is the input profile and not the pressure the solver balanced.
-[scale_from_wout] recovers it from the file's own half-grid pressure at the
-first half point, which is where the profile is evaluated and stored with the
-scale in.
+VMEC scales every profile by PRES_SCALE, which the wout does not store, so a
+profile read from am alone is the input and not the balanced pressure;
+Profile.from_wout recovers the scale from the file's own first half-grid
+pressure.
 
   from pressure_ref import Profile
   prof = Profile.from_wout(w)      # w carries pmass_type, am, am_aux_*, pres
@@ -46,8 +40,7 @@ def two_power(am, s):
 
 
 def gauss_bumps(am, s):
-    """1 + the sum of the Gaussian bumps of a two_power_gs profile, and its
-    derivative; a bump of zero amplitude contributes nothing."""
+    """1 plus the two_power_gs Gaussian bumps and its derivative; a zero-amplitude bump is skipped."""
     val, der = 1.0, 0.0
     for j in range(6):
         amp, ctr, wid = _amj(am, 3 + 3 * j), _amj(am, 4 + 3 * j), _amj(am, 5 + 3 * j)
@@ -122,9 +115,7 @@ def rational(am, s, nn=10, nd=11):
 # ---- the piecewise forms, through the knots ---------------------------------
 
 def clamped_spline_second_derivatives(x, y):
-    """The second derivatives of the cubic spline through the knots whose
-    end slopes are those of the quadratic through the first three and the
-    last three points, by the tridiagonal solve in Newton form."""
+    """Second derivatives of the cubic spline with quadratic end slopes, by the tridiagonal solve."""
     x, y = np.asarray(x, float), np.asarray(y, float)
     n = len(x)
     h = np.diff(x)
@@ -174,9 +165,7 @@ def cubic_spline(x, y, M, s):
 
 
 def akima(x, y, s):
-    """VMEC++'s Akima interpolant: two phantom knots at each end placed by
-    reflection, their values by the quadratic through the three end points,
-    and Akima's weighted slopes."""
+    """VMEC++ Akima interpolant: two reflected phantom knots per end, quadratic end values, Akima slopes."""
     x, y = list(map(float, x)), list(map(float, y))
     n = len(x)
     if n < 4:
@@ -225,9 +214,7 @@ def akima(x, y, s):
 
 
 def line_segment(x, y, s):
-    """VMEC++'s piecewise linear profile, which carries a point by the
-    segment whose lower knot is at or above it and is flat outside the
-    knots."""
+    """VMEC++ piecewise linear profile: the segment above each point, flat outside the knots."""
     x, y = list(map(float, x)), list(map(float, y))
     n = len(x)
     i = bisect.bisect_left(x, s)
@@ -288,9 +275,7 @@ class Profile:
 
     @classmethod
     def from_wout(cls, w):
-        """The profile of a wout object carrying pmass_type, am, the aux
-        arrays and the half-grid pressure, with the scale recovered from
-        `pres` at the first half point."""
+        """Profile of a wout, with the scale recovered from pres at the first half point."""
         prof = cls(getattr(w, "pmass_type", ""), w.am,
                    getattr(w, "aux_s", None), getattr(w, "aux_f", None))
         s1 = float(w.s_half[1])

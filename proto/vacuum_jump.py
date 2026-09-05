@@ -1,27 +1,19 @@
 """The two sides of the free-boundary jump, read at the certified boundary.
 
-`free_boundary_balanced` of theories/Hypotheses.v is continuity of the total
-pressure across the plasma-vacuum interface, p + B^2/2 against B_vac^2/2 in
-the mu0-scaled units the reconstruction carries. A free-boundary wout carries
-the plasma side, and `--edge` covers the boundary surface itself, so that side
-is a quantity a covering reaches. The vacuum side is not in the wout at all:
-the field outside the plasma is the coil field the mgrid tabulates plus the
-field of the plasma's own surface current, which VMEC's Nestor computes on
-the fly and does not write down.
+free_boundary_balanced of theories/Hypotheses.v is continuity of the total
+pressure across the interface, p + B^2/2 against B_vac^2/2 in mu0-scaled units.
+The plasma side a covering reaches through --edge; the vacuum side is the coil
+field the mgrid tabulates plus the field of the plasma's own surface current,
+which VMEC's Nestor computes and the wout does not store.
 
-This reads the half of the vacuum side that exists as data. The mgrid stores
-the coil field per coil group on a cylindrical grid, and the wout stores the
-currents that scale the groups; the trilinear interpolant of that grid at a
-boundary point is the coil field there. What it reports is the gap between
-p + B^2/2 on the plasma side and B_coil^2/2 on the other, and that gap is the
-plasma current's own contribution to the vacuum field, which nothing here
-produces. It is the size of what is missing rather than the jump itself, and
-it is printed as that.
+This reads the coil half: the mgrid coil field per group on a cylindrical grid,
+scaled by the wout's currents, trilinearly interpolated at each boundary point,
+against the plasma side's p + B^2/2. The gap is the plasma current's own
+contribution, which nothing here produces, so it measures what is missing
+rather than the jump.
 
-The plasma side is taken from the wout's own |B| series, `bmnc`, extrapolated
-from the last two half surfaces to the boundary, and the pressure from `presf`
-there. Both are floating point, as is the interpolation: this is a reading of
-the data, not a certificate.
+The plasma side is the wout's own |B| series extrapolated to the boundary and
+presf there, in floating point: a reading of the data, not a certificate.
 
   python proto/vacuum_jump.py wout_free.nc mgrid.nc [--nu 64] [--nv 16]
 """
