@@ -963,6 +963,106 @@ bound does, because the integrands do not cancel: at node 12 of
 [2.36e-03, 6.84e-03], away from zero. A quasi-symmetry residual is that again
 for every symmetry-breaking mode.
 
+## Quasisymmetry
+
+A field is quasisymmetric when its strength depends on the angles through one
+combination of the Boozer angles, which is the property that lets a stellarator
+confine as a tokamak does. The condition has a coordinate-free form that names
+no helicity and needs no transformation, the vanishing of the triple product
+
+```
+grad(psi) . (grad B x grad(B . grad B))
+```
+
+(Helander 2014; Rodriguez, Paul and Bhattacharjee 2020). In flux coordinates
+the radial row of that determinant is killed by `grad(psi)`, so it collapses to
+the `(u, v)` Jacobian of two surface functions over the coordinate Jacobian,
+and since `B = sqrt(B^2)` the square root cancels between them:
+
+```
+T = (d_u B^2 d_v W2 - d_v B^2 d_u W2) / (4 B^2 sqrt(g)),   W2 = B . grad(B^2).
+```
+
+Two things follow before any covering is run. Every toroidal derivative in `T`
+carries the integer factor `n`, so for an axisymmetric reconstruction the
+residual is not small but exactly zero, which is `toroidal_terms3_vanish` and
+`qs_triple_zero` of [theories/Identities.v](theories/Identities.v). And because
+those zeros are exact integers rather than small numbers, the interval
+evaluator reproduces them: the certified residual of `wout_solovev` over 256
+cells tiling the whole surface is
+
+```
+tightened 256 cells into cert.txt: worst cell bound 4.201968e-256
+verdict: VALID   (0.3 s)
+```
+
+which is the smallest claim the format holds, in a third of a second. An
+axisymmetric equilibrium is machine-checked quasisymmetric at every point of a
+continuum, and the arithmetic never had to decide it.
+
+On a three-dimensional surface the triple product is exact and unaffordable.
+It is third order in the angles, and the enclosure of a third derivative over a
+box exceeds the quantity by orders of magnitude until the cells are far
+narrower than any surface integrand needs. Holding the cell count and shrinking
+the cells with `--wscale`, at node 12 of `wout_cth_like_fixed_bdy` and node 25
+of the QH case:
+
+| cell width | cth_like | nfp4 QH |
+|---|---|---|
+| 1.0 | refuses | refuses |
+| 0.25 | 2.3e+13 | refuses |
+| 0.1 | 1.1e+07 | 2.3e+08 |
+| 0.05 | 3.8e+04 | 1.5e+05 |
+| 0.02 | 3.2e+02 | 6.2e+02 |
+
+against true values of `1.6e+01` and `5.6e+00`. The convergence order falls
+from about 39 through 15 and 8 to 5 as the cells narrow, which is the
+dependency of an interval evaluation collapsing rather than the function
+varying, but a tiling at the width the last row needs is millions of cells at
+fifty modes. The refusal is honest and the cost is real.
+
+The same physics has a lower-order statement. Because `B x grad(psi)` is
+tangent to the surface, the radial part of `grad B` drops out of it, and with
+`(B x grad s) . grad u = B_v / sqrt(g)` and `(B x grad s) . grad v = -B_u /
+sqrt(g)` the ratio
+
+```
+F = (B_v d_u B^2 - B_u d_v B^2) / (sqrt(g) (B^u d_u B^2 + B^v d_v B^2))
+```
+
+is a flux function exactly when the field is quasisymmetric. The factor
+relating `d_i B` to `d_i B^2` is common to numerator and denominator, so no
+square root enters and only first angular derivatives of the square field are
+read, which is the order the force residual already carries. Cleared of the
+Jacobian the defect is a polynomial with no division at all, and `F0` is
+carried by the certificate as one more input the way a Boozer stream function
+is. What a covering establishes is how far the ratio departs from being
+constant:
+
+| surface | certified defect | of the terms it is the difference of |
+|---|---|---|
+| `wout_solovev`, axisymmetric, 256 cells | 3.0e-02 | 2.6e-02 |
+| `wout_cth_like_fixed_bdy`, 64 by 16 | 2.5e-07 | 1.42 |
+| `wout_nfp4_QH_ns50`, 64 by 16 | 1.6e-05 | 1.25 |
+
+in a few seconds each. The raw defect carries the scale of the equilibrium and
+says nothing across configurations; the last column is the scale-free
+statement, and it separates the axisymmetric case from the two stellarators by
+a factor of fifty. Neither stellarator is quasisymmetric by this measure, which
+their `|B|` spectra agree with: the QH case is helically ordered, `(0,0)` at 82
+per cent and `(1,-4)` at 11 per cent along the `n = -4m` line, and still carries
+about 7 per cent symmetry-breaking content, chiefly a `(2,-4)` mode.
+
+That the axisymmetric defect is `2.6e-02` rather than zero is the difference
+between the two forms rather than a discrepancy. The triple product is a
+statement about the field alone and vanishes identically there. The two-term
+condition is equivalent to it only for a field in magnetohydrostatic
+equilibrium, so a reconstruction that satisfies force balance approximately
+carries that error into the ratio, and what the second table measures on an
+axisymmetric case is the equilibrium residual and not a departure from
+symmetry. The two are worth having together: one is exact and free where it
+applies, the other is affordable where the first is not.
+
 ## What a floor verdict excludes
 
 `check_ccert_lower` proves some component bounded away from zero at every point
@@ -1000,6 +1100,8 @@ can only test them at samples.
 | `lambda_gauge` | the m = 0, n = 0 coefficient of lambda drives nothing, so adding a function of s to lambda leaves the field where it was |
 | `assemble_value_zero` | a series whose coefficients vanish contributes nothing, which is the lasym reduction |
 | `mercier_geodesic_nonpositive` | the geodesic-curvature term of the Mercier criterion is never positive |
+| `toroidal_terms3_vanish` | the third angular derivatives carrying a toroidal factor vanish exactly when every n is zero |
+| `qs_triple_zero` | the quasisymmetry triple product is exactly zero where those derivatives are, so an axisymmetric reconstruction is quasisymmetric |
 
 ## Correspondence
 
@@ -1131,7 +1233,7 @@ INVALID.
 - `theories/Hypotheses.v` - the physical assumptions, each as a proposition about explicit objects rather than a name, with what would falsify it; two of them are theorems about the reconstruction and are proven there, and the limits no further work removes are stated in the same file
 - `theories/Mercier.v` - the Mercier criterion assembled from certified enclosures inside the checker, with the sign of its geodesic term supplied by the inequality of `Quad.v` rather than by an enclosure
 - `theories/Kantorovich.v` - the step from a small residual to a nearby equilibrium, in the abstract: the contraction mapping theorem on a ball, the Newton map, the gauge obstruction on the space of reconstructions, and the same argument on the gauge-fixed quotient, where the Kantorovich condition is a contraction and produces the unique equilibrium orbit in the ball
-- `theories/Identities.v` - what the reconstruction satisfies rather than assumes
+- `theories/Identities.v` - what the reconstruction satisfies rather than assumes, including that an axisymmetric field is exactly quasisymmetric
 - `theories/Cover.v` - that a list of cells leaves no gap, as a boolean the checker evaluates, with the exact tiling a generator emits and the concatenation of two coverings that meet
 - `theories/Cell.v` also carries a third varied slot, `check_ccert3_correct`: the bound at every point of a cell in three coordinates at once, proven by composing the two-slot walk with one more mean-value leg
 - `theories/Quad.v` - quadrature over a cell, over a tiling of equal cells and over one whose cells each carry their own width, over a rectangle of cells in both angles, differentiation of an average in the radius, and Cauchy-Schwarz for a weighted integral
@@ -1311,18 +1413,11 @@ a Biot-Savart evaluation of the surface current that nothing here does. So the
 size of what is missing is now a number rather than a description, and it is
 small.
 
-Quasi-symmetry needs the Boozer angles, and the transformation to them is in
-hand. The stream function's coefficients are certified from the covariant
-harmonics, the condition for it to exist at all is the surface current the
-residual already bounds, and the harmonics of `|B|` in the Boozer angles are
-certified integrals over the VMEC angles, Jacobian of the angle map included.
-What is not explicit is w itself: `B_u` is a rational function of the series
-and not a finite Fourier sum, so w has no closed form as an expression and is
-carried as data, and what makes that usable is the certified defect of the two
-relations defining it. What stands between this and a quasi-symmetry residual
-is the cost: one covering per symmetry-breaking mode, at the resolution a
-three-dimensional surface needs for integrands that do not cancel, which is
-under Toward Boozer coordinates.
+Quasi-symmetry is certified directly, without the Boozer angles, under
+Quasisymmetry. The route through them is still there and still costs one
+covering per symmetry-breaking mode, which is what made it unaffordable; the
+condition itself is a scalar of the field at a point and needs neither the
+transformation nor a helicity.
 
 What a certificate does not say is that a true equilibrium sits nearby. That
 step is Newton-Kantorovich, and [theories/Kantorovich.v](theories/Kantorovich.v)

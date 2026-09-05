@@ -114,6 +114,27 @@ CELLS = [
     Case("cell/solovev_terms_radial", "wout_solovev.nc",
          "--radial --node 22 --nu 128 --nrad 4 --terms", tighten=True,
          worst=1.686738e-02),
+    # The quasisymmetry residual as the triple product
+    # grad s . (grad B x grad(B . grad B)). Every toroidal derivative in it
+    # carries an integer n, so for an axisymmetric field the whole residual
+    # is exactly zero and the enclosure comes back at the smallest claim the
+    # format holds: toroidal_terms3_vanish and qs_triple_zero of
+    # theories/Identities.v, read back by the evaluator rather than argued.
+    Case("cell/solovev_quasisym", "wout_solovev.nc",
+         "--cells --node 22 --nu 256 --quasisym", tighten=True,
+         worst=4.201968e-256, published="Quasisymmetry"),
+    # The two-term form, which reads only first angular derivatives of the
+    # square field and so covers a three-dimensional surface at the cost of a
+    # force residual, where the triple product cannot be afforded.
+    Case("cell/solovev_quasitwo", "wout_solovev.nc",
+         "--cells --node 22 --nu 256 --quasisym-two", tighten=True,
+         worst=1.177794e+00),
+    Case("cell/cth_quasitwo", "wout_cth_like_fixed_bdy.nc",
+         "--cells --node 12 --nu 64 --nv 16 --surface --quasisym-two",
+         tighten=True, worst=2.528551e-07, published="Quasisymmetry"),
+    Case("cell/qh_quasitwo", "wout_nfp4_QH_ns50.nc",
+         "--cells --node 25 --nu 64 --nv 16 --surface --quasisym-two",
+         tighten=True, worst=1.611466e-05, published="Quasisymmetry"),
 ]
 
 # Angular integrals, against the intervals quoted in the README.
@@ -295,6 +316,17 @@ REFERENCE = [
      "--radial --node 22 --nu 512 --nrad 8", 0.39930555555555625),
 ]
 
+# The certified quasisymmetry residual at a cell centre against the float
+# reference of the same triple product, which proto/continuum_ref.py builds
+# by a generic product rule from the series rather than by expanding the
+# derivatives as theories/Physics.v does. On the axisymmetric case both are
+# exactly zero, which is the theorem read as a number; on the
+# three-dimensional one the enclosure has to bracket the reference.
+QSREF = [
+    ("reference/quasisym_solovev", "wout_solovev.nc", 22, 8, 0),
+    ("reference/quasisym_cth", "wout_cth_like_fixed_bdy.nc", 12, 64, 16),
+]
+
 # Certificates carry their inputs, and nothing inside the proof ties those
 # inputs to a wout. gen/verify_cert.py reads both and compares; these cases
 # check that it passes what belongs together and rejects what does not, which
@@ -352,6 +384,14 @@ CORRESPOND = [
     # the guard reads the pressure back against pres instead
     ("correspond/pres_scale", "wout_cth_like_fixed_bdy.nc",
      "wout_cth_like_fixed_bdy.nc", "--node 12 --nu 8 --nv 4", True),
+    ("correspond/quasisym", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --quasisym", True),
+    # the two-term form carries one more input, the flux function the ratio
+    # is claimed to equal, on an FZERO line the guard reads back
+    ("correspond/quasitwo", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --quasisym-two", True),
+    ("correspond/quasitwo_wrong", "wout_solovev.nc", "wout_cma.nc",
+     "--cells --node 22 --nu 32 --quasisym-two", False),
 ]
 
 # The Mercier criterion, assembled inside the checker by theories/Mercier.v.
@@ -1075,6 +1115,66 @@ def check_reference(name, wout, node, gen_args, radius, main, python, tmp):
                   f"{(got / abs(want) - 1) * 1e6:.1f} ppm wider")
 
 
+def check_qs_reference(name, wout, node, nu, nv, main, python, tmp):
+    """The certified quasisymmetry residual at the centre of the first cell
+    against the float reference of the same triple product, read at exactly
+    the angle the certificate carries."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    surface = f" --nv {nv} --surface" if nv else ""
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" --cells --node {node} '
+                  f'--nu {nu}{surface} --quasisym')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    # the centre of the first cell, from the file, so the reference is read
+    # at the angle the checker uses and not at one rounded from it
+    lines = src.read_text().splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith("NANGLES"))
+    f = lines[i + 1].split()
+    u = int(f[0]) * 2.0 ** int(f[1])
+    v = int(f[2]) * 2.0 ** int(f[3])
+    ref = ROOT / "proto" / "continuum_ref.py"
+    rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --quasisym '
+                  f'--u {u!r} --v {v!r}')
+    if rc != 0:
+        return "fail", "reference: " + out.strip().splitlines()[-1]
+    m = re.search(r"triple product ([0-9.e+-]+)", out)
+    if not m:
+        return "fail", "the reference printed no triple product"
+    want = float(m.group(1))
+    env = dict(os.environ, STELLAROCQ_JOBS="1", STELLAROCQ_DEBUG="1")
+    p = subprocess.run(f'"{main}" "{src}"', shell=True, env=env,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True)
+    m = re.search(r"component r_s: needed centre=([0-9.e+-]+)", p.stdout)
+    if not m:
+        return "fail", "the checker printed no centre enclosure"
+    got = float(m.group(1))
+    if want == 0.0:
+        # The axisymmetric case, where every toroidal derivative is an
+        # integer zero and the residual is exactly zero. A claim is carried
+        # as N * 2^q with the exponent floored, so what an exact zero comes
+        # back as is the smallest number the format holds rather than the
+        # literal 0.0.
+        if got > 1e-300:
+            return "fail", (f"enclosure {got:.3e} where the reference is "
+                            f"exactly zero")
+        return "ok", f"{got:.3e} at the centre, an exact zero in the format"
+    # The reference divides by the Jacobian at every stage where the
+    # certificate is polynomial in it, and the triple product is a deep
+    # cancellation, so the two agree to about a part in ten million rather
+    # than to rounding. The finite-difference check of the reference sits at
+    # the same order, which is what says the gap is the reference's.
+    tol = 1e-5
+    if got < want * (1 - tol):
+        return "fail", f"enclosure {got:.9e} below the reference {want:.9e}"
+    if got > want * (1 + tol):
+        return "fail", f"enclosure {got:.9e} far above the reference {want:.9e}"
+    return "ok", (f"enclosure {got:.6e} against reference {want:.6e}, "
+                  f"{(got / want - 1) * 1e6:.2f} ppm apart")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=None,
@@ -1116,6 +1216,7 @@ def main():
                    len("reference/halfgrid_node22"),
                    len("correspond/swapped_radial"),
                    len("correspond/rescaled_piece"),
+                   len("reference/quasisym_solovev"),
                    len("audit/patch_surface")])
     counts = {"ok": 0, "fail": 0, "skip": 0}
     failures = []
@@ -1337,6 +1438,17 @@ def main():
             mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
             print(f"{mark} {name:<{width}}  {detail}  "
                   f"({time.time() - t:.1f} s)", flush=True)
+
+    for name, wout, node, nu, nv in QSREF:
+        if a.only and a.only not in name:
+            continue
+        t = time.time()
+        status, detail = check_qs_reference(name, data / wout, node, nu, nv,
+                                            a.main, a.python, tmp)
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
+              flush=True)
 
     print(f"\n{counts['ok']} passed, {counts['fail']} failed, "
           f"{counts['skip']} skipped in {time.time() - t0:.1f} s")

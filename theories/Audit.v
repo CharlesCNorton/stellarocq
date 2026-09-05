@@ -44,3 +44,6 @@ Print Assumptions kantorovich_is_gauge_fixed.
 Print Assumptions gauge_is_fixed_on_the_ball.
 Print Assumptions newton_contracts.
 Print Assumptions gauge_quotient_equilibrium.
+Print Assumptions toroidal_terms3_vanish.
+Print Assumptions toroidal_lambda_terms3_vanish.
+Print Assumptions qs_triple_zero.

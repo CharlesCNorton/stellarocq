@@ -199,3 +199,26 @@ Definition jump (p B2 Bvac2 : expr) : expr :=
 
 Definition free_boundary_balanced (p B2 Bvac2 : expr) : Prop :=
   forall env, xeval env (jump p B2 Bvac2) = Xreal 0.
+
+(** Quasisymmetry. The field strength depends on the angles only through one
+    combination M theta_B - N zeta_B of the Boozer angles, for some helicity
+    (M, N), which is the property that lets a stellarator confine as a
+    tokamak does. Its coordinate-free form is that the triple product
+
+      grad psi . (grad B x grad(B . grad B))
+
+    vanishes, a scalar of the field at a point that needs neither the Boozer
+    transform nor a choice of helicity (Helander 2014; Rodriguez, Paul and
+    Bhattacharjee 2020). [Physics.qs_triple_e] builds it from the
+    reconstruction and a covering bounds it. That the vanishing of the
+    triple product is equivalent to quasisymmetry is a theorem of the
+    literature cited and is not proven here; what is proven is that the
+    residual is that triple product and that it vanishes exactly for an
+    axisymmetric reconstruction, [Identities.qs_triple_zero] with
+    [Identities.toroidal_terms3_vanish].
+
+    Contradicted by: a certified triple product bounded away from zero on a
+    surface, which is a departure from quasisymmetry of every helicity at
+    once, since the condition names none. *)
+Definition quasisymmetric_at (T : expr) (e : env ExtendedR) : Prop :=
+  xeval e T = Xreal 0.

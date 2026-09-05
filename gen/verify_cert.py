@@ -17,7 +17,8 @@ cover the verdicts rather than a subset of them: a node block that says SAME
 and takes the coefficients of the one before it, a node's own pressure piece on
 an AMLOCAL line, the Boozer stream function on a WCOEF line, a third varied
 slot on a SLOT3 line and the two extra numbers per bound line it brings, and
-the outputs whose OUTPUT line carries a mode pair.
+the outputs whose OUTPUT line carries a mode pair. The quasisymmetry output is
+a surface covering at a node, laid out as the residual's is, with no mode pair.
 
 Two blocks the wout constrains only indirectly are checked against it anyway. A
 node's local pressure cubic is evaluated at the node's radius and read against
@@ -392,6 +393,16 @@ def main():
                     problems.append(
                         f"node {j} {nm}: certificate {got!r}, wout "
                         f"{arr[j + 1]!r}")
+
+        # The flux function a two-term quasisymmetry certificate claims the
+        # ratio equals. Nothing in the wout holds it, since it is a property
+        # of the reconstruction the covering bounds the departure from, so
+        # what is checked is that it is present and finite.
+        if r.peek() == "FZERO":
+            r.next()
+            f0 = r.dyadic()
+            if not (f0 == f0 and abs(f0) < float("inf")):
+                problems.append(f"node {j}: FZERO is not a finite number")
 
         if cells:
             r.expect("CELLS")

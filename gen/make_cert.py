@@ -5,7 +5,7 @@ mu0-scaled ideal-MHD force residual of the equilibrium reconstructed from the
 wout coefficients by VMEC's own half-grid rule (fixed in theories/Physics.v)
 lies within the claimed per-component bounds: r_s at the node from the
 centered differences of its two half points, r_u and r_v at the outer half
-point.  Every numeric input is an IEEE double from the wout, emitted exactly
+point. Every numeric input is an IEEE double from the wout, emitted exactly
 as a dyadic rational m*2^e; the checker encloses the true real arithmetic
 with proven-sound interval arithmetic, so a VALID verdict is a theorem about
 these exact inputs.
@@ -16,10 +16,9 @@ Environment layout per point (must match theories/Physics.v):
   +3K Z | +6K lambda (rows h-, h+)      (K = mnmax)
   32+8K..   scratch slots the checker fills with shared subexpressions
 
-With --cells the certificate instead claims its bounds over cells of angles,
-so that a VALID verdict covers the continuum between the sampled angles and
-not only the samples. The bounds of a cell certificate are written by the
-checker itself:
+With --cells the certificate claims its bounds over cells of angles, covering
+the continuum between the samples; the bounds are written by the checker, not
+the generator:
 
   python make_cert.py wout_X.nc cell_X.txt --cells --nu 8192
   main --tighten cell_X.txt cert_X.txt
@@ -431,6 +430,10 @@ def output_line(a):
     """The OUTPUT line: what the three components of the certificate carry."""
     if a.current:
         return "radial-current-terms" if a.radial else "current-terms"
+    if a.quasisym_two:
+        return "quasisym-two"
+    if a.quasisym:
+        return "quasisym"
     if a.terms:
         return "radial-terms" if a.radial else "terms"
     if a.stream_defect:
@@ -706,7 +709,48 @@ def half_point(w, j_in, j_out, row_l, u, vv, phip):
         "B_s_v": B_s_v,
         "mu0Js": mu0Js,
         "B2": B2,
+        "sqrtg": sqrtg,
     }
+
+
+def qs_F0(w, j, phip, nu=64, nv=16, h=1.0e-5):
+    """The flux function the two-term quasisymmetry ratio is claimed to equal.
+
+    The ratio is
+
+      F = (B_v d_u B^2 - B_u d_v B^2) / (sqrt(g) (B^u d_u B^2 + B^v d_v B^2)),
+
+    constant over the surface exactly when the field is quasisymmetric. This
+    reads it at a grid of angles by differencing the square field and takes
+    the median, which is steady where the mean is not: the denominator passes
+    through zero wherever the field strength is stationary along a line, and
+    F runs away at those angles without the surface being any less
+    quasisymmetric there.
+
+    Nothing here is certified. What the certificate carries is this number,
+    and what a covering establishes is how far the ratio departs from it,
+    which is the same arrangement the Boozer stream function is under.
+    """
+    n = w.xn
+    if not (n != 0).any():
+        nv = 1
+    b2 = lambda u, vv: half_point(w, j, j + 1, j + 1, u, vv, phip)["B2"]  # noqa: E731
+    vals = []
+    for k in range(nu):
+        u = 2.0 * np.pi * k / nu
+        for l in range(nv):
+            vv = 2.0 * np.pi * l / nv
+            q = half_point(w, j, j + 1, j + 1, u, vv, phip)
+            b2u = (b2(u + h, vv) - b2(u - h, vv)) / (2 * h)
+            b2v = (b2(u, vv + h) - b2(u, vv - h)) / (2 * h)
+            den = q["sqrtg"] * (q["Bu"] * b2u + q["Bv"] * b2v)
+            if den == 0.0:
+                continue
+            vals.append((q["B_v"] * b2u - q["B_u"] * b2v) / den)
+    if not vals:
+        msg = "the quasisymmetry ratio has no finite value on this surface"
+        raise SystemExit(msg)
+    return float(np.median(np.array(vals)))
 
 
 def residual_ref(w, j, u, vv, phip):
@@ -992,6 +1036,11 @@ def write_ccert(a, w, K, phip, idx, us, vs, nv, three_d):
                 P("{} {}".format(*dyadic(x)))
             P("{} {}".format(*dyadic(I_)))
             P("{} {}".format(*dyadic(G_)))
+        if a.quasisym_two:
+            f0 = qs_F0(w, j, phip)
+            P("FZERO")
+            P("{} {}".format(*dyadic(f0)))
+            print(f"  node {j}: quasisymmetry ratio F0 = {f0:.9e}")
         P(f"CELLS {len(angles)}")
         # The bounds are placeholders that "main --tighten" replaces with the
         # enclosures the checker computes, because the width of an interval
@@ -1411,6 +1460,24 @@ def main():
         "to exist",
     )
     ap.add_argument(
+        "--quasisym",
+        action="store_true",
+        help="carry the quasisymmetry residual at the outer half point: the "
+        "triple product grad s . (grad B x grad(B . grad B)), which vanishes "
+        "exactly when the field is quasisymmetric of any helicity, as the "
+        "difference of the two products it is made of. A scalar of the field "
+        "at a point, so no Boozer transform and no per-mode integral.",
+    )
+    ap.add_argument(
+        "--quasisym-two",
+        action="store_true",
+        help="the two-term quasisymmetry residual instead of the triple "
+        "product: the defect of the claim that "
+        "(B x grad s . grad B)/(B . grad B) is the flux function the "
+        "certificate carries, which reads only first angular derivatives of "
+        "the square field and so costs what a force residual costs",
+    )
+    ap.add_argument(
         "--geometry",
         action="store_true",
         help="carry the integrands of the flux-surface averages instead of "
@@ -1453,8 +1520,18 @@ def main():
         a.cells = True
     if (a.geometry or a.mercier or a.shear or a.covariant
             or a.covariant_sin or a.stream_defect or a.boozer
-            or a.terms or a.current) and not a.cells:
+            or a.terms or a.current or a.quasisym
+            or a.quasisym_two) and not a.cells:
         msg = "these outputs carry integrands, so they need --cells"
+        raise SystemExit(msg)
+    if a.quasisym_two and a.radial:
+        msg = ("the two-term quasisymmetry residual is a surface quantity "
+               "read at the outer half point, so it takes a surface covering")
+        raise SystemExit(msg)
+    if a.quasisym and a.radial:
+        msg = ("the quasisymmetry residual is a surface quantity read at the "
+               "outer half point, so it takes a surface covering rather than "
+               "a radial one")
         raise SystemExit(msg)
     if (a.terms or a.current) and (a.axis or a.edge):
         msg = ("the innermost and outermost intervals are reconstructed from "

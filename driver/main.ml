@@ -1083,6 +1083,8 @@ let () =
     | "radial-terms" -> Physics.RRadialTerms
     | "current-terms" -> Physics.RJsTerms
     | "radial-current-terms" -> Physics.RRadialJsTerms
+    | "quasisym" -> Physics.RQuasiSym
+    | "quasisym-two" -> Physics.RQuasiTwo
     | "covariant" ->
         let hm = int64 () in
         let hn = int64 () in
@@ -1221,6 +1223,12 @@ let () =
           (prerr_endline "WCOEF count differs from MODES"; exit 2);
         Array.init (nk + 2) (fun _ -> dyadic ())
       end else [||] in
+    (* the flux function a two-term quasisymmetry certificate claims the
+       ratio equals; one number, read the way the stream function block is *)
+    let f0block =
+      if !p < Array.length toks && toks.(!p) = "FZERO"
+      then (ignore (tok ()); [| dyadic () |])
+      else [||] in
     let bounds =
       if cells_mode then begin
         expect "CELLS";
@@ -1235,7 +1243,8 @@ let () =
       end else [||] in
     nodes.(i) <-
       Some (s, snodes, shalf, iota, rn, zn, ln,
-            Array.append anti wblock, bounds, node_du, node_am)
+            Array.append anti (Array.append wblock f0block),
+            bounds, node_du, node_am)
   done;
   let node_at i =
     match nodes.(i) with
@@ -1720,6 +1729,9 @@ let () =
                [ "(dvBs-dsBv)Bv"; "(dsBu-duBs)Bu"; "mu0 p'" ]
            | Physics.RJsTerms | Physics.RRadialJsTerms ->
                [ "d_u B_v"; "d_v B_u"; "mu0 sqrtg J^s" ]
+           | Physics.RQuasiSym -> [ "qs triple"; "term uv"; "term vu" ]
+           | Physics.RQuasiTwo -> [ "qs defect"; "B x grad s . grad B";
+                                    "F0 B . grad B" ]
            | Physics.RCovHarm (_, _) -> [ "B_u k"; "B_v k"; "mu0 sqrtg J^s k" ]
            | Physics.RCovHarmS (_, _) -> [ "B_u k"; "B_v k"; "mu0 sqrtg J^s k" ]
            | Physics.RStreamDefect ->

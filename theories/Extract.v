@@ -11,4 +11,4 @@ Separate Extraction check_cert check_cert_lower Cert CPoint check_ccert check_cc
   with_derivs2 PConfig RResidual RHarmonic RGeometry RMercierA RMercierB PPower PTwoPower PCubic PRational PGaussTrunc
   PTwoPowerGs PPedestal PTwoLorentz RRadialAxis RCovHarm RCovHarmS
   RStreamDefect RBoozer RTerms RRadialTerms RJsTerms RRadialJsTerms
-  base_scratch_of.
+  RQuasiSym RQuasiTwo base_scratch_of.

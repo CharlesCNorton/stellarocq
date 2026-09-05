@@ -493,3 +493,132 @@ Proof.
       intros k _ Hn. rewrite Hn. reflexivity.
       intros k Hin. exact (proj2 (Hk k Hin)).
 Qed.
+
+(* ---------------------------------------------------------------- *)
+(* An axisymmetric reconstruction is exactly quasisymmetric          *)
+
+(** The third-order series carry the same integer factors as the lower
+    orders, so the ones with a toroidal derivative vanish exactly when every
+    n is zero; only the pure poloidal derivatives survive. This is what the
+    quasisymmetry residual reads, and it is why that residual is the zero
+    expression for an axisymmetric field. *)
+Theorem toroidal_terms3_vanish :
+  forall env kers coefs even,
+  (forall k, In k kers -> mk_n k = 0%Z) ->
+  (forall k, In k kers ->
+     (exists x, xeval env (mk_cos k) = Xreal x) /\
+     (exists x, xeval env (mk_sin k) = Xreal x)) ->
+  (forall c, In c coefs ->
+     (exists x, xeval env (c_val c) = Xreal x) /\
+     (exists x, xeval env (c_ds c) = Xreal x)) ->
+  xeval env (p3_uuv (assemble3 kers coefs even)) = Xreal 0%R /\
+  xeval env (p3_uvv (assemble3 kers coefs even)) = Xreal 0%R /\
+  xeval env (p3_vvv (assemble3 kers coefs even)) = Xreal 0%R /\
+  xeval env (p3_suv (assemble3 kers coefs even)) = Xreal 0%R /\
+  xeval env (p3_svv (assemble3 kers coefs even)) = Xreal 0%R.
+Proof.
+  intros env kers coefs even Hn Hk Hc.
+  assert (Hpair : forall kc, In kc (combine kers coefs) ->
+            mk_n (fst kc) = 0%Z /\
+            (exists x, xeval env (mk_cos (fst kc)) = Xreal x) /\
+            (exists x, xeval env (mk_sin (fst kc)) = Xreal x) /\
+            (exists x, xeval env (c_val (snd kc)) = Xreal x) /\
+            (exists x, xeval env (c_ds (snd kc)) = Xreal x)).
+  { intros [kk cc] Hin.
+    assert (Hkk := in_combine_l _ _ _ _ Hin).
+    assert (Hcc := in_combine_r _ _ _ _ Hin).
+    destruct (Hk kk Hkk) as [Hc1 Hs1]. destruct (Hc cc Hcc) as [Hv1 Hd1].
+    cbn [fst snd]. repeat split; try assumption. now apply Hn. }
+  unfold assemble3. cbn [p3_uuv p3_uvv p3_vvv p3_suv p3_svv].
+  repeat split; apply xeval_esum_map_zero; intros kc Hkc;
+    destruct (Hpair kc Hkc) as [Hzero [[xc Hcos] [[xs Hsin] [[xv Hval] [xd Hds]]]]];
+    rewrite Hzero.
+  - (* uuv: the switch of the toroidal angle carries n *)
+    destruct even; cbn [Z.opp]; rewrite Z.mul_0_l;
+      [ apply (xeval_zmul_zero _ _ (xv * xs)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xv * xc)%R); now apply xeval_mul_real ].
+  - (* uvv: the square of n *)
+    rewrite Z.mul_0_l. cbn [Z.opp]. rewrite Z.mul_0_r.
+    destruct even;
+      [ apply (xeval_zmul_zero _ _ (xv * xs)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xv * xc)%R); now apply xeval_mul_real ].
+  - (* vvv: both *)
+    destruct even; cbn [Z.opp]; rewrite Z.mul_0_l;
+      [ apply (xeval_zmul_zero _ _ (xv * xs)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xv * xc)%R); now apply xeval_mul_real ].
+  - (* suv: m n, on the radial derivative of the coefficient *)
+    rewrite Z.mul_0_r.
+    destruct even;
+      [ apply (xeval_zmul_zero _ _ (xd * xc)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xd * xs)%R); now apply xeval_mul_real ].
+  - (* svv: n squared, on the radial derivative of the coefficient *)
+    rewrite Z.mul_0_l. cbn [Z.opp].
+    destruct even;
+      [ apply (xeval_zmul_zero _ _ (xd * xc)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xd * xs)%R); now apply xeval_mul_real ].
+Qed.
+
+(** The same for the stream function's third derivatives. *)
+Theorem toroidal_lambda_terms3_vanish :
+  forall env kers coefs even,
+  (forall k, In k kers -> mk_n k = 0%Z) ->
+  (forall k, In k kers ->
+     (exists x, xeval env (mk_cos k) = Xreal x) /\
+     (exists x, xeval env (mk_sin k) = Xreal x)) ->
+  (forall c, In c coefs -> exists x, xeval env c = Xreal x) ->
+  xeval env (l3_uuv (lambda_terms3 kers coefs even)) = Xreal 0%R /\
+  xeval env (l3_uvv (lambda_terms3 kers coefs even)) = Xreal 0%R /\
+  xeval env (l3_vvv (lambda_terms3 kers coefs even)) = Xreal 0%R.
+Proof.
+  intros env kers coefs even Hn Hk Hc.
+  assert (Hpair : forall kc, In kc (combine kers coefs) ->
+            mk_n (fst kc) = 0%Z /\
+            (exists x, xeval env (mk_cos (fst kc)) = Xreal x) /\
+            (exists x, xeval env (mk_sin (fst kc)) = Xreal x) /\
+            (exists x, xeval env (snd kc) = Xreal x)).
+  { intros [kk cc] Hin.
+    assert (Hkk := in_combine_l _ _ _ _ Hin).
+    assert (Hcc := in_combine_r _ _ _ _ Hin).
+    destruct (Hk kk Hkk) as [Hc1 Hs1].
+    cbn [fst snd]. repeat split; try assumption. now apply Hn. now apply Hc. }
+  unfold lambda_terms3. cbn [l3_uuv l3_uvv l3_vvv].
+  repeat split; apply xeval_esum_map_zero; intros kc Hkc;
+    destruct (Hpair kc Hkc) as [Hzero [[xc Hcos] [[xs Hsin] [xv Hval]]]];
+    rewrite Hzero.
+  - destruct even; cbn [Z.opp]; rewrite Z.mul_0_l;
+      [ apply (xeval_zmul_zero _ _ (xv * xs)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xv * xc)%R); now apply xeval_mul_real ].
+  - rewrite Z.mul_0_l. cbn [Z.opp]. rewrite Z.mul_0_r.
+    destruct even;
+      [ apply (xeval_zmul_zero _ _ (xv * xs)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xv * xc)%R); now apply xeval_mul_real ].
+  - destruct even; cbn [Z.opp]; rewrite Z.mul_0_l;
+      [ apply (xeval_zmul_zero _ _ (xv * xs)%R); now apply xeval_mul_real
+      | apply (xeval_zmul_zero _ _ (xv * xc)%R); now apply xeval_mul_real ].
+Qed.
+
+(** The (u, v)-Jacobian of two surface functions with no toroidal variation
+    is zero. This is the whole of the quasisymmetry of an axisymmetric
+    field once the toroidal derivatives are known to vanish, and it is stated
+    on the combinator the residual is built with, for any real values of the
+    poloidal derivatives and any nonzero denominator. What a covering bounds
+    is this expression read at the slots of a point; what this says is that
+    where the two toroidal derivatives are zero the bound is exact. *)
+Theorem qs_triple_zero :
+  forall env dB2u dB2v dW2u dW2v den a c d,
+  xeval env dB2u = Xreal a ->
+  xeval env dB2v = Xreal 0%R ->
+  xeval env dW2u = Xreal c ->
+  xeval env dW2v = Xreal 0%R ->
+  xeval env den = Xreal d ->
+  d <> 0%R ->
+  xeval env (qs_triple_e dB2u dB2v dW2u dW2v den) = Xreal 0%R.
+Proof.
+  intros env dB2u dB2v dW2u dW2v den a c d Hu Hv Hwu Hwv Hd Hd0.
+  unfold qs_triple_e. cbn [xeval].
+  rewrite Hu, Hv, Hwu, Hwv, Hd.
+  cbn [Xmul]. unfold Xdiv, Xdiv'.
+  generalize (is_zero_spec d). case (is_zero d).
+  - intros Hz. inversion Hz. contradiction.
+  - intros _. cbn [Xsub]. f_equal. unfold Rdiv. ring.
+Qed.

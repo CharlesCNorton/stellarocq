@@ -356,7 +356,9 @@ Inductive rout : Type :=
   | RTerms
   | RRadialTerms
   | RJsTerms
-  | RRadialJsTerms.
+  | RRadialJsTerms
+  | RQuasiSym
+  | RQuasiTwo.
 
 (** True when the output is read from the reconstruction at a free radius. *)
 Definition is_radial (o : rout) : bool :=
@@ -440,9 +442,22 @@ Definition is_axis (o : rout) : bool :=
 Definition n_extra (o : rout) : nat :=
   match o with RStreamDefect | RBoozer _ _ => 1 | _ => 0 end.
 
+(** How many input slots that block holds. A stream function carries its K
+    coefficients and the two flux functions beside them; the two-term
+    quasisymmetry residual carries one flux function and nothing else. *)
+Definition n_extra_slots (o : rout) (K : nat) : nat :=
+  match o with
+  | RStreamDefect | RBoozer _ _ => K + 2
+  | RQuasiTwo => 1
+  | _ => 0
+  end.
+
 (** First scratch slot, which depends on whether that block is there. *)
 Definition base_scratch_of (lasym : bool) (o : rout) (K : nat) : nat :=
-  base_W lasym K + n_extra o * (K + 2).
+  base_W lasym K + n_extra_slots o K.
+
+(** The flux function a two-term certificate carries. *)
+Definition slot_F0 (lasym : bool) (K : nat) := evar (base_W lasym K).
 
 Record pconfig := PConfig {
   pc_lasym : bool ;
@@ -651,6 +666,101 @@ Definition lambda_partials_b (b : builder) (l : lpartials)
   (b, LPartials lu lv luu luv lvv).
 
 (* ---------------------------------------------------------------- *)
+(* Third angular derivatives, for the quasisymmetry residual        *)
+
+(** The quasisymmetry residual reads second angular derivatives of the
+    field, and the field reads first derivatives of the Jacobian, so the
+    series are carried to third order in the angles and to second order in
+    the angles beside a radial derivative. Nothing on the residual path reads
+    these, so they live in their own records and are allocated only for the
+    output that asks for them; every other certificate keeps the bindings it
+    had. Continuing the table above, for F = sum c cos(a):
+      F_uuu = sum  m^3 c sin      F_uuv = sum -m^2 n c sin
+      F_uvv = sum  m n^2 c sin    F_vvv = sum -n^3 c sin
+      F_suu = sum -m^2 c' cos     F_suv = sum  m n c' cos    F_svv = sum -n^2 c' cos
+    and for F = sum c sin(a) the third derivatives take cos with the opposite
+    signs. Each third-order factor is the first-order factor of that angle
+    times the second-order factor of the other two, which is how they are
+    written below, so the same two switches [su] and [sv] serve both
+    parities. *)
+Record partials3 := Partials3 {
+  p3_uuu : expr ; p3_uuv : expr ; p3_uvv : expr ; p3_vvv : expr ;
+  p3_suu : expr ; p3_suv : expr ; p3_svv : expr }.
+
+Definition assemble3 (kers : list mode_kernels) (coefs : list coef2)
+    (even : bool) : partials3 :=
+  let pair := combine kers coefs in
+  let sum f := esum (map f pair) in
+  let k0 kc := if even then mk_cos (fst kc) else mk_sin (fst kc) in
+  let k1 kc := if even then mk_sin (fst kc) else mk_cos (fst kc) in
+  let su kc := if even then Z.opp (mk_m (fst kc)) else mk_m (fst kc) in
+  let sv kc := if even then mk_n (fst kc) else Z.opp (mk_n (fst kc)) in
+  let mm kc := (mk_m (fst kc) * mk_m (fst kc))%Z in
+  let nn kc := (mk_n (fst kc) * mk_n (fst kc))%Z in
+  Partials3
+    (sum (fun kc => zmul (su kc * Z.opp (mm kc))%Z
+                         (Emul (c_val (snd kc)) (k1 kc))))
+    (sum (fun kc => zmul (sv kc * Z.opp (mm kc))%Z
+                         (Emul (c_val (snd kc)) (k1 kc))))
+    (sum (fun kc => zmul (su kc * Z.opp (nn kc))%Z
+                         (Emul (c_val (snd kc)) (k1 kc))))
+    (sum (fun kc => zmul (sv kc * Z.opp (nn kc))%Z
+                         (Emul (c_val (snd kc)) (k1 kc))))
+    (sum (fun kc => zmul (Z.opp (mm kc)) (Emul (c_ds (snd kc)) (k0 kc))))
+    (sum (fun kc => zmul (mk_m (fst kc) * mk_n (fst kc))%Z
+                         (Emul (c_ds (snd kc)) (k0 kc))))
+    (sum (fun kc => zmul (Z.opp (nn kc)) (Emul (c_ds (snd kc)) (k0 kc)))).
+
+(** Sum two third-order series termwise, as [padd] does. *)
+Definition padd3 (p q : partials3) : partials3 :=
+  Partials3 (Eadd (p3_uuu p) (p3_uuu q)) (Eadd (p3_uuv p) (p3_uuv q))
+            (Eadd (p3_uvv p) (p3_uvv q)) (Eadd (p3_vvv p) (p3_vvv q))
+            (Eadd (p3_suu p) (p3_suu q)) (Eadd (p3_suv p) (p3_suv q))
+            (Eadd (p3_svv p) (p3_svv q)).
+
+(** Allocate each of the seven sums. *)
+Definition partials3_b (b : builder) (p : partials3) : builder * partials3 :=
+  let (b, a1) := alloc b (p3_uuu p) in
+  let (b, a2) := alloc b (p3_uuv p) in
+  let (b, a3) := alloc b (p3_uvv p) in
+  let (b, a4) := alloc b (p3_vvv p) in
+  let (b, a5) := alloc b (p3_suu p) in
+  let (b, a6) := alloc b (p3_suv p) in
+  let (b, a7) := alloc b (p3_svv p) in
+  (b, Partials3 a1 a2 a3 a4 a5 a6 a7).
+
+(** The stream function's third angular derivatives. *)
+Record lpartials3 := LPartials3 {
+  l3_uuu : expr ; l3_uuv : expr ; l3_uvv : expr ; l3_vvv : expr }.
+
+Definition lambda_terms3 (kers : list mode_kernels) (coefs : list expr)
+    (even : bool) : lpartials3 :=
+  let pair := combine kers coefs in
+  let sum f := esum (map f pair) in
+  let k1 kc := if even then mk_sin (fst kc) else mk_cos (fst kc) in
+  let su kc := if even then Z.opp (mk_m (fst kc)) else mk_m (fst kc) in
+  let sv kc := if even then mk_n (fst kc) else Z.opp (mk_n (fst kc)) in
+  let mm kc := (mk_m (fst kc) * mk_m (fst kc))%Z in
+  let nn kc := (mk_n (fst kc) * mk_n (fst kc))%Z in
+  LPartials3
+    (sum (fun kc => zmul (su kc * Z.opp (mm kc))%Z (Emul (snd kc) (k1 kc))))
+    (sum (fun kc => zmul (sv kc * Z.opp (mm kc))%Z (Emul (snd kc) (k1 kc))))
+    (sum (fun kc => zmul (su kc * Z.opp (nn kc))%Z (Emul (snd kc) (k1 kc))))
+    (sum (fun kc => zmul (sv kc * Z.opp (nn kc))%Z (Emul (snd kc) (k1 kc)))).
+
+Definition ladd3 (p q : lpartials3) : lpartials3 :=
+  LPartials3 (Eadd (l3_uuu p) (l3_uuu q)) (Eadd (l3_uuv p) (l3_uuv q))
+             (Eadd (l3_uvv p) (l3_uvv q)) (Eadd (l3_vvv p) (l3_vvv q)).
+
+Definition lambda_partials3_b (b : builder) (l : lpartials3)
+    : builder * lpartials3 :=
+  let (b, a1) := alloc b (l3_uuu l) in
+  let (b, a2) := alloc b (l3_uuv l) in
+  let (b, a3) := alloc b (l3_uvv l) in
+  let (b, a4) := alloc b (l3_vvv l) in
+  (b, LPartials3 a1 a2 a3 a4).
+
+(* ---------------------------------------------------------------- *)
 (* The divergence of the Jacobian-weighted field                     *)
 
 (** VMEC's ansatz sets sqrt(g) B^u = phip (iota - lambda_v),
@@ -684,7 +794,24 @@ Record halfq := HalfQ {
   q_R : expr ; q_Ru : expr ; q_Rv : expr ;   (* the cylindrical embedding *)
   q_Zu : expr ; q_Zv : expr ;
   q_guu : expr ;                       (* the metric element g_uu *)
-  q_L : expr ; q_Lu : expr ; q_Lv : expr }.  (* the stream function *)
+  q_L : expr ; q_Lu : expr ; q_Lv : expr ;   (* the stream function *)
+  (* The rest of what the half point allocates, exposed so that a later
+     stage can build on it without allocating it again. The quasisymmetry
+     residual reads the series, the Jacobian, the metric and the field with
+     their first angular derivatives from here and adds only what sits above
+     them. Nothing is allocated for these; they are the slots already bound
+     above, returned by name. *)
+  q_Rs : expr ; q_Rsu : expr ; q_Rsv : expr ;
+  q_Ruu : expr ; q_Ruv : expr ; q_Rvv : expr ;
+  q_Zs : expr ; q_Zsu : expr ; q_Zsv : expr ;
+  q_Zuu : expr ; q_Zuv : expr ; q_Zvv : expr ;
+  q_Luu : expr ; q_Luv : expr ; q_Lvv : expr ;
+  q_tau : expr ; q_tau_u : expr ; q_tau_v : expr ;
+  q_g_u : expr ; q_g_v : expr ;
+  q_guv : expr ; q_gvv : expr ;
+  q_guu_v : expr ; q_guv_u : expr ; q_guv_v : expr ; q_gvv_u : expr ;
+  q_bu_num : expr ; q_bv_num : expr ; q_g2 : expr ;
+  q_Bu_u : expr ; q_Bv_u : expr ; q_Bu_v : expr ; q_Bv_v : expr }.
 
 (* ---------------------------------------------------------------- *)
 (* Integrands of the flux-surface averages                           *)
@@ -817,7 +944,391 @@ Definition half_point_b (b : builder) (lasym : bool)
     alloc b (esum (map (fun kc => Emul (snd kc) (mk_sin (fst kc)))
                        (combine kers cL))) in
   (b, HalfQ Bu Bv B_u B_v B_s B_s_u B_s_v B_v_u B_u_v mu0Js sqrtg
-        R R_u R_v Z_u Z_v guu lam L_u L_v).
+        R R_u R_v Z_u Z_v guu lam L_u L_v
+        R_s R_su R_sv R_uu R_uv R_vv
+        Z_s Z_su Z_sv Z_uu Z_uv Z_vv
+        L_uu L_uv L_vv
+        tau tau_u tau_v g_u g_v guv gvv
+        guu_v guv_u guv_v gvv_u
+        bu_num bv_num g2 Bu_u Bv_u Bu_v Bv_v).
+
+(* ---------------------------------------------------------------- *)
+(* The quasisymmetry residual                                        *)
+
+(** A field is quasisymmetric when its strength depends on the angles only
+    through one combination M theta_B - N zeta_B of the Boozer angles. The
+    coordinate-free form of that condition (Helander 2014; Rodriguez, Paul
+    and Bhattacharjee 2020) is the vanishing of the triple product
+
+      grad psi . (grad B x grad(B . grad B)),
+
+    with B the field strength and B . grad B its variation along the field
+    line. It needs no Boozer transform and no choice of helicity: it is a
+    scalar of the field at a point, and it vanishes for quasisymmetry of
+    every helicity at once.
+
+    In flux coordinates the radial gradient kills the radial row of the
+    determinant, so the triple product is the (u, v)-Jacobian of the two
+    surface functions over the coordinate Jacobian,
+
+      grad s . (grad B x grad W) = (d_u B d_v W - d_v B d_u W) / sqrt(g),
+
+    with W = B . grad B. And since B = sqrt(B^2), the Jacobian of (B, W) is
+    the Jacobian of (B^2, W2) over 4 B^2, with W2 = B . grad(B^2), so the
+    square root never enters:
+
+      T = (d_u B^2 d_v W2 - d_v B^2 d_u W2) / (4 B^2 sqrt(g)),
+      W2 = B^u d_u B^2 + B^v d_v B^2.
+
+    T is the quasisymmetry residual a certificate carries, written against
+    grad s rather than grad psi, which differ by the constant dpsi/ds. It
+    reads second angular derivatives of the field, hence third derivatives
+    of the series, which the records above supply; the field's radial
+    contravariant component is zero by the ansatz, which is why W2 has two
+    terms.
+
+    For an axisymmetric reconstruction every v-derivative in the Jacobian
+    carries the integer factor n = 0, so T is exactly zero wherever its
+    pieces are real: an axisymmetric field is quasisymmetric, which
+    Identities.v proves from the series, and which the interval evaluator
+    reproduces as an enclosure of exactly zero at any resolution. *)
+
+(** The triple product from the four Jacobian ingredients and a denominator,
+    as the difference of the two products it is made of.
+    [Identities.qs_triple_zero] is stated on this combinator, so it holds
+    whatever the four are: what the arguments mean is fixed by [qs_b] below,
+    and what the theorem needs is only that the two carrying a toroidal
+    derivative vanish. *)
+Definition qs_triple_e (num_u num_v den_u den_v den : expr) : expr :=
+  Esub (Ediv (Emul num_u den_v) den) (Ediv (Emul num_v den_u) den).
+
+(* ---------------------------------------------------------------- *)
+(* A surface quantity carried with its angular derivatives           *)
+
+(** A scalar on the surface together with its first and second angular
+    derivatives, so that a product rule composes two of them and the
+    residual can be assembled from the reconstruction rather than by
+    expanding every derivative by hand. The float reference of
+    proto/continuum_ref.py is written against the same three rules, which is
+    what lets the two be compared line for line.
+
+    Every component is a slot reference once [q2_mul_b] has run, so the
+    expression stays a shallow directed graph rather than a tree that
+    doubles with each product. *)
+Record q2 := Q2 {
+  q2_0 : expr ; q2_u : expr ; q2_v : expr ;
+  q2_uu : expr ; q2_uv : expr ; q2_vv : expr }.
+
+(** The product rule to second order, with each of the six allocated. *)
+Definition q2_mul_b (b : builder) (x y : q2) : builder * q2 :=
+  let (b, w0) := alloc b (Emul (q2_0 x) (q2_0 y)) in
+  let (b, wu) := alloc b (Eadd (Emul (q2_u x) (q2_0 y))
+                               (Emul (q2_0 x) (q2_u y))) in
+  let (b, wv) := alloc b (Eadd (Emul (q2_v x) (q2_0 y))
+                               (Emul (q2_0 x) (q2_v y))) in
+  let (b, wuu) :=
+    alloc b (Eadd (Eadd (Emul (q2_uu x) (q2_0 y))
+                        (zmul 2 (Emul (q2_u x) (q2_u y))))
+                  (Emul (q2_0 x) (q2_uu y))) in
+  let (b, wuv) :=
+    alloc b (Eadd (Eadd (Emul (q2_uv x) (q2_0 y))
+                        (Emul (q2_u x) (q2_v y)))
+                  (Eadd (Emul (q2_v x) (q2_u y))
+                        (Emul (q2_0 x) (q2_uv y)))) in
+  let (b, wvv) :=
+    alloc b (Eadd (Eadd (Emul (q2_vv x) (q2_0 y))
+                        (zmul 2 (Emul (q2_v x) (q2_v y))))
+                  (Emul (q2_0 x) (q2_vv y))) in
+  (b, Q2 w0 wu wv wuu wuv wvv).
+
+(** Termwise sum, and sum with one side scaled by an integer. Sums are
+    linear and cost one node each, so they are not allocated. *)
+Definition q2_add3 (z : Z) (x y w : q2) : q2 :=
+  let f fx fy fw := Eadd (Eadd fx (zmul z fy)) fw in
+  Q2 (f (q2_0 x) (q2_0 y) (q2_0 w))
+     (f (q2_u x) (q2_u y) (q2_u w))
+     (f (q2_v x) (q2_v y) (q2_v w))
+     (f (q2_uu x) (q2_uu y) (q2_uu w))
+     (f (q2_uv x) (q2_uv y) (q2_uv w))
+     (f (q2_vv x) (q2_vv y) (q2_vv w)).
+
+(** The residual at a half point, from the coefficients and kernels the
+    point was built from and the slots it exposes. Everything below the
+    third-order series is a product rule applied to what [half_point_b]
+    already holds; nothing here is approximated. The three results are the
+    triple product and the two products it is the difference of, so that a
+    certificate carries the cancellation between them as a number. *)
+Definition qs_b (b : builder) (lasym : bool) (kers : list mode_kernels)
+    (hc : half_coefs) (q : halfq) : builder * (expr * expr * expr) :=
+  let cR := hc_R hc in let cZ := hc_Z hc in let cL := hc_L hc in
+  let cRa := hc_Ra hc in let cZa := hc_Za hc in let cLa := hc_La hc in
+  let (b, r3) := partials3_b b
+      (if lasym then padd3 (assemble3 kers cR true) (assemble3 kers cRa false)
+       else assemble3 kers cR true) in
+  let (b, z3) := partials3_b b
+      (if lasym then padd3 (assemble3 kers cZ false) (assemble3 kers cZa true)
+       else assemble3 kers cZ false) in
+  let (b, l3) := lambda_partials3_b b
+      (if lasym then ladd3 (lambda_terms3 kers cL false)
+                           (lambda_terms3 kers cLa true)
+       else lambda_terms3 kers cL false) in
+  let R := q_R q in let R_s := q_Rs q in
+  let R_u := q_Ru q in let R_v := q_Rv q in
+  let R_su := q_Rsu q in let R_sv := q_Rsv q in
+  let R_uu := q_Ruu q in let R_uv := q_Ruv q in let R_vv := q_Rvv q in
+  let R_uuu := p3_uuu r3 in let R_uuv := p3_uuv r3 in
+  let R_uvv := p3_uvv r3 in let R_vvv := p3_vvv r3 in
+  let R_suu := p3_suu r3 in let R_suv := p3_suv r3 in let R_svv := p3_svv r3 in
+  let Z_s := q_Zs q in let Z_u := q_Zu q in let Z_v := q_Zv q in
+  let Z_su := q_Zsu q in let Z_sv := q_Zsv q in
+  let Z_uu := q_Zuu q in let Z_uv := q_Zuv q in let Z_vv := q_Zvv q in
+  let Z_uuu := p3_uuu z3 in let Z_uuv := p3_uuv z3 in
+  let Z_uvv := p3_uvv z3 in let Z_vvv := p3_vvv z3 in
+  let Z_suu := p3_suu z3 in let Z_suv := p3_suv z3 in let Z_svv := p3_svv z3 in
+  let L_uu := q_Luu q in let L_uv := q_Luv q in let L_vv := q_Lvv q in
+  let L_uuu := l3_uuu l3 in let L_uuv := l3_uuv l3 in
+  let L_uvv := l3_uvv l3 in let L_vvv := l3_vvv l3 in
+  let tau := q_tau q in let sqrtg := q_sqrtg q in
+  let tau_u := q_tau_u q in let tau_v := q_tau_v q in
+  let g_u := q_g_u q in let g_v := q_g_v q in
+  let guu := q_guu q in let guv := q_guv q in let gvv := q_gvv q in
+  let guu_v := q_guu_v q in let guv_u := q_guv_u q in
+  let guv_v := q_guv_v q in let gvv_u := q_gvv_u q in
+  let bu := q_bu_num q in let bv := q_bv_num q in
+  (* the two first derivatives of the metric the field never needed *)
+  let (b, guu_u) := alloc b (zmul 2 (Eadd (Emul R_u R_uu) (Emul Z_u Z_uu))) in
+  let (b, gvv_v) := alloc b (zmul 2 (Eadd (Eadd (Emul R_v R_vv) (Emul Z_v Z_vv))
+                                          (Emul R R_v))) in
+  (* second derivatives of tau = R_u Z_s - R_s Z_u and of the Jacobian R tau *)
+  let (b, tau_uu) :=
+    alloc b (Esub (Eadd (Eadd (Emul R_uuu Z_s) (zmul 2 (Emul R_uu Z_su)))
+                        (Emul R_u Z_suu))
+                  (Eadd (Eadd (Emul R_suu Z_u) (zmul 2 (Emul R_su Z_uu)))
+                        (Emul R_s Z_uuu))) in
+  let (b, tau_uv) :=
+    alloc b (Esub (Eadd (Eadd (Emul R_uuv Z_s) (Emul R_uu Z_sv))
+                        (Eadd (Emul R_uv Z_su) (Emul R_u Z_suv)))
+                  (Eadd (Eadd (Emul R_suv Z_u) (Emul R_su Z_uv))
+                        (Eadd (Emul R_sv Z_uu) (Emul R_s Z_uuv)))) in
+  let (b, tau_vv) :=
+    alloc b (Esub (Eadd (Eadd (Emul R_uvv Z_s) (zmul 2 (Emul R_uv Z_sv)))
+                        (Emul R_u Z_svv))
+                  (Eadd (Eadd (Emul R_svv Z_u) (zmul 2 (Emul R_sv Z_uv)))
+                        (Emul R_s Z_uvv))) in
+  let (b, g_uu) := alloc b (Eadd (Eadd (Emul R_uu tau) (zmul 2 (Emul R_u tau_u)))
+                                 (Emul R tau_uu)) in
+  let (b, g_uv) := alloc b (Eadd (Eadd (Emul R_uv tau) (Emul R_u tau_v))
+                                 (Eadd (Emul R_v tau_u) (Emul R tau_uv))) in
+  let (b, g_vv) := alloc b (Eadd (Eadd (Emul R_vv tau) (zmul 2 (Emul R_v tau_v)))
+                                 (Emul R tau_vv)) in
+  (* second derivatives of the metric *)
+  let (b, guu_uu) :=
+    alloc b (zmul 2 (Eadd (Eadd (esq R_uu) (Emul R_u R_uuu))
+                          (Eadd (esq Z_uu) (Emul Z_u Z_uuu)))) in
+  let (b, guu_uv) :=
+    alloc b (zmul 2 (Eadd (Eadd (Emul R_uv R_uu) (Emul R_u R_uuv))
+                          (Eadd (Emul Z_uv Z_uu) (Emul Z_u Z_uuv)))) in
+  let (b, guu_vv) :=
+    alloc b (zmul 2 (Eadd (Eadd (esq R_uv) (Emul R_u R_uvv))
+                          (Eadd (esq Z_uv) (Emul Z_u Z_uvv)))) in
+  let (b, guv_uu) :=
+    alloc b (Eadd (Eadd (Eadd (Emul R_uuu R_v) (zmul 2 (Emul R_uu R_uv)))
+                        (Emul R_u R_uuv))
+                  (Eadd (Eadd (Emul Z_uuu Z_v) (zmul 2 (Emul Z_uu Z_uv)))
+                        (Emul Z_u Z_uuv))) in
+  let (b, guv_uv) :=
+    alloc b (Eadd (Eadd (Eadd (Emul R_uuv R_v) (Emul R_uu R_vv))
+                        (Eadd (esq R_uv) (Emul R_u R_uvv)))
+                  (Eadd (Eadd (Emul Z_uuv Z_v) (Emul Z_uu Z_vv))
+                        (Eadd (esq Z_uv) (Emul Z_u Z_uvv)))) in
+  let (b, guv_vv) :=
+    alloc b (Eadd (Eadd (Eadd (Emul R_uvv R_v) (zmul 2 (Emul R_uv R_vv)))
+                        (Emul R_u R_vvv))
+                  (Eadd (Eadd (Emul Z_uvv Z_v) (zmul 2 (Emul Z_uv Z_vv)))
+                        (Emul Z_u Z_vvv))) in
+  let (b, gvv_uu) :=
+    alloc b (zmul 2 (Eadd (Eadd (Eadd (esq R_uv) (Emul R_v R_uuv))
+                                (Eadd (esq Z_uv) (Emul Z_v Z_uuv)))
+                          (Eadd (esq R_u) (Emul R R_uu)))) in
+  let (b, gvv_uv) :=
+    alloc b (zmul 2 (Eadd (Eadd (Eadd (Emul R_vv R_uv) (Emul R_v R_uvv))
+                                (Eadd (Emul Z_vv Z_uv) (Emul Z_v Z_uvv)))
+                          (Eadd (Emul R_v R_u) (Emul R R_uv)))) in
+  let (b, gvv_vv) :=
+    alloc b (zmul 2 (Eadd (Eadd (Eadd (esq R_vv) (Emul R_v R_vvv))
+                                (Eadd (esq Z_vv) (Emul Z_v Z_vvv)))
+                          (Eadd (esq R_v) (Emul R R_vv)))) in
+  (* The metric and the two field numerators, each with its angular
+     derivatives, so that the product rule assembles what follows. The
+     stream function enters only through these: bu = iota - lambda_v and
+     bv = 1 + lambda_u, whose derivatives are the lambda series with one
+     more angle each. *)
+  let Guu := Q2 guu guu_u guu_v guu_uu guu_uv guu_vv in
+  let Guv := Q2 guv guv_u guv_v guv_uu guv_uv guv_vv in
+  let Gvv := Q2 gvv gvv_u gvv_v gvv_uu gvv_uv gvv_vv in
+  let Nu := Q2 bu (Eneg L_uv) (Eneg L_vv)
+               (Eneg L_uuv) (Eneg L_uvv) (Eneg L_vvv) in
+  let Nv := Q2 bv L_uu L_uv L_uuu L_uuv L_uvv in
+  (* Everything below is scaled by the Jacobian so that no reciprocal enters
+     the chain. The covariant components and the square field each carry one
+     factor of sqrt(g), and
+
+       M = J^2 B^2 = guu U^2 + 2 guv U V + gvv V^2 = phip^2 S,
+       U = J B^u = phip bu,   V = J B^v = phip bv,
+
+     with S polynomial in the series. Writing the derivatives of B^2 and of
+     W2 = B . grad(B^2) against powers of J rather than dividing by it is
+     what keeps an interval evaluation of the whole residual bounded: a form
+     that carries 1/sqrt(g) and its second derivatives encloses to the order
+     of that reciprocal however narrow the cell, which is the same reason
+     the radial Hermite is written against its slope defects. *)
+  let (b, Puu) := q2_mul_b b Nu Nu in
+  let (b, Puv) := q2_mul_b b Nu Nv in
+  let (b, Pvv) := q2_mul_b b Nv Nv in
+  let (b, Suu) := q2_mul_b b Guu Puu in
+  let (b, Suv) := q2_mul_b b Guv Puv in
+  let (b, Svv) := q2_mul_b b Gvv Pvv in
+  let S := q2_add3 2 Suu Suv Svv in
+  let (b, P2) := alloc b (esq vPhip) in
+  let (b, M) := alloc b (Emul P2 (q2_0 S)) in
+  let (b, M_u) := alloc b (Emul P2 (q2_u S)) in
+  let (b, M_v) := alloc b (Emul P2 (q2_v S)) in
+  let (b, M_uu) := alloc b (Emul P2 (q2_uu S)) in
+  let (b, M_uv) := alloc b (Emul P2 (q2_uv S)) in
+  let (b, M_vv) := alloc b (Emul P2 (q2_vv S)) in
+  (* B^2 = M / J^2, so d_i B^2 = A_i / J^3 with A_i = M_i J - 2 M J_i, and
+     the second derivatives of A follow by the same rule *)
+  let (b, A_u) := alloc b (Esub (Emul M_u sqrtg) (zmul 2 (Emul M g_u))) in
+  let (b, A_v) := alloc b (Esub (Emul M_v sqrtg) (zmul 2 (Emul M g_v))) in
+  let (b, A_uu) :=
+    alloc b (Esub (Esub (Emul M_uu sqrtg) (Emul M_u g_u))
+                  (zmul 2 (Emul M g_uu))) in
+  let (b, A_uv) :=
+    alloc b (Esub (Eadd (Emul M_uv sqrtg) (Emul M_u g_v))
+                  (zmul 2 (Eadd (Emul M_v g_u) (Emul M g_uv)))) in
+  let (b, A_vu) :=
+    alloc b (Esub (Eadd (Emul M_uv sqrtg) (Emul M_v g_u))
+                  (zmul 2 (Eadd (Emul M_u g_v) (Emul M g_uv)))) in
+  let (b, A_vv) :=
+    alloc b (Esub (Esub (Emul M_vv sqrtg) (Emul M_v g_v))
+                  (zmul 2 (Emul M g_vv))) in
+  (* W2 = B . grad(B^2) = C / J^4 with C = U A_u + V A_v *)
+  let (b, U) := alloc b (Emul vPhip bu) in
+  let (b, V) := alloc b (Emul vPhip bv) in
+  let (b, U_u) := alloc b (Emul vPhip (Eneg L_uv)) in
+  let (b, U_v) := alloc b (Emul vPhip (Eneg L_vv)) in
+  let (b, V_u) := alloc b (Emul vPhip L_uu) in
+  let (b, V_v) := alloc b (Emul vPhip L_uv) in
+  let (b, C) := alloc b (Eadd (Emul U A_u) (Emul V A_v)) in
+  let (b, C_u) := alloc b (Eadd (Eadd (Emul U_u A_u) (Emul U A_uu))
+                                (Eadd (Emul V_u A_v) (Emul V A_vu))) in
+  let (b, C_v) := alloc b (Eadd (Eadd (Emul U_v A_u) (Emul U A_uv))
+                                (Eadd (Emul V_v A_v) (Emul V A_vv))) in
+  (* d_i W2 = D_i / J^5 with D_i = C_i J - 4 C J_i *)
+  let (b, D_u) := alloc b (Esub (Emul C_u sqrtg) (zmul 4 (Emul C g_u))) in
+  let (b, D_v) := alloc b (Esub (Emul C_v sqrtg) (zmul 4 (Emul C g_v))) in
+  (* The Jacobian of B^2 and W2 over the angles is
+     (A_u D_v - A_v D_u) / J^8, and the triple product divides it by
+     4 B^2 J = 4 M / J, which leaves 4 M J^7 beneath the difference. Both
+     products are carried beside it, so a certificate says how nearly the
+     two are the same number, which is what quasisymmetry asks of them. *)
+  let (b, J2) := alloc b (esq sqrtg) in
+  let (b, J3) := alloc b (Emul J2 sqrtg) in
+  let (b, J6) := alloc b (esq J3) in
+  let (b, J7) := alloc b (Emul J6 sqrtg) in
+  let (b, den) := alloc b (Emul e4 (Emul M J7)) in
+  let (b, t1) := alloc b (Ediv (Emul A_u D_v) den) in
+  let (b, t2) := alloc b (Ediv (Emul A_v D_u) den) in
+  let (b, qs) := alloc b (qs_triple_e A_u A_v D_u D_v den) in
+  (b, (qs, t1, t2)).
+
+(* ---------------------------------------------------------------- *)
+(* Quasisymmetry as a flux function: the two-term form               *)
+
+(** The triple product above names no helicity and needs no data, and it is
+    third order in the angles, which a covering of a three-dimensional
+    surface cannot afford: the enclosure of a third derivative over a box
+    exceeds the quantity by orders of magnitude until the cells are far
+    narrower than a surface integrand needs.
+
+    There is a lower-order statement of the same property. Because
+    B x grad(psi) is tangent to the surface and perpendicular to grad(psi),
+    the radial part of grad B drops out of the numerator, and with
+    (B x grad s) . grad u = B_v / J and (B x grad s) . grad v = - B_u / J,
+
+      B x grad(s) . grad B = (B_v d_u B - B_u d_v B) / J,
+      B . grad B           = B^u d_u B + B^v d_v B,
+
+    and the field is quasisymmetric exactly when the ratio of the two is a
+    flux function (Helander 2014). The factor 1/(2B) relating d_i B to
+    d_i B^2 is common to both, so no square root enters and only first
+    angular derivatives of the square field are read, which is the order the
+    force residual already carries.
+
+    Scaled by the Jacobian, with L_u = J B_u = guu U + guv V and
+    L_v = J B_v = guv U + gvv V and the A and C of [qs_b], the ratio taken
+    against grad s is F = (L_v A_u - L_u A_v) / (J C), so the defect of the
+    claim that F is the flux function F0 the certificate carries is
+
+      Q = (L_v A_u - L_u A_v) - F0 J C,
+
+    a polynomial with no division anywhere. The two products are returned
+    beside it, so a verdict says how nearly they are the same number.
+
+    No helicity is named here either. A surface whose F is constant is
+    quasisymmetric, and which helicity it has is read off the value of F
+    afterwards rather than assumed before. What the certificate adds over
+    the triple product is one datum, in the way a Boozer stream function is
+    carried as data and its defect bounded. *)
+Definition qs2_b (b : builder) (q : halfq) (F0 : expr)
+    : builder * (expr * expr * expr) :=
+  let R := q_R q in let R_u := q_Ru q in let R_v := q_Rv q in
+  let R_uu := q_Ruu q in let R_uv := q_Ruv q in let R_vv := q_Rvv q in
+  let Z_u := q_Zu q in let Z_v := q_Zv q in
+  let Z_uu := q_Zuu q in let Z_uv := q_Zuv q in let Z_vv := q_Zvv q in
+  let L_uu := q_Luu q in let L_uv := q_Luv q in let L_vv := q_Lvv q in
+  let J := q_sqrtg q in let J_u := q_g_u q in let J_v := q_g_v q in
+  let guu := q_guu q in let guv := q_guv q in let gvv := q_gvv q in
+  let guu_v := q_guu_v q in let guv_u := q_guv_u q in
+  let guv_v := q_guv_v q in let gvv_u := q_gvv_u q in
+  let bu := q_bu_num q in let bv := q_bv_num q in
+  (* the two first derivatives of the metric the field never needed *)
+  let (b, guu_u) := alloc b (zmul 2 (Eadd (Emul R_u R_uu) (Emul Z_u Z_uu))) in
+  let (b, gvv_v) := alloc b (zmul 2 (Eadd (Eadd (Emul R_v R_vv) (Emul Z_v Z_vv))
+                                          (Emul R R_v))) in
+  (* the Jacobian-weighted contravariant components and their derivatives *)
+  let (b, U) := alloc b (Emul vPhip bu) in
+  let (b, V) := alloc b (Emul vPhip bv) in
+  let (b, U_u) := alloc b (Emul vPhip (Eneg L_uv)) in
+  let (b, U_v) := alloc b (Emul vPhip (Eneg L_vv)) in
+  let (b, V_u) := alloc b (Emul vPhip L_uu) in
+  let (b, V_v) := alloc b (Emul vPhip L_uv) in
+  (* the Jacobian-weighted covariant components L_i = J B_i *)
+  let (b, Lu) := alloc b (Eadd (Emul guu U) (Emul guv V)) in
+  let (b, Lv) := alloc b (Eadd (Emul guv U) (Emul gvv V)) in
+  let (b, Lu_u) := alloc b (Eadd (Eadd (Emul guu_u U) (Emul guu U_u))
+                                 (Eadd (Emul guv_u V) (Emul guv V_u))) in
+  let (b, Lu_v) := alloc b (Eadd (Eadd (Emul guu_v U) (Emul guu U_v))
+                                 (Eadd (Emul guv_v V) (Emul guv V_v))) in
+  let (b, Lv_u) := alloc b (Eadd (Eadd (Emul guv_u U) (Emul guv U_u))
+                                 (Eadd (Emul gvv_u V) (Emul gvv V_u))) in
+  let (b, Lv_v) := alloc b (Eadd (Eadd (Emul guv_v U) (Emul guv U_v))
+                                 (Eadd (Emul gvv_v V) (Emul gvv V_v))) in
+  (* M = J^2 B^2 = U L_u + V L_v, and its first derivatives *)
+  let (b, M) := alloc b (Eadd (Emul U Lu) (Emul V Lv)) in
+  let (b, M_u) := alloc b (Eadd (Eadd (Emul U_u Lu) (Emul U Lu_u))
+                                (Eadd (Emul V_u Lv) (Emul V Lv_u))) in
+  let (b, M_v) := alloc b (Eadd (Eadd (Emul U_v Lu) (Emul U Lu_v))
+                                (Eadd (Emul V_v Lv) (Emul V Lv_v))) in
+  (* d_i B^2 = A_i / J^3, and B . grad(B^2) = C / J^4 *)
+  let (b, A_u) := alloc b (Esub (Emul M_u J) (zmul 2 (Emul M J_u))) in
+  let (b, A_v) := alloc b (Esub (Emul M_v J) (zmul 2 (Emul M J_v))) in
+  let (b, C) := alloc b (Eadd (Emul U A_u) (Emul V A_v)) in
+  (* the two terms of the defect, and the defect *)
+  let (b, t1) := alloc b (Esub (Emul Lv A_u) (Emul Lu A_v)) in
+  let (b, t2) := alloc b (Emul F0 (Emul J C)) in
+  let (b, qq) := alloc b (Esub t1 t2) in
+  (b, (qq, t1, t2)).
 
 (* ---------------------------------------------------------------- *)
 (* Geometry at the node, and the Mercier integrands                  *)
@@ -1599,6 +2110,18 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
       let (b, hj) := alloc b (Emul (q_mu0Js qp) k) in
       Residual3 (bindings_of b) hu hv hj
   | RTerms => Residual3 (bindings_of b) (fst tt) (snd tt) mu0pp
+  | RQuasiSym =>
+      (* the triple product at the outer half point, from the coefficients
+         and kernels that point was built from; nothing above is read *)
+      let (b, t) := qs_b b lasym kers hcp qp in
+      let '(qs, t1, t2) := t in
+      Residual3 (bindings_of b) qs t1 t2
+  | RQuasiTwo =>
+      (* the two-term defect at the outer half point, against the flux
+         function the certificate carries *)
+      let (b, t) := qs2_b b qp (slot_F0 lasym K) in
+      let '(qq, t1, t2) := t in
+      Residual3 (bindings_of b) qq t1 t2
   | RRadial => Residual3 (bindings_of b) rs ru rv
   | RRadialGeom => Residual3 (bindings_of b) rs ru rv
   | RRadialShear => Residual3 (bindings_of b) rs ru rv

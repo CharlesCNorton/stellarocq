@@ -332,6 +332,238 @@ def residual_half_grid(w, j, u, vv):
     return r_s, -qp["mu0Js"] * qp["Bv"], qp["mu0Js"] * qp["Bu"], (t1, t2, t3)
 
 
+# ---- the quasisymmetry residual, by a generic product rule ------------------
+
+# A quantity on the surface is carried as its value and its angular
+# derivatives to second order, so that a product rule and a reciprocal rule
+# take a product of two such quantities to the same order. The residual is
+# then assembled from the series exactly as the physics reads, with no
+# derivative expanded by hand: what is written down is tau = R_u Z_s - R_s Z_u,
+# sqrt(g) = R tau, the metric, B^u = phip (iota - lambda_v) / sqrt(g), and so
+# on, and the derivatives come out of the rules. That is what makes this a
+# second writing of the triple product rather than a transcription of the
+# expression builders of theories/Physics.v, which expand every derivative.
+KEYS = ("0", "u", "v", "uu", "uv", "vv")
+
+
+def _const(x):
+    return {"0": x, "u": 0.0, "v": 0.0, "uu": 0.0, "uv": 0.0, "vv": 0.0}
+
+
+def _add(a, b):
+    return {k: a[k] + b[k] for k in KEYS}
+
+
+def _sub(a, b):
+    return {k: a[k] - b[k] for k in KEYS}
+
+
+def _scale(x, a):
+    return {k: x * a[k] for k in KEYS}
+
+
+def _mul(a, b):
+    """The product rule to second order."""
+    return {"0": a["0"] * b["0"],
+            "u": a["u"] * b["0"] + a["0"] * b["u"],
+            "v": a["v"] * b["0"] + a["0"] * b["v"],
+            "uu": a["uu"] * b["0"] + 2 * a["u"] * b["u"] + a["0"] * b["uu"],
+            "uv": a["uv"] * b["0"] + a["u"] * b["v"] + a["v"] * b["u"]
+                  + a["0"] * b["uv"],
+            "vv": a["vv"] * b["0"] + 2 * a["v"] * b["v"] + a["0"] * b["vv"]}
+
+
+def _inv(a):
+    """The reciprocal to second order."""
+    x = a["0"]
+    return {"0": 1.0 / x,
+            "u": -a["u"] / x**2, "v": -a["v"] / x**2,
+            "uu": -a["uu"] / x**2 + 2 * a["u"] ** 2 / x**3,
+            "uv": -a["uv"] / x**2 + 2 * a["u"] * a["v"] / x**3,
+            "vv": -a["vv"] / x**2 + 2 * a["v"] ** 2 / x**3}
+
+
+def _series_all(c, cs, m, n, co, si, even):
+    """A Fourier series and its derivatives to third order in the angles and
+    to second order beside the radial one, keyed by the sorted letters of the
+    derivative. Differentiating cos(m u - n v) gives -m sin in u and n sin in
+    v, and sin gives m cos and -n cos; each further derivative repeats that
+    with the kernels swapped, which is all that is used."""
+    S = lambda cf, k: float(np.dot(cf, k))  # noqa: E731
+    if even:
+        k0, k1, du, dv = co, si, -m, n
+    else:
+        k0, k1, du, dv = si, co, m, -n
+    # the second derivative of either kernel is minus the kernel times the
+    # product of the two first-order factors, so a second derivative reads
+    # the value kernel with -m^2, m n or -n^2
+    d = {"": S(c, k0), "s": S(cs, k0),
+         "u": S(du * c, k1), "v": S(dv * c, k1),
+         "su": S(du * cs, k1), "sv": S(dv * cs, k1),
+         "uu": S(-m * m * c, k0), "uv": S(m * n * c, k0), "vv": S(-n * n * c, k0),
+         "suu": S(-m * m * cs, k0), "suv": S(m * n * cs, k0),
+         "svv": S(-n * n * cs, k0),
+         # one more derivative of the second, whose kernel is the value's
+         "uuu": S(-m * m * du * c, k1), "uuv": S(-m * m * dv * c, k1),
+         "uvv": S(-n * n * du * c, k1), "vvv": S(-n * n * dv * c, k1)}
+    return d
+
+
+def _lift(S, base):
+    """One derivative of a series as a quantity with its own two orders."""
+    key = lambda *p: "".join(sorted("".join(p)))  # noqa: E731
+    return {"0": S[key(base)], "u": S[key(base, "u")], "v": S[key(base, "v")],
+            "uu": S[key(base, "uu")], "uv": S[key(base, "uv")],
+            "vv": S[key(base, "vv")]}
+
+
+def qs_half_point(w, j, u, vv):
+    """The quasisymmetry residual at the outer half point of node j.
+
+    The triple product grad s . (grad B x grad(B . grad B)) of the
+    reconstruction, which in flux coordinates is the (u, v)-Jacobian of B^2
+    and of W2 = B . grad(B^2) over 4 B^2 sqrt(g). Returns the triple product
+    and the two products it is the difference of.
+    """
+    m, n = w.xm, w.xn
+    s_a, s_b = w.s_full[j], w.s_full[j + 1]
+    s_h = w.s_half[j + 1]
+    phip = float(w.phips[1])
+    ang = m * u - n * vv
+    co, si = np.cos(ang), np.sin(ang)
+
+    def block(coefs):
+        c, cs = [], []
+        for k in range(len(m)):
+            a, b = half_coef(m[k], coefs[j][k], coefs[j + 1][k], s_a, s_b, s_h)
+            c.append(a), cs.append(b)
+        return np.array(c), np.array(cs)
+
+    def both(d1, d2):
+        return {k: d1[k] + d2[k] for k in d1}
+
+    zero = np.zeros(len(m))
+    cR, cRs = block(w.rmnc)
+    RS = _series_all(cR, cRs, m, n, co, si, True)
+    cZ, cZs = block(w.zmns)
+    ZS = _series_all(cZ, cZs, m, n, co, si, False)
+    LS = _series_all(w.lmns[j + 1], zero, m, n, co, si, False)
+    if getattr(w, "lasym", False):
+        cRa, cRas = block(w.rmns)
+        RS = both(RS, _series_all(cRa, cRas, m, n, co, si, False))
+        cZa, cZas = block(w.zmnc)
+        ZS = both(ZS, _series_all(cZa, cZas, m, n, co, si, True))
+        LS = both(LS, _series_all(w.lmnc[j + 1], zero, m, n, co, si, True))
+    iota = float(w.iotas[j + 1])
+
+    R0, Ru, Rv, Rs = (_lift(RS, k) for k in ("", "u", "v", "s"))
+    Zu, Zv, Zs = (_lift(ZS, k) for k in ("u", "v", "s"))
+    Lu, Lv = _lift(LS, "u"), _lift(LS, "v")
+
+    tau = _sub(_mul(Ru, Zs), _mul(Rs, Zu))
+    J = _mul(R0, tau)
+    guu = _add(_mul(Ru, Ru), _mul(Zu, Zu))
+    guv = _add(_mul(Ru, Rv), _mul(Zu, Zv))
+    gvv = _add(_add(_mul(Rv, Rv), _mul(Zv, Zv)), _mul(R0, R0))
+    Q = _inv(J)
+    bu = _sub(_const(iota), Lv)
+    bv = _add(_const(1.0), Lu)
+    Bu = _scale(phip, _mul(bu, Q))
+    Bv = _scale(phip, _mul(bv, Q))
+    B_u = _add(_mul(guu, Bu), _mul(guv, Bv))
+    B_v = _add(_mul(guv, Bu), _mul(gvv, Bv))
+    B2 = _add(_mul(Bu, B_u), _mul(Bv, B_v))
+    # W2 = B . grad(B^2) and its first derivatives
+    W2u = (Bu["u"] * B2["u"] + Bu["0"] * B2["uu"]
+           + Bv["u"] * B2["v"] + Bv["0"] * B2["uv"])
+    W2v = (Bu["v"] * B2["u"] + Bu["0"] * B2["uv"]
+           + Bv["v"] * B2["v"] + Bv["0"] * B2["vv"])
+    den = 4.0 * B2["0"] * J["0"]
+    t1 = B2["u"] * W2v / den
+    t2 = B2["v"] * W2u / den
+    return t1 - t2, t1, t2
+
+
+def qs_field_at(w, j, u, vv):
+    """B^2, B^u, B^v and the Jacobian at one point of the outer half point.
+
+    Value-level series only: no derivative of the reconstruction is taken
+    beyond the first, which is what makes this usable as the base of a finite
+    difference that shares nothing with the analytic chain above.
+    """
+    m, n = w.xm, w.xn
+    s_a, s_b = w.s_full[j], w.s_full[j + 1]
+    s_h = w.s_half[j + 1]
+    phip = float(w.phips[1])
+    ang = m * u - n * vv
+    co, si = np.cos(ang), np.sin(ang)
+    S = lambda cf, k: float(np.dot(cf, k))  # noqa: E731
+
+    def block(coefs):
+        c, cs = [], []
+        for k in range(len(m)):
+            a, b = half_coef(m[k], coefs[j][k], coefs[j + 1][k], s_a, s_b, s_h)
+            c.append(a), cs.append(b)
+        return np.array(c), np.array(cs)
+
+    cR, cRs = block(w.rmnc)
+    cZ, cZs = block(w.zmns)
+    cL = w.lmns[j + 1]
+    R, R_s = S(cR, co), S(cRs, co)
+    R_u, R_v = S(cR, -m * si), S(cR, n * si)
+    Z_s = S(cZs, si)
+    Z_u, Z_v = S(cZ, m * co), S(cZ, -n * co)
+    L_u, L_v = S(cL, m * co), S(cL, -n * co)
+    if getattr(w, "lasym", False):
+        cRa, cRas = block(w.rmns)
+        cZa, cZas = block(w.zmnc)
+        cLa = w.lmnc[j + 1]
+        R += S(cRa, si)
+        R_s += S(cRas, si)
+        R_u += S(cRa, m * co)
+        R_v += S(cRa, -n * co)
+        Z_s += S(cZas, co)
+        Z_u += S(cZa, -m * si)
+        Z_v += S(cZa, n * si)
+        L_u += S(cLa, -m * si)
+        L_v += S(cLa, n * si)
+    iota = float(w.iotas[j + 1])
+    tau = R_u * Z_s - R_s * Z_u
+    J = R * tau
+    guu = R_u**2 + Z_u**2
+    guv = R_u * R_v + Z_u * Z_v
+    gvv = R_v**2 + Z_v**2 + R**2
+    Bu = phip * (iota - L_v) / J
+    Bv = phip * (1.0 + L_u) / J
+    B_u = guu * Bu + guv * Bv
+    B_v = guv * Bu + gvv * Bv
+    return Bu * B_u + Bv * B_v, Bu, Bv, J
+
+
+def qs_finite_difference(w, j, u, vv, h=1.0e-4):
+    """The triple product by finite differences of B^2 and of W2.
+
+    Nothing here reads the analytic derivatives of the series, so it checks
+    the whole chain that [qs_half_point] and theories/Physics.v build,
+    including the toroidal derivatives an axisymmetric case leaves at zero
+    and therefore cannot exercise.
+    """
+    b2 = lambda a, c: qs_field_at(w, j, a, c)[0]  # noqa: E731
+
+    def w2(a, c):
+        _, Bu, Bv, _ = qs_field_at(w, j, a, c)
+        b2u = (b2(a + h, c) - b2(a - h, c)) / (2 * h)
+        b2v = (b2(a, c + h) - b2(a, c - h)) / (2 * h)
+        return Bu * b2u + Bv * b2v
+
+    B2_u = (b2(u + h, vv) - b2(u - h, vv)) / (2 * h)
+    B2_v = (b2(u, vv + h) - b2(u, vv - h)) / (2 * h)
+    W2_u = (w2(u + h, vv) - w2(u - h, vv)) / (2 * h)
+    W2_v = (w2(u, vv + h) - w2(u, vv - h)) / (2 * h)
+    B2, _, _, J = qs_field_at(w, j, u, vv)
+    return (B2_u * W2_v - B2_v * W2_u) / (4.0 * B2 * J)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wout")
@@ -350,9 +582,50 @@ def main():
                     help="one poloidal angle in radians instead of a sweep, "
                     "which with --at reads the reconstruction at the centre "
                     "of one cell of a volume covering")
+    ap.add_argument("--quasisym", action="store_true",
+                    help="the quasisymmetry residual at the outer half point "
+                    "instead of the force residual: the triple product "
+                    "grad s . (grad B x grad(B . grad B)), with the two "
+                    "products it is the difference of")
+    ap.add_argument("--fd", action="store_true",
+                    help="check the triple product against finite differences "
+                    "of B^2 and of B . grad(B^2), which read no analytic "
+                    "derivative of the series and so exercise the toroidal "
+                    "chain an axisymmetric case leaves at zero")
     a = ap.parse_args()
     w = Wout(a.wout)
     j = a.node
+    if a.quasisym:
+        print(f"ns={w.ns} node={j} s={float(w.s_half[j + 1]):.9f} "
+              f"quasisymmetry at the outer half point")
+        count = 1 if a.u is not None else a.nu
+        worst = None
+        for k in range(count):
+            if a.u is not None:
+                u = a.u
+            elif a.cells:
+                u = (2 * k + 1) * np.pi / a.nu
+            else:
+                u = 2 * np.pi * k / a.nu
+            T, t1, t2 = qs_half_point(w, j, u, a.v)
+            if worst is None or abs(T) > abs(worst[0]):
+                worst = (T, t1, t2, u)
+            if k < 4:
+                print(f"  u={u:.6f} v={a.v:.6f}  T={T:+.9e}  "
+                      f"t1={t1:+.9e}  t2={t2:+.9e}")
+        T, t1, t2, u = worst
+        if a.fd:
+            # the same quantity by finite differences, which reads no
+            # analytic derivative of the series
+            fd = qs_finite_difference(w, j, u, a.v)
+            scale = max(abs(T), abs(fd), 1e-300)
+            print(f"  finite difference {fd:+.9e} against analytic {T:+.9e}, "
+                  f"relative {abs(fd - T) / scale:.3e}")
+        print(f"triple product {abs(T):.9e}")
+        print(f"worst |T| over {count} angles: {abs(T):.9e} at u={u:.6f}")
+        print(f"  terms  {abs(t1):.9e}  {abs(t2):.9e}")
+        print(f"  their difference {t1 - t2:+.9e} against T {T:+.9e}")
+        return
     if a.half_grid:
         print(f"ns={w.ns} node={j} s={float(w.s_full[j]):.9f} half grid")
         worst = 0.0

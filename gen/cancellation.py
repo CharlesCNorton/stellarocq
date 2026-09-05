@@ -1,27 +1,24 @@
 """How much the force residual cancels, as a certified number.
 
-The radial residual is a difference of three terms,
+The residual is a difference of three terms,
 
   r_s = (d_v B_s - d_s B_v) B^v - (d_s B_u - d_u B_s) B^u - mu0 dp/ds,
 
-and for a converged equilibrium it is far smaller than any of them. How much
-smaller is not a curiosity. It is what decides the cost of a covering, since an
-interval evaluation over a box does not see the cancellation and pays for the
-loss in cells; and it decides which inputs the bound answers to, since a term
-orders of magnitude below the others contributes nothing a bound could
-register. A solver reports r_s and says nothing about either.
+and for a converged equilibrium it is far smaller than any of them. That ratio
+decides the cost of a covering, since an interval evaluation loses the
+cancellation and pays for it in cells, and it decides which inputs the bound
+answers to, since a term far below the others is one no bound registers.
 
-`--terms` carries the three terms as the three components of a certificate, so
-the same machinery that bounds the residual bounds each of them, over the same
-cells, at the same precision. This runs both coverings and reports the ratio.
+--terms carries the three terms as the three components, so the same machinery
+bounds each over the same cells at the same precision; this runs both coverings
+and reports the ratio.
 
   python gen/cancellation.py wout.nc --nodes 6 --nu 256
   python gen/cancellation.py wout.nc --node 22 --nu 512 --radial
 
-The magnitudes are the certified value at each cell centre, worst over the
-cells of a node, not the cell bound: a cell bound also carries the width of the
-enclosure over the box, which narrows on its own as the cells shrink and would
-flatter the cancellation.
+The magnitudes are the certified value at each cell centre, not the cell bound,
+which also carries an enclosure width that narrows on its own and would flatter
+the cancellation.
 """
 
 import argparse
@@ -41,13 +38,12 @@ def run(cmd):
 
 
 def per_node_cells(cert):
-    """The centre magnitude of each component of each cell, per node block.
+    """Centre magnitude of each component of each cell, per node block.
 
-    A tightened bound line is `n0 q0 ndu qdu ndv qdv nc qc`, three lines per
-    cell in component order, and the first pair is the enclosure at the cell
-    centre. Keeping the cells rather than their maximum is what lets the terms
-    and the residual be read at the same cell: a maximum of one taken at one
-    angle and a maximum of the other taken at another compares nothing.
+    A tightened bound line is n0 q0 ndu qdu ndv qdv nc qc, three lines per cell
+    in component order, the first pair the enclosure at the centre. Keeping the
+    cells rather than their maximum lets the terms and the residual be read at
+    the same cell.
     """
     out, cur, inside, k = [], [], False, 0
     for line in pathlib.Path(cert).read_text().splitlines():
@@ -96,8 +92,7 @@ def certified_radii(cert):
 
 
 def certified_angles(cert):
-    """The centre angles of the cells every node block shares, in radians,
-    in the order the cells are listed."""
+    """Centre angles of the shared cells, in radians, in listed order."""
     lines = pathlib.Path(cert).read_text().splitlines()
     i = next(k for k, l in enumerate(lines) if l.startswith("NANGLES"))
     n = int(lines[i].split()[1])
@@ -109,12 +104,7 @@ def certified_angles(cert):
 
 
 def current_terms(a, base, tmp):
-    """The two terms of the surface current against their difference.
-
-    One covering carries all three, so the difference is read at the same
-    cell as the terms with nothing to pair up. The cell is the one where the
-    current is worst, which is the one the r_u and r_v bounds come from.
-    """
+    """The two terms of the surface current against their difference, at the worst cell."""
     cells, src = covering(a.wout, base + " --current", "current", a.main,
                           a.python, tmp)
     radii = certified_radii(src)
@@ -155,6 +145,52 @@ def current_terms(a, base, tmp):
     return 0
 
 
+def quasisym_terms(a, base, tmp):
+    """The quasisymmetry residual against the two products it is the
+    difference of, at the worst cell of each node.
+
+    The triple product is d_u B^2 d_v W2 - d_v B^2 d_u W2 over 4 B^2 sqrt(g),
+    and a quasisymmetric field is one where the two products are the same
+    number, so the ratio of the larger to their difference is how nearly the
+    surface is quasisymmetric, as a certified number: a field far from
+    quasisymmetry has a ratio near one, and an axisymmetric one has no
+    difference at all, since both products carry an exact zero.
+    """
+    cells, src = covering(a.wout, base + " --quasisym", "quasisym", a.main,
+                          a.python, tmp)
+    radii = certified_radii(src)
+    angles = certified_angles(src)
+    print(f"{pathlib.Path(a.wout).name}: the quasisymmetry residual against "
+          f"the two products it is the difference of,")
+    print(f"{a.nu} poloidal cells" + (f" by {a.nv} toroidal" if a.nv else ""))
+    print("Everything is read at the cell where the residual is worst.")
+    print(f"\n{'s':>8} {'u':>7} {'v':>7} {'d_uB2 d_vW2':>15} {'d_vB2 d_uW2':>15} "
+          f"{'triple':>15} {'cancels by':>11}")
+    ratios = []
+    for i in range(min(len(cells), len(radii))):
+        if not cells[i]:
+            continue
+        k = max(range(len(cells[i])), key=lambda j: cells[i][j][0])
+        qs, t1, t2 = cells[i][k]
+        ratio = max(t1, t2) / qs if qs > 0 else float("inf")
+        ratios.append(ratio)
+        u, vv = angles[k] if k < len(angles) else (float("nan"),) * 2
+        print(f"{radii[i]:>8.4f} {u:>7.4f} {vv:>7.4f} {t1:>15.6e} {t2:>15.6e} "
+              f"{qs:>15.6e} {ratio:>11.3g}")
+    if not ratios:
+        raise SystemExit("no node blocks were tightened")
+    srt = sorted(ratios)
+    mid = (srt[len(srt) // 2] if len(srt) % 2
+           else 0.5 * (srt[len(srt) // 2 - 1] + srt[len(srt) // 2]))
+    print(f"\nquasisymmetry over the covering: the products exceed their "
+          f"difference by {srt[0]:.3g} to {srt[-1]:.3g}, median {mid:.3g}")
+    print("For an axisymmetric equilibrium both products are exactly zero and "
+          "the ratio is\nundefined; for a three-dimensional one the ratio "
+          "says how nearly the two are the\nsame number, which is what "
+          "quasisymmetry asks of them.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wout")
@@ -182,6 +218,11 @@ def main():
                     "mu0 sqrt(g) J^s, which r_u and r_v are built from and "
                     "which has to vanish for a Boozer stream function to "
                     "exist")
+    ap.add_argument("--quasisym", action="store_true",
+                    help="the quasisymmetry residual instead: the two "
+                    "products of the triple product against their "
+                    "difference, which is how nearly the surface is "
+                    "quasisymmetric as a certified number")
     ap.add_argument(
         "--main",
         default=str(ROOT / "extract" / "_build" / "default" / "main.exe"))
@@ -196,6 +237,8 @@ def main():
         base = f"--cells {where} --nu {a.nu}{surf}"
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="cancel_"))
+    if a.quasisym:
+        return quasisym_terms(a, base, tmp)
     if a.current:
         return current_terms(a, base, tmp)
     terms, src = covering(a.wout, base + " --terms", "terms", a.main,
@@ -240,8 +283,7 @@ def main():
         cells = min(len(terms[i]), len(resid[i]))
         if cells == 0:
             continue
-        # the cell whose residual is largest: that is the one the worst cell
-        # bound of the node comes from
+        # the cell whose residual is largest, which the node's worst bound comes from
         k = max(range(cells), key=lambda j: resid[i][j][0])
         t1, t2, t3 = terms[i][k]
         rs = resid[i][k][0]
@@ -255,9 +297,7 @@ def main():
         if a.exact:
             print(f"  exact s={radii[i]!r} u={u!r}")
 
-    # One reading for the equilibrium. The median rather than the worst,
-    # because the axis and the edge cancel least on every stellarator here and
-    # a minimum reports those and nothing else.
+    # the median, since the axis and edge cancel least and a minimum reports only those
     srt = sorted(ratios)
     mid = (srt[len(srt) // 2] if len(srt) % 2
            else 0.5 * (srt[len(srt) // 2 - 1] + srt[len(srt) // 2]))
