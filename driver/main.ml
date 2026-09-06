@@ -1332,6 +1332,11 @@ let () =
       for k = 0 to ncells - 1 do if f k then incr c done;
       !c
     end else begin
+      (* The count is the result here, not a conjunction, so a shard that
+         died and contributed nothing reads as a weaker theorem rather than
+         as a failed run. Every exit status is read, and each shard reports
+         how many indices it visited beside how many it accepted, so a split
+         that lost cells stops the run instead of shrinking the number. *)
       let part i = Printf.sprintf "%s.count%d" src i in
       let pids =
         Stdlib.List.init n (fun i ->
@@ -1339,19 +1344,50 @@ let () =
             | 0 ->
                 let (lo, hi) = range i in
                 let c = ref 0 in
-                for k = lo to hi - 1 do if f k then incr c done;
+                let seen = ref 0 in
+                for k = lo to hi - 1 do
+                  incr seen;
+                  if f k then incr c
+                done;
                 let oc = open_out (part i) in
-                output_string oc (string_of_int !c);
+                Printf.fprintf oc "%d %d" !seen !c;
                 close_out oc; exit 0
             | pid -> pid) in
-      Stdlib.List.iter (fun pid -> ignore (Unix.waitpid [] pid)) pids;
+      let live =
+        Stdlib.List.fold_left (fun acc pid ->
+            match snd (Unix.waitpid [] pid) with
+            | Unix.WEXITED 0 -> acc
+            | _ -> false) true pids in
+      if not live then begin
+        prerr_endline
+          "a counting shard failed, so its cells were never visited and the \
+           count is not the result";
+        exit 3
+      end;
       let total = ref 0 in
+      let seen = ref 0 in
       for i = 0 to n - 1 do
-        let ic = open_in (part i) in
-        (try total := !total + int_of_string (String.trim (input_line ic))
-         with _ -> ());
-        close_in ic; Sys.remove (part i)
+        let p = part i in
+        if not (Sys.file_exists p) then begin
+          Printf.eprintf "a counting shard left no file at %s\n%!" p;
+          exit 3
+        end;
+        let ic = open_in p in
+        let line = (try input_line ic with End_of_file -> "") in
+        close_in ic;
+        Sys.remove p;
+        (try Scanf.sscanf line "%d %d"
+               (fun s c -> seen := !seen + s; total := !total + c)
+         with _ ->
+           Printf.eprintf "a counting shard wrote %S, not a count\n%!" line;
+           exit 3)
       done;
+      if !seen <> ncells then begin
+        Printf.eprintf
+          "the shards visited %d cells of %d: the split lost some\n%!"
+          !seen ncells;
+        exit 3
+      end;
       !total
     end in
   (* Run f over every index in forked shards, gathering both the verdict and
