@@ -1145,6 +1145,84 @@ def check_certfile_widths(tmp):
     return "ok", "the cell bound is read from the width the header names"
 
 
+def check_spline_agreement():
+    """The two writings of each piecewise pressure against each other.
+
+    VMEC's cubic spline, its Akima spline and its piecewise linear profile are
+    each implemented twice: gen/make_cert.py resolves the piece a node falls
+    in and writes its cubic into the certificate, and proto/pressure_ref.py
+    writes the same family from its definition for the reference and the
+    correspondence guard. The two share no code and had nothing comparing
+    them, so a drift would put a cubic in the certificate that the guard would
+    then approve against its own matching mistake.
+
+    The knots here are synthetic, so this runs with no wout files.
+    """
+    try:
+        import numpy as np
+    except ImportError as e:
+        return "skip", f"numpy absent: {e}"
+    sys.path.insert(0, str(ROOT / "gen"))
+    sys.path.insert(0, str(ROOT / "proto"))
+    import importlib.util
+
+    def load(nm, path):
+        spec = importlib.util.spec_from_file_location(nm, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    try:
+        mc = load("_mc", ROOT / "gen" / "make_cert.py")
+        pr = load("_pr", ROOT / "proto" / "pressure_ref.py")
+    except Exception as e:  # noqa: BLE001
+        return "fail", f"could not load the two implementations: {e}"
+
+    xx = np.array([0.0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0])
+    yy = np.array([1.0, 0.94, 0.80, 0.63, 0.45, 0.28, 0.13, 0.0])
+    pts = [0.03, 0.1, 0.17, 0.25, 0.33, 0.5, 0.62, 0.7, 0.78, 0.9, 0.99]
+    tol = 1e-12
+
+    def gap(a, b):
+        return abs(a - b) / max(abs(b), 1e-30)
+
+    worst = 0.0
+    y2 = mc.spline_second_derivatives(xx, yy)
+    M = pr.clamped_spline_second_derivatives(xx, yy)
+    for s in pts:
+        v, d = pr.cubic_spline(xx, yy, M, s)
+        worst = max(worst, gap(mc.spline_eval(xx, yy, y2, s), v))
+        knot, a0, a1, a2, a3 = mc.spline_piece(xx, yy, y2, s)
+        t = s - knot
+        worst = max(worst, gap(a0 + t * (a1 + t * (a2 + t * a3)), v))
+        worst = max(worst, gap(a1 + t * (2 * a2 + 3 * a3 * t), d))
+    if worst > tol:
+        return "fail", f"the two cubic splines differ by {worst:.3e}"
+
+    aworst = 0.0
+    for s in pts:
+        v, d = pr.akima(xx, yy, s)
+        aworst = max(aworst, gap(mc.akima_eval(xx, yy, s), v))
+        knot, a, b, c, dd = mc.akima_piece(xx, yy, s)
+        t = s - knot
+        aworst = max(aworst, gap(a + t * (b + t * (c + dd * t)), v))
+        aworst = max(aworst, gap(b + t * (2 * c + 3 * dd * t), d))
+    if aworst > tol:
+        return "fail", f"the two Akima splines differ by {aworst:.3e}"
+
+    lworst = 0.0
+    for s in pts:
+        v, d = pr.line_segment(xx, yy, s)
+        knot, val, slope = mc.line_segment_piece(xx, yy, s)
+        lworst = max(lworst, gap(val + (s - knot) * slope, v))
+        lworst = max(lworst, abs(slope - d))
+    if lworst > tol:
+        return "fail", f"the two line segments differ by {lworst:.3e}"
+
+    return "ok", (f"cubic {worst:.1e}, akima {aworst:.1e}, "
+                  f"segment {lworst:.1e} apart")
+
+
 def check_reference(name, wout, node, gen_args, radius, main, python, tmp):
     """The certified enclosure at a cell centre against the float reference."""
     if not wout.exists():
@@ -1285,6 +1363,7 @@ def main():
                    len("correspond/rescaled_piece"),
                    len("reference/quasisym_solovev"),
                    len("reader/bound_widths"),
+                   len("reference/spline_pair"),
                    len("audit/patch_surface")])
     counts = {"ok": 0, "fail": 0, "skip": 0}
     failures = []
@@ -1488,6 +1567,14 @@ def main():
         mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
         print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
               flush=True)
+
+    if not a.only or a.only in "reference/spline_pair":
+        t = time.time()
+        status, detail = check_spline_agreement()
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {'reference/spline_pair':<{width}}  {detail}  "
+              f"({time.time() - t:.1f} s)", flush=True)
 
     if not a.only or a.only in "reader/bound_widths":
         t = time.time()
