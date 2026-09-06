@@ -1255,6 +1255,7 @@ INVALID.
 - `proto/continuum_ref.py` - a float reference of the certified free-radius reconstruction, written from the rule rather than from the expression builders, so an encoding mistake shows up as a disagreement
 - `test/run_tests.py` - the regression suite: every verdict, every published number, the correspondence guards and the adversarial cases
 - `test/audit_summary.py` - what `make audit` printed, read rather than counted by hand
+- [FORMAT.md](FORMAT.md) - the certificate grammar, the slot layout it encodes, and what the three widths of a bound line mean
 
 ## Build
 
