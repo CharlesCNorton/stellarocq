@@ -49,6 +49,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from certfile import Cert  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GEN = ROOT / "gen" / "make_cert.py"
 
@@ -98,22 +101,7 @@ def show(name, iv, note=""):
 
 def worst_by_component(cert):
     """The largest cell bound of each of the three components."""
-    worst = [0.0, 0.0, 0.0]
-    i = 0
-    inside = False
-    for line in pathlib.Path(cert).read_text().splitlines():
-        if line.startswith("CELLS"):
-            inside, i = True, 0
-            continue
-        if inside:
-            f = line.split()
-            if len(f) >= 8 and all(x.lstrip("-").isdigit() for x in f[:8]):
-                v = float(f[6]) * 2.0 ** float(f[7])
-                worst[i % 3] = max(worst[i % 3], v)
-                i += 1
-            elif line.startswith("NODE"):
-                inside = False
-    return worst
+    return Cert.read(cert).worst_cell_by_component()
 
 
 def one_covering(wout, node, nu, nv, surface, extra, main, python, tmp, tag,

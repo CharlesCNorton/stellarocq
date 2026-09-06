@@ -27,6 +27,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from certfile import Cert  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GEN = ROOT / "gen" / "make_cert.py"
 
@@ -40,32 +43,10 @@ def run(cmd):
 def per_node_cells(cert):
     """Centre magnitude of each component of each cell, per node block.
 
-    A tightened bound line is n0 q0 ndu qdu ndv qdv nc qc, three lines per cell
-    in component order, the first pair the enclosure at the centre. Keeping the
-    cells rather than their maximum lets the terms and the residual be read at
-    the same cell.
+    Keeping the cells rather than their maximum lets the terms and the
+    residual be read at the same cell.
     """
-    out, cur, inside, k = [], [], False, 0
-    for line in pathlib.Path(cert).read_text().splitlines():
-        if line.startswith("NODE"):
-            if inside:
-                out.append(cur)
-            cur, inside, k = [], False, 0
-            continue
-        if line.startswith("CELLS"):
-            inside = True
-            continue
-        if inside:
-            f = line.split()
-            if len(f) >= 8 and all(x.lstrip("-").isdigit() for x in f[:8]):
-                v = float(f[0]) * 2.0 ** float(f[1])
-                if k % 3 == 0:
-                    cur.append([0.0, 0.0, 0.0])
-                cur[-1][k % 3] = v
-                k += 1
-    if inside:
-        out.append(cur)
-    return out
+    return Cert.read(cert).centre_per_cell()
 
 
 def covering(wout, args, tag, main, python, tmp):
@@ -82,25 +63,13 @@ def covering(wout, args, tag, main, python, tmp):
 
 
 def certified_radii(cert):
-    """The radius of each node block, from its own S line."""
-    radii = []
-    for line in pathlib.Path(cert).read_text().splitlines():
-        if line.startswith("S "):
-            f = line.split()
-            radii.append(int(f[1]) * 2.0 ** int(f[2]))
-    return radii
+    """The radius of each node block, in file order."""
+    return Cert.read(cert).radii()
 
 
 def certified_angles(cert):
     """Centre angles of the shared cells, in radians, in listed order."""
-    lines = pathlib.Path(cert).read_text().splitlines()
-    i = next(k for k, l in enumerate(lines) if l.startswith("NANGLES"))
-    n = int(lines[i].split()[1])
-    out = []
-    for l in lines[i + 1:i + 1 + n]:
-        f = l.split()
-        out.append((int(f[0]) * 2.0 ** int(f[1]), int(f[2]) * 2.0 ** int(f[3])))
-    return out
+    return Cert.read(cert).angle_centres()
 
 
 def current_terms(a, base, tmp):

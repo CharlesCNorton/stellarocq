@@ -1078,6 +1078,73 @@ def check_patch_surface(main):
                   f"branches, all inside the classical-real layer")
 
 
+def check_certfile_widths(tmp):
+    """The bound-line reader takes its width from the header.
+
+    A bound line is eight integers ordinarily, ten when the file carries a
+    third varied slot, and ten again under a Taylor bound, with the two wide
+    forms putting the cell bound in different places. A reader that assumes
+    eight fields reads the wrong pair out of either, which is a wrong number
+    rather than a failure, so both wide forms are built here from the
+    committed certificate and read back.
+    """
+    src = HERE / "data" / "cert_solovev_cells.txt"
+    if not src.exists():
+        return "skip", "cert_solovev_cells.txt absent"
+    sys.path.insert(0, str(ROOT / "gen"))
+    try:
+        from certfile import Cert
+    except ImportError as e:
+        return "fail", f"certfile does not import: {e}"
+
+    def widen(marker, insert_at, pad):
+        """The committed certificate with a marker and wider bound lines."""
+        out, left = [], 0
+        for line in src.read_text().splitlines():
+            if line.startswith("SLOTS"):
+                out += [line, marker]
+                continue
+            if line.startswith("CELLS"):
+                left = 3 * int(line.split()[1])
+                out.append(line)
+                continue
+            if left:
+                f = line.split()
+                out.append(" ".join(f[:insert_at] + pad + f[insert_at:]))
+                left -= 1
+                continue
+            out.append(line)
+        return "\n".join(out) + "\n"
+
+    plain = Cert.read(src)
+    if plain.bound_width != 8 or plain.cell_index != 6:
+        return "fail", (f"an ordinary file read as width {plain.bound_width}, "
+                        f"cell bound at {plain.cell_index}")
+    want = plain.cell_bound(plain.nodes[0].cells[0].s)
+
+    # a third slot appends its own pair, so the cell bound stays at six
+    p3 = tmp / "certfile_slot3.txt"
+    p3.write_text(widen("SLOT3 2 3537118876014220", 8, ["1", "-900"]))
+    c3 = Cert.read(p3)
+    if c3.bound_width != 10 or c3.cell_index != 6:
+        return "fail", (f"a SLOT3 file read as width {c3.bound_width}, "
+                        f"cell bound at {c3.cell_index}")
+    if c3.cell_bound(c3.nodes[0].cells[0].s) != want:
+        return "fail", "a SLOT3 file gave a different cell bound"
+
+    # a Taylor line carries two more pairs before it, so it moves to eight
+    pt = tmp / "certfile_taylor.txt"
+    pt.write_text(widen("TAYLOR", 4, ["1", "-900"]))
+    ct = Cert.read(pt)
+    if ct.bound_width != 10 or ct.cell_index != 8:
+        return "fail", (f"a TAYLOR file read as width {ct.bound_width}, "
+                        f"cell bound at {ct.cell_index}")
+    got = ct.cell_bound(ct.nodes[0].cells[0].s)
+    if got != want:
+        return "fail", f"a TAYLOR file gave {got:.6e}, not {want:.6e}"
+    return "ok", "the cell bound is read from the width the header names"
+
+
 def check_reference(name, wout, node, gen_args, radius, main, python, tmp):
     """The certified enclosure at a cell centre against the float reference."""
     if not wout.exists():
@@ -1217,6 +1284,7 @@ def main():
                    len("correspond/swapped_radial"),
                    len("correspond/rescaled_piece"),
                    len("reference/quasisym_solovev"),
+                   len("reader/bound_widths"),
                    len("audit/patch_surface")])
     counts = {"ok": 0, "fail": 0, "skip": 0}
     failures = []
@@ -1420,6 +1488,14 @@ def main():
         mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
         print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
               flush=True)
+
+    if not a.only or a.only in "reader/bound_widths":
+        t = time.time()
+        status, detail = check_certfile_widths(tmp)
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {'reader/bound_widths':<{width}}  {detail}  "
+              f"({time.time() - t:.1f} s)", flush=True)
 
     if not a.only or a.only in "audit/patch_surface":
         t = time.time()

@@ -23,6 +23,9 @@ import sys
 
 import numpy as np
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from certfile import Cert  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GEN = ROOT / "gen" / "make_cert.py"
 
@@ -35,23 +38,7 @@ def run(cmd):
 
 def per_node(cert):
     """The worst centre bound of each node block, in file order."""
-    out, cur, inside = [], 0.0, False
-    for line in pathlib.Path(cert).read_text().splitlines():
-        if line.startswith("NODE"):
-            if inside:
-                out.append(cur)
-            cur, inside = 0.0, False
-            continue
-        if line.startswith("CELLS"):
-            inside = True
-            continue
-        if inside:
-            f = line.split()
-            if len(f) >= 8 and all(x.lstrip("-").isdigit() for x in f[:8]):
-                cur = max(cur, float(f[0]) * 2.0 ** float(f[1]))
-    if inside:
-        out.append(cur)
-    return out
+    return Cert.read(cert).worst_centre_per_node()
 
 
 def nearest_resonance(iota, nfp, mmax=12):
