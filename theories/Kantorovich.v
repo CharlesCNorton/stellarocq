@@ -136,7 +136,7 @@ Hypothesis Hcomplete :
   (forall eps, 0 < eps ->
      exists N, forall m n, (N <= m)%nat -> (N <= n)%nat -> d (u m) (u n) < eps) ->
   exists x, d x0 x <= r /\
-    forall eps, 0 < eps -> exists N, forall n, (N <= n)%nat -> d x (iter n) < eps.
+    forall eps, 0 < eps -> exists N, forall n, (N <= n)%nat -> d x (u n) < eps.
 
 (** The iterates are Cauchy. *)
 Lemma iter_cauchy :
@@ -430,9 +430,10 @@ Qed.
     the first Newton step that keeps the iteration in the ball. *)
 Hypothesis Hsmall : dn x0 (gnewton x0) <= (1 - k) * r.
 
-(** Completeness of the ball, in the shape [contraction_fixed_point] wants:
-    a Cauchy sequence inside it converges inside it, with the limit close to
-    the Newton iterates. A complete quotient supplies this. *)
+(** Completeness of the ball: a Cauchy sequence inside it converges inside
+    it. A complete quotient supplies this, and nothing about the Newton
+    iteration enters, so what a later formalization has to establish is
+    completeness and not a statement about this file's [iter]. *)
 Hypothesis Hcomplete :
   forall u : nat -> X,
   (forall n, dn x0 (u n) <= r) ->
@@ -440,8 +441,7 @@ Hypothesis Hcomplete :
      exists N, forall m n, (N <= m)%nat -> (N <= n)%nat -> dn (u m) (u n) < eps) ->
   exists x, dn x0 x <= r /\
     forall eps, 0 < eps ->
-      exists N, forall n, (N <= n)%nat ->
-        dn x (iter X gnewton x0 n) < eps.
+      exists N, forall n, (N <= n)%nat -> dn x (u n) < eps.
 
 (** On the gauge-fixed quotient the argument closes: there is a gauge orbit in
     the ball that is a zero of the operator, and it is the only zero in the
