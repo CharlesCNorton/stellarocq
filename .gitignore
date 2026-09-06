@@ -10,3 +10,5 @@ Makefile.coq*
 /data_cert_*
 .lia.cache
 __pycache__/
+.Makefile.coq.d
+.nra.cache

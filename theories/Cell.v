@@ -534,6 +534,23 @@ Definition check_component_flat (prec : F.precision)
       nonneg (ieval prec eempty (combination_e du 0 cb))
   end.
 
+(** The same for a cell whose first slot has no width. Nothing distinguishes
+    the two slots but the order a certificate names them in, so a covering
+    that runs along the second one is the same object as one that runs along
+    the first, and it should cost the same: one derivative environment and
+    one bound, not two. *)
+Definition check_component_flat_u (prec : F.precision)
+    (base len : nat) (dv : Z)
+    (env0 envv : env I.type) (r : expr) (cb : cbounds) : bool :=
+  match slot_of r with
+  | None => false
+  | Some n =>
+      Nat.leb base n && Nat.ltb n (base + len) &&
+      check1 prec env0 r (cb_N0 cb) (cb_q0 cb) &&
+      check1 prec envv (Evar (n + len)) (cb_NDv cb) (cb_qDv cb) &&
+      nonneg (ieval prec eempty (combination_e 0 dv cb))
+  end.
+
 (** The checks of one cell. *)
 Definition check_cell (c : ccert) (cl : ccell) : bool :=
   let prec := cprec_of c in
@@ -545,13 +562,21 @@ Definition check_cell (c : ccert) (cl : ccell) : bool :=
   let len := length binds in
   let box := box_ienv prec ms (cc_du cl) (cc_dv cl) in
   let env0 := iextend prec (ienv_of prec ms) binds in
-  let envu := iextend prec box (with_derivs slot_u base len binds) in
   Nat.eqb (length ms) base &&
   Nat.ltb slot_u base && Nat.ltb slot_v base &&
   Nat.ltb 0 len &&
   Z.leb 0 (cc_du cl) && Z.leb 0 (cc_dv cl) &&
   well_formed base binds &&
-  (if Z.eqb (cc_dv cl) 0 then
+  (if Z.eqb (cc_du cl) 0 then
+     let envv := iextend prec box (with_derivs slot_v base len binds) in
+     check_component_flat_u prec base len (cc_dv cl) env0 envv
+                            (r_s r3) (cc_s cl) &&
+     check_component_flat_u prec base len (cc_dv cl) env0 envv
+                            (r_u r3) (cc_u cl) &&
+     check_component_flat_u prec base len (cc_dv cl) env0 envv
+                            (r_v r3) (cc_v cl)
+   else if Z.eqb (cc_dv cl) 0 then
+     let envu := iextend prec box (with_derivs slot_u base len binds) in
      check_component_flat prec base len (cc_du cl) env0 envu
                           (r_s r3) (cc_s cl) &&
      check_component_flat prec base len (cc_du cl) env0 envu
@@ -559,6 +584,7 @@ Definition check_cell (c : ccert) (cl : ccell) : bool :=
      check_component_flat prec base len (cc_du cl) env0 envu
                           (r_v r3) (cc_v cl)
    else
+     let envu := iextend prec box (with_derivs slot_u base len binds) in
      let envv := iextend prec box (with_derivs slot_v base len binds) in
      check_component prec base len (cc_du cl) (cc_dv cl) env0 envu envv
                      (r_s r3) (cc_s cl) &&
@@ -960,6 +986,97 @@ Proof.
     simpl in Hcombi. lra.
 Qed.
 
+(** The mirror: with no width in the first slot the point is forced to the
+    centre there, and the walk from the centre has one leg along the second
+    slot rather than two. *)
+Lemma component_correct_flat_u :
+  forall prec ms base len binds dv r cb,
+  length ms = base -> (slot_u < base /\ slot_v < base)%nat -> (0 < len)%nat ->
+  0 <= dv ->
+  well_formed base binds = true -> len = length binds ->
+  check_component_flat_u prec base len dv
+    (iextend prec (ienv_of prec ms) binds)
+    (iextend prec (box_ienv prec ms 0 dv) (with_derivs slot_v base len binds))
+    r cb = true ->
+  component_sound ms binds 0 dv r cb.
+Proof.
+  intros prec ms base len binds dv r cb Hms Hb Hlen0 Hdv Hwf Hlen Hchk.
+  unfold check_component_flat_u in Hchk.
+  destruct r; simpl in Hchk; try discriminate.
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcomb].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hdv_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcenter].
+  apply andb_prop in Hchk. destruct Hchk as [Hbn Hn].
+  apply Nat.leb_le in Hbn. apply Nat.ltb_lt in Hn.
+  assert (Hcombi := combination_correct prec 0 dv cb Hcomb).
+  intros Mu Mv Hin.
+  set (Mu0 := IZR (nth slot_u ms 0)).
+  set (Mv0 := IZR (nth slot_v ms 0)).
+  assert (HinV := proj2 Hin).
+  (* no width in the first slot leaves the point at the centre there *)
+  assert (HMu : Mu = Mu0).
+  { destruct Hin as [[Hl Hr] _]. unfold Mu0.
+    rewrite Z.sub_0_r in Hl. rewrite Z.add_0_r in Hr. lra. }
+  assert (Hin0 : in_cell ms 0 dv Mu0 Mv0).
+  { unfold in_cell, Mu0, Mv0. rewrite !minus_IZR, !plus_IZR.
+    generalize (IZR_le 0 dv Hdv). simpl. lra. }
+  assert (Henv0 := iextend_correct prec binds _ _ (env_ok_fromZ prec ms)).
+  destruct (check1_correct _ _ _ _ _ _ Henv0 Hcenter) as [w0 [Hw0 Hb0]].
+  simpl in Hw0.
+  set (Fv := fun t => xextend (eset slot_v (eset slot_u (xenv_of ms) (Xreal Mu0)) (Xreal t))
+                              (with_derivs slot_v base len binds)).
+  assert (Hinv_v : inv slot_v base len Fv (base + len)).
+  { destruct (inputs_real ms base Mu0 Mv0 Hms Hb) as [Hl Hr].
+    rewrite cell_env_v in Hl, Hr.
+    assert (Hbase := inv_base slot_v base len ltac:(lia) ltac:(lia) _ Hl Hr).
+    assert (Hres := inv_bindings slot_v base len ltac:(lia) ltac:(lia)
+                      binds _ base Hbase Hwf ltac:(lia) ltac:(lia)).
+    rewrite <- Hlen in Hres.
+    refine (inv_ext slot_v base len _ Fv (base + len) _ Hres).
+    intros t. unfold Fv. now rewrite eset_overwrite. }
+  assert (Hdv_n := deriv_slot_of slot_v base len Fv (base + len) n
+                     ltac:(lia) Hbn Hinv_v).
+  set (Dv := (IZR (cb_NDv cb) * powerRZ 2%R (cb_qDv cb))%R).
+  set (lo_v := IZR (nth slot_v ms 0 - dv)).
+  set (hi_v := IZR (nth slot_v ms 0 + dv)).
+  assert (Hbnd_v : forall t, (lo_v <= t <= hi_v)%R ->
+            exists d, eget (n + len) (Fv t) Xnan = Xreal d /\ (Rabs d <= Dv)%R).
+  { intros t Ht.
+    assert (Hin_t : in_cell ms 0 dv Mu0 t).
+    { split. exact (proj1 Hin0). exact Ht. }
+    assert (Hd := deriv_bound_on_cell prec ms base len binds 0 dv slot_v n _ _
+                    Mu0 t Hin_t Hdv_chk).
+    rewrite cell_env_v in Hd. exact Hd. }
+  destruct (bound_between_dist Fv n (n + len) Dv lo_v hi_v Mv0 Mv Hdv_n Hbnd_v
+              (proj2 Hin0) HinV) as [wv0 [wv1 [Hwv0 [Hwv1 Hinc_v]]]].
+  assert (Hval_v : forall t, eget n (Fv t) Xnan
+                     = eget n (xextend (cell_env ms Mu0 t) binds) Xnan).
+  { intros t. unfold Fv. rewrite cell_env_v.
+    apply (values_with_derivs slot_v base len binds _ _ base Hwf); try lia.
+    intros k _. reflexivity. }
+  rewrite Hval_v in Hwv0, Hwv1.
+  unfold Mu0, Mv0 in Hwv0.
+  rewrite (cell_env_center ms base Hms Hb) in Hwv0.
+  rewrite Hw0 in Hwv0. injection Hwv0 as <-.
+  exists wv1. rewrite HMu. split. exact Hwv1.
+  assert (HDv : (0 <= Dv)%R).
+  { destruct (Hbnd_v Mv0 (proj2 Hin0)) as [d [_ Hd]].
+    generalize (Rabs_pos d). lra. }
+  assert (Hhalf_v : (Rabs (Mv - Mv0) <= IZR dv)%R).
+  { unfold Mv0. destruct HinV as [Hl Hr].
+    unfold lo_v in Hl. unfold hi_v in Hr.
+    rewrite minus_IZR in Hl. rewrite plus_IZR in Hr. apply Rabs_le. lra. }
+  assert (Hinc_v' : (Rabs (wv1 - w0) <= Dv * IZR dv)%R).
+  { apply Rle_trans with (Dv * Rabs (Mv - Mv0))%R. exact Hinc_v.
+    now apply Rmult_le_compat_l. }
+  apply Rle_trans with (Rabs w0 + Dv * IZR dv)%R.
+  - replace wv1 with (w0 + (wv1 - w0))%R by ring.
+    eapply Rle_trans. apply Rabs_triang.
+    apply Rplus_le_compat; [apply Rle_refl | exact Hinc_v'].
+  - unfold Dv in *. rewrite (Rmult_comm (IZR (cb_NDv cb) * powerRZ 2 (cb_qDv cb))).
+    simpl in Hcombi. lra.
+Qed.
+
 (* ---------------------------------------------------------------- *)
 (* Soundness of a whole certificate                                  *)
 
@@ -999,21 +1116,30 @@ Proof.
     by (split; assumption).
   apply Nat.ltb_lt in Hlen0.
   apply Z.leb_le in Hdu. apply Z.leb_le in Hdv.
-  destruct (Z.eqb (cc_dv cl) 0) eqn:Hz0.
-  - apply Z.eqb_eq in Hz0.
+  destruct (Z.eqb (cc_du cl) 0) eqn:Hu0.
+  - apply Z.eqb_eq in Hu0.
     apply andb_prop in Hcomp. destruct Hcomp as [Hcomp Hv].
     apply andb_prop in Hcomp. destruct Hcomp as [Hs Hu].
-    rewrite Hz0 in Hs, Hu, Hv |- *.
+    rewrite Hu0 in Hs, Hu, Hv |- *.
     repeat split;
-      apply (component_correct_flat (cprec_of c) _ (n_inputs c) _ _
-               (cc_du cl) _ _ Hms Hb Hlen0 Hdu Hwf eq_refl);
+      apply (component_correct_flat_u (cprec_of c) _ (n_inputs c) _ _
+               (cc_dv cl) _ _ Hms Hb Hlen0 Hdv Hwf eq_refl);
       assumption.
-  - apply andb_prop in Hcomp. destruct Hcomp as [Hcomp Hv].
-    apply andb_prop in Hcomp. destruct Hcomp as [Hs Hu].
-    repeat split;
-      apply (component_correct (cprec_of c) _ (n_inputs c) _ _
-               (cc_du cl) (cc_dv cl) _ _ Hms Hb Hlen0 Hdu Hdv Hwf eq_refl);
-      assumption.
+  - destruct (Z.eqb (cc_dv cl) 0) eqn:Hz0.
+    + apply Z.eqb_eq in Hz0.
+      apply andb_prop in Hcomp. destruct Hcomp as [Hcomp Hv].
+      apply andb_prop in Hcomp. destruct Hcomp as [Hs Hu].
+      rewrite Hz0 in Hs, Hu, Hv |- *.
+      repeat split;
+        apply (component_correct_flat (cprec_of c) _ (n_inputs c) _ _
+                 (cc_du cl) _ _ Hms Hb Hlen0 Hdu Hwf eq_refl);
+        assumption.
+    + apply andb_prop in Hcomp. destruct Hcomp as [Hcomp Hv].
+      apply andb_prop in Hcomp. destruct Hcomp as [Hs Hu].
+      repeat split;
+        apply (component_correct (cprec_of c) _ (n_inputs c) _ _
+                 (cc_du cl) (cc_dv cl) _ _ Hms Hb Hlen0 Hdu Hdv Hwf eq_refl);
+        assumption.
 Qed.
 
 (* ---------------------------------------------------------------- *)

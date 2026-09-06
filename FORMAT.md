@@ -148,9 +148,11 @@ in units of `eu` and `ev` respectively:
 <mu> <eu> <mv> <ev> <du> <dv>
 ```
 
-A `dv` of zero means the second slot has no width; the checker then uses
-`check_component_flat`, which asks for no bound on that derivative. The angle
-list is shared by every node block.
+A half-width of zero means that slot has no width, and the mean-value step
+along it covers no distance, so the checker asks for no bound on that
+derivative and never builds its environment: `check_component_flat` when `dv`
+is zero and `check_component_flat_u` when `du` is. The angle list is shared by
+every node block.
 
 The generator lays the cells out in integer mantissa units, cell `k` centred
 at `(2k+1)d` with half-width `d`, which is exactly the tiling
