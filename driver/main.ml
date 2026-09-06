@@ -1420,14 +1420,24 @@ let () =
             match snd (Unix.waitpid [] pid) with
             | Unix.WEXITED 0 -> acc
             | _ -> false) true pids in
+      (* The worst bound is what the run reports, so a partial that cannot be
+         read has to stop it: swallowing the read would leave that shard's
+         cells out of the maximum and understate the bound while the verdict
+         still said VALID. *)
       for i = 0 to n - 1 do
-        (try
-           let ic = open_in (part i) in
-           (try Scanf.sscanf (input_line ic) "%h"
-                  (fun m -> if m > !worst then worst := m)
-            with _ -> ());
-           close_in ic; Sys.remove (part i)
-         with _ -> ())
+        let p = part i in
+        if not (Sys.file_exists p) then begin
+          Printf.eprintf "a shard left no bound at %s\n%!" p;
+          exit 3
+        end;
+        let ic = open_in p in
+        let line = (try input_line ic with End_of_file -> "") in
+        close_in ic;
+        Sys.remove p;
+        (try Scanf.sscanf line "%h" (fun m -> if m > !worst then worst := m)
+         with _ ->
+           Printf.eprintf "a shard wrote %S, not a bound\n%!" line;
+           exit 3)
       done;
       (ok, !worst)
     end in
@@ -1470,14 +1480,25 @@ let () =
             match snd (Unix.waitpid [] pid) with
             | Unix.WEXITED 0 -> acc
             | _ -> false) true pids in
+      (* The count below is what says the split visited every cell, so a
+         partial that cannot be read is named rather than swallowed: the
+         total check would catch it either way, and it would report a lost
+         split when the cause was an unreadable file. *)
       let total = ref 0 in
       for i = 0 to n - 1 do
-        (try
-           let ic = open_in (part i) in
-           (try total := !total + int_of_string (String.trim (input_line ic))
-            with _ -> ());
-           close_in ic; Sys.remove (part i)
-         with _ -> ())
+        let p = part i in
+        if not (Sys.file_exists p) then begin
+          Printf.eprintf "a shard left no count at %s\n%!" p;
+          exit 3
+        end;
+        let ic = open_in p in
+        let line = (try input_line ic with End_of_file -> "") in
+        close_in ic;
+        Sys.remove p;
+        (try total := !total + int_of_string (String.trim line)
+         with _ ->
+           Printf.eprintf "a shard wrote %S, not a count\n%!" line;
+           exit 3)
       done;
       if !total <> ncells then begin
         Printf.eprintf
