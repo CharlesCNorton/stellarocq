@@ -695,7 +695,7 @@ let ihi (i : Expr.I.coq_type) =
 let integrate_cells prec
     (cell_of : int -> Cell.ccert * Cell.ccell * int64 * int64)
     (xu : int) (xv : int) (nnodes : int) (nangles : int) (nplanes : int)
-    (eu : float) (ev : float) (jobs : int) (tmp : string)
+    (eu : int64) (ev : int64) (jobs : int) (tmp : string)
     (labels : string list) =
   let ncells = nnodes * nangles in
   let two = Expr.I.fromZ prec (z_of_int64 2L) in
@@ -833,7 +833,17 @@ let integrate_cells prec
       se.(j) <- Cell.isum prec pe.(j)
     done
   end;
-  let scale = if two_d then 2.0 ** (eu +. ev) else 2.0 ** eu in
+  (* Work is in mantissa units of the angle slots, and the result is in
+     radians, so the sum has to be widened by the quadrature error and scaled
+     by a power of two. Doing either in ordinary floating point rounds in an
+     unknown direction, and a rounded-in endpoint is a narrower interval than
+     the one the theorem established, so both steps run in the same interval
+     arithmetic as everything else: the error becomes a symmetric interval
+     built from the exact stored endpoint, and the power of two is the same
+     Epow2 the checker reads an exponent with. *)
+  let kexp = if two_d then Int64.add eu ev else eu in
+  let scl = Expr.ieval prec Expr.eempty (Expr.Epow2 (z_of_int64 kexp)) in
+  let scale = 2.0 ** Int64.to_float kexp in
   let unit = if two_d then "rad^2" else "rad" in
   for node = 0 to nnodes - 1 do
     for plane = 0 to np - 1 do
@@ -842,8 +852,12 @@ let integrate_cells prec
       Stdlib.List.iteri (fun i nm ->
           let j = 3 * (node * np + plane) + i in
           let e = ihi se.(j) in
-          let lo = (ilo sv.(j) -. e) *. scale
-          and hi = (ihi sv.(j) +. e) *. scale in
+          (* negating a float is exact, so this interval is the error bound
+             read symmetrically and nothing is lost building it *)
+          let err = Float.Ibnd (-. e, e) in
+          let out =
+            Expr.I.mul prec (Expr.I.add prec sv.(j) err) scl in
+          let lo = ilo out and hi = ihi out in
           Printf.printf
             "    %-12s [%.9e, %.9e] %s, quadrature error at most %.3e\n%!"
             nm lo hi unit (e *. scale);
@@ -1826,7 +1840,7 @@ let () =
         let prec0 = Cell.cprec_of (let (cl, _, _) = cell_at 0 in ccert_of cl) in
         integrate_cells prec0
           (fun k -> let (cl, du, dv) = cell_at k in (ccert_of cl, cl, du, dv))
-          xu xv nb na nplanes (Int64.to_float u0.e) (Int64.to_float v0.e) n src
+          xu xv nb na nplanes u0.e v0.e n src
           (match out with
            | Physics.RGeometry -> [ "sqrt(g)"; "sqrt(g) B^2"; "B_u" ]
            | Physics.RMercierA -> [ "tpp"; "tbb"; "tjb" ]
