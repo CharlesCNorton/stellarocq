@@ -1480,9 +1480,14 @@ let () =
     let ok = ref true in
     (* Cells written at different exponents still describe one range, so
        every centre and half-width is carried to the finest exponent present.
-       That exponent is the smallest, so each shift is upward and exact: no
-       cell is claimed wider than it is, and a range too wide to shift is
-       saturated rather than wrapped. *)
+       That exponent is the smallest, so each shift is upward.
+
+       A shift that does not round-trip has overflowed. Saturating it would
+       claim a cell wider than it is, and Cover.covers reads exactly these
+       numbers, so a saturated half-width could report a covering that leaves
+       a gap as one that does not, and --integrate gates on that report. The
+       overflow is recorded and the report gives up instead. *)
+    let over = ref false in
     let fine = ref None in
     for k = 0 to ncells - 1 do
       match slot_dyadic k slot with
@@ -1496,8 +1501,11 @@ let () =
     let rescale m e =
       let sh = Int64.to_int (Int64.sub e fine) in
       if sh <= 0 then m
-      else if sh > 62 then Int64.max_int
-      else Int64.shift_left m sh in
+      else if sh >= 63 then (over := true; m)
+      else
+        let v = Int64.shift_left m sh in
+        if Int64.equal (Int64.shift_right v sh) m then v
+        else (over := true; m) in
     for k = 0 to ncells - 1 do
       match slot_dyadic k slot, slot_width k slot with
       | Some d, Some w ->
@@ -1505,7 +1513,11 @@ let () =
           pairs := (rescale d.m d.e, rescale w d.e) :: !pairs
       | _ -> ok := false
     done;
-    if not !ok then
+    if !over then
+      Printf.printf
+        "  %s: the cells are written at exponents too far apart to be \
+         compared, so whether they leave a gap is not decided\n%!" name
+    else if not !ok then
       Printf.printf "  %s: a cell carries no width for this slot\n%!" name
     else begin
       (* sorted by lower endpoint, which is the order the chain walks *)
