@@ -45,20 +45,13 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "proto"))
 from pressure_ref import Profile  # noqa: E402
 
-# The coefficients that carry a profile's amplitude, per closed form. VMEC
-# multiplies the profile by PRES_SCALE and does not write that to the wout, so
-# the generator puts it back into these; every other coefficient is an
-# exponent, a position, a width or a mixing fraction and has to be the file's
-# own exactly. The pressure itself is then read back against the file's `pres`.
-AMPLITUDE_SLOTS = {
-    "POWER": set(range(21)),
-    "TWOPOWER": {0},
-    "TWOPOWERGS": {0},
-    "GAUSSTRUNC": {0},
-    "TWOLORENTZ": {0},
-    "PEDESTAL": set(range(16)) | {17},
-    "RATIONAL": set(range(10)),
-}
+# The coefficients that carry a profile's amplitude, per closed form, read
+# from the one table the generator applies the scale by. Every other
+# coefficient is an exponent, a position, a width or a mixing fraction and has
+# to be the file's own exactly; the pressure itself is read back against the
+# file's `pres`.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from vmec_profiles import AMPLITUDE_SLOTS  # noqa: E402
 
 # The OUTPUT names whose line carries a mode pair after the name.
 OUTPUT_WITH_MODE = ("harmonic", "covariant", "covariant-sin", "boozer")

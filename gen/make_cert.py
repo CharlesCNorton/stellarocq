@@ -31,7 +31,12 @@ import argparse
 import pathlib
 import re
 
+import sys
+
 import numpy as np
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from vmec_profiles import AMPLITUDE_SLOTS  # noqa: E402
 
 MU0 = 4e-7 * np.pi
 
@@ -387,16 +392,9 @@ def pvalue_ref(profile, am, s):
 
 # The coefficients that carry the pressure's amplitude, per closed form. Every
 # other coefficient of the family is an exponent, a position, a width or a
-# mixing fraction, and stays as the wout wrote it.
-AMPLITUDE_SLOTS = {
-    "POWER": list(range(21)),
-    "TWOPOWER": [0],
-    "TWOPOWERGS": [0],
-    "GAUSSTRUNC": [0],
-    "TWOLORENTZ": [0],
-    "PEDESTAL": list(range(16)) + [17],
-    "RATIONAL": list(range(10)),
-}
+# mixing fraction, and stays as the wout wrote it. gen/verify_cert.py reads
+# the same table, since the two have to agree about which slots the scale
+# went into.
 
 
 def calibrate_pressure(w):
