@@ -1522,6 +1522,11 @@ def main():
             or a.quasisym_two) and not a.cells:
         msg = "these outputs carry integrands, so they need --cells"
         raise SystemExit(msg)
+    if a.slot3 is not None and a.taylor:
+        msg = ("a third slot and a Taylor bound both widen a bound line to "
+               "ten numbers and mean different things by them, so a file "
+               "carries one or the other")
+        raise SystemExit(msg)
     if a.quasisym_two and a.radial:
         msg = ("the two-term quasisymmetry residual is a surface quantity "
                "read at the outer half point, so it takes a surface covering")

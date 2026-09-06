@@ -154,6 +154,11 @@ class Cert:
         if peek() == "TAYLOR":
             nxt()
             c.taylor = True
+        if c.slot3 is not None and c.taylor:
+            # both widen a bound line to ten and the two tens differ, so a
+            # file carrying both names no reading of its own numbers
+            msg = "the file carries both SLOT3 and TAYLOR"
+            raise ValueError(msg)
         expect("OUTPUT")
         c.output = nxt()
         if c.output in OUTPUT_WITH_MODE:

@@ -168,6 +168,10 @@ def main():
     taylor = r.peek() == "TAYLOR"
     if taylor:
         r.next()
+    if slot3 and taylor:
+        # the two widen a bound line the same amount and mean different
+        # things by it, so a file carrying both is not readable either way
+        raise SystemExit("the certificate carries both SLOT3 and TAYLOR")
     n_bound = 10 if (slot3 or taylor) else 8
     r.expect("OUTPUT")
     out = r.next()

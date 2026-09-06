@@ -1099,6 +1099,17 @@ let () =
   let taylor_file =
     if !p < Array.length toks && toks.(!p) = "TAYLOR"
     then (ignore (tok ()); true) else false in
+  (* Both markers widen a bound line to ten numbers and the two tens mean
+     different things: a third slot appends its own derivative pair after the
+     cell bound, a Taylor line puts a first and second derivative before it.
+     A file carrying both says nothing about which its ten are, so it is
+     refused rather than read as one of them. *)
+  (if slot3_file <> None && taylor_file then begin
+     prerr_endline
+       "this file carries both SLOT3 and TAYLOR, whose bound lines are the \
+        same width and different fields; one or the other";
+     exit 2
+   end);
   let n_bound =
     match slot3_file with Some _ -> 10 | None -> if taylor_file then 10 else 8 in
   expect "OUTPUT";
