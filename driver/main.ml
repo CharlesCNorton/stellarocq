@@ -1520,7 +1520,18 @@ let () =
     else if not !ok then
       Printf.printf "  %s: a cell carries no width for this slot\n%!" name
     else begin
-      (* sorted by lower endpoint, which is the order the chain walks *)
+      (* Cover.chain walks the list in the order it is handed, and
+         check_ccert_over_range is stated about the cells in the order the
+         file lists them. Sorting by lower endpoint can only make the walk
+         succeed more often, so the file's own order is tried first and is
+         what a plain verdict rests on.
+
+         The sorted list is a permutation of the same cells, so when only it
+         passes, covers_correct still puts every real of the range inside a
+         cell the file carries: what is lost is the composition with
+         check_ccert_over_range, whose hypothesis names the file's order. The
+         run says which of the two it established. *)
+      let file_order = Stdlib.List.rev !pairs in
       let ps = Stdlib.List.sort_uniq
                  (fun (c1, d1) (c2, d2) ->
                     compare (Int64.sub c1 d1, c1, d1) (Int64.sub c2 d2, c2, d2))
@@ -1531,20 +1542,29 @@ let () =
           let lo = Int64.sub c0 d0 in
           let hi = Stdlib.List.fold_left
                      (fun acc (c, d) -> max acc (Int64.add c d)) lo ps in
-          let zs = Stdlib.List.map
-                     (fun (c, d) -> (z_of_int64 c, z_of_int64 d)) ps in
+          let zs_of l = Stdlib.List.map
+                          (fun (c, d) -> (z_of_int64 c, z_of_int64 d)) l in
           let e = match !expo with Some e -> Int64.to_float e | None -> 0.0 in
           let scale = 2.0 ** e in
-          if Cover.covers (z_of_int64 lo) (z_of_int64 hi) zs then begin
+          let lof = Int64.to_float lo *. scale
+          and hif = Int64.to_float hi *. scale in
+          if Cover.covers (z_of_int64 lo) (z_of_int64 hi) (zs_of file_order)
+          then begin
             good := true;
             Printf.printf
               "  %s: %d cells cover [%.6f, %.6f] with no gap\n%!"
-              name (Stdlib.List.length ps)
-              (Int64.to_float lo *. scale) (Int64.to_float hi *. scale)
+              name (Stdlib.List.length file_order) lof hif
+          end else if Cover.covers (z_of_int64 lo) (z_of_int64 hi) (zs_of ps)
+          then begin
+            good := true;
+            Printf.printf
+              "  %s: %d cells cover [%.6f, %.6f] with no gap, but only once \
+               sorted: the file does not list them as a chain\n%!"
+              name (Stdlib.List.length ps) lof hif
           end else
             Printf.printf
               "  %s: the cells leave a gap inside [%.6f, %.6f]\n%!"
-              name (Int64.to_float lo *. scale) (Int64.to_float hi *. scale)
+              name lof hif
     end;
     !good in
   let names = [| "radius"; "poloidal angle"; "toroidal angle" |] in
