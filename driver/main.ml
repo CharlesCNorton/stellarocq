@@ -709,7 +709,14 @@ let integrate_cells prec
   (* Each cell's contribution is kept and handed to Cell.isum, which is the
      summation theories/Cell.v proves encloses the sum of whatever the terms
      enclose. The loop used to add them itself and correspond to Quad.rsum by
-     inspection; now the correspondence is a call. *)
+     inspection; now the correspondence is a call.
+
+     A sharded run adds twice, once inside each shard and once over the shard
+     totals, and both are isum. The list a single isum walks is therefore the
+     shard's cells rather than the covering's, so the association is the
+     split's; what makes that sound is that isum_correct is about whatever
+     reals the terms enclose, and a sum of reals is the same however it is
+     grouped. *)
   let shard lo hi =
     let av = Array.make width [] in
     let ae = Array.make width [] in
@@ -803,15 +810,27 @@ let integrate_cells prec
         match snd (Unix.waitpid [] pid) with
         | Unix.WEXITED 0 -> ()
         | _ -> prerr_endline "an integration shard failed"; exit 3) pids;
+    (* The shard totals are summed by Cell.isum as well, not by a loop of
+       additions written here. Read at two levels, isum_correct covers the
+       whole chain: each shard's isum encloses the sum of the contributions
+       of its own cells, and the isum over the shard totals encloses the sum
+       of those sums, which is the total because addition of reals does not
+       care how the shards were cut. *)
+    let pv = Array.make width [] in
+    let pe = Array.make width [] in
     for i = 0 to n - 1 do
       let ic = open_in (part i) in
       for j = 0 to width - 1 do
         Scanf.sscanf (input_line ic) "%h %h %h %h"
           (fun a b c d ->
-             sv.(j) <- Expr.I.add prec sv.(j) (Float.Ibnd (a, b));
-             se.(j) <- Expr.I.add prec se.(j) (Float.Ibnd (c, d)))
+             pv.(j) <- Float.Ibnd (a, b) :: pv.(j);
+             pe.(j) <- Float.Ibnd (c, d) :: pe.(j))
       done;
       close_in ic; Sys.remove (part i)
+    done;
+    for j = 0 to width - 1 do
+      sv.(j) <- Cell.isum prec pv.(j);
+      se.(j) <- Cell.isum prec pe.(j)
     done
   end;
   let scale = if two_d then 2.0 ** (eu +. ev) else 2.0 ** eu in
