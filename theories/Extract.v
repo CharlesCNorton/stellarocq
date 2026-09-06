@@ -9,6 +9,7 @@ Separate Extraction check_cert check_cert_lower Cert CPoint check_ccert check_cc
   MBox merc_i menv check_unstable check_stable
   e_dshear e_dcurr e_dwell e_dgeod e_dmerc e_dstable
   with_derivs2 PConfig RResidual RHarmonic RGeometry RMercierA RMercierB PPower PTwoPower PCubic PRational PGaussTrunc
+  base_R base_Z base_L base_Ra base_Za base_La base_W
   PTwoPowerGs PPedestal PTwoLorentz RRadialAxis RCovHarm RCovHarmS
   RStreamDefect RBoozer RTerms RRadialTerms RJsTerms RRadialJsTerms
   RQuasiSym RQuasiTwo base_scratch_of.

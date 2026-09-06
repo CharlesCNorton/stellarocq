@@ -1299,6 +1299,37 @@ let () =
   in
   let coq_modes =
     Array.to_list (Array.map (fun (m, n) -> (z_of_int64 m, z_of_int64 n)) modes) in
+  (* The order env_of concatenates its blocks in has to be the order
+     Physics.v allocates against. Nothing inside the proof ties slot 32 to
+     the first rmnc coefficient: the theorem quantifies over whatever
+     mantissas it is handed, so a block written at the wrong offset certifies
+     a different object and still passes. The offsets the concatenation
+     produces are computed from the block sizes and read against the
+     extracted constants, so a change on either side stops the run. *)
+  let () =
+    let off_R = 4 + 3 + 2 + 2 + 21 in
+    let off_Z = off_R + 3 * nk in
+    let off_L = off_Z + 3 * nk in
+    let off_Ra = off_L + 2 * nk in
+    let off_Za = off_Ra + 3 * nk in
+    let off_La = off_Za + 3 * nk in
+    let off_W = if lasym then off_La + 2 * nk else off_Ra in
+    let expect name got want =
+      if got <> want then begin
+        Printf.eprintf
+          "the %s block is written at slot %d and Physics.v reads it at %d\n%!"
+          name got want;
+        exit 2
+      end in
+    expect "R cosine" off_R (Physics.base_R nk);
+    expect "Z sine" off_Z (Physics.base_Z nk);
+    expect "lambda sine" off_L (Physics.base_L nk);
+    if lasym then begin
+      expect "R sine" off_Ra (Physics.base_Ra nk);
+      expect "Z cosine" off_Za (Physics.base_Za nk);
+      expect "lambda cosine" off_La (Physics.base_La nk)
+    end;
+    expect "stream function" off_W (Physics.base_W lasym nk) in
   let ncells = nb * na in
   let n = min (jobs ()) (max 1 ncells) in
   (* Approximate float value of a dyadic, for display only. *)
