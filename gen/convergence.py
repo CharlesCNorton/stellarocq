@@ -66,10 +66,20 @@ def node_near(path, s_target):
 
 
 def worst_centre(cert):
-    """The largest centre bound over every cell of a tightened certificate."""
+    """The largest centre bound over every cell of a tightened certificate.
+
+    Bound lines run from a CELLS line to the end of the node block, so the
+    scan is armed by CELLS and disarmed by the next NODE. A coefficient row of
+    a later block is a run of integers as wide as a bound line, so a scan that
+    stays armed across the block boundary reads those rows as bounds and
+    reports a coefficient's magnitude instead of a residual.
+    """
     worst = 0.0
     inside = False
     for line in pathlib.Path(cert).read_text().splitlines():
+        if line.startswith("NODE"):
+            inside = False
+            continue
         if line.startswith("CELLS"):
             inside = True
             continue
@@ -77,8 +87,6 @@ def worst_centre(cert):
             f = line.split()
             if len(f) >= 8 and all(x.lstrip("-").isdigit() for x in f[:8]):
                 worst = max(worst, float(f[0]) * 2.0 ** float(f[1]))
-            else:
-                inside = line.startswith(("NODE", "S ", "DU ")) or inside
     return worst
 
 
