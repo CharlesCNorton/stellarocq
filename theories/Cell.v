@@ -1638,6 +1638,94 @@ Proof.
 Qed.
 
 (* ---------------------------------------------------------------- *)
+(* The Taylor cell read the other way                                *)
+
+(** The mean-value cell has a floor form and the Taylor cell had none, so a
+    covering sharp enough to want the Taylor bound could only ever claim that
+    a component is small, never that it is bounded away from zero. The steps
+    are the same three and the combination is the same one with them
+    subtracted rather than added. *)
+Definition combination_lower_t (du dv : Z) (tb : tbounds) : expr :=
+  Esub (Esub (Esub (Esub (eps_e (tb_N0 tb) (tb_q0 tb))
+                         (Emul (EfromZ du) (eps_e (tb_Nu tb) (tb_qu tb))))
+                   (Emul (Emul (EfromZ du) (EfromZ du))
+                         (eps_e (tb_Nuu tb) (tb_quu tb))))
+             (Emul (EfromZ dv) (eps_e (tb_Nv tb) (tb_qv tb))))
+       (eps_e (tb_Nc tb) (tb_qc tb)).
+
+Lemma combination_lower_t_correct :
+  forall prec du dv tb,
+  nonneg (ieval prec eempty (combination_lower_t du dv tb)) = true ->
+  (IZR (tb_Nc tb) * powerRZ 2%R (tb_qc tb)
+   <= IZR (tb_N0 tb) * powerRZ 2%R (tb_q0 tb)
+      - IZR du * (IZR (tb_Nu tb) * powerRZ 2%R (tb_qu tb))
+      - IZR du * IZR du * (IZR (tb_Nuu tb) * powerRZ 2%R (tb_quu tb))
+      - IZR dv * (IZR (tb_Nv tb) * powerRZ 2%R (tb_qv tb)))%R.
+Proof.
+  intros prec du dv tb Hchk.
+  destruct (nonneg_correct _ _
+              (ieval_correct prec eempty eempty _ env_ok_nil) Hchk)
+    as [d [Hd Hge]].
+  unfold combination_lower_t in Hd.
+  cbn [xeval] in Hd. rewrite !xeval_eps_e in Hd.
+  cbn in Hd. injection Hd as <-. lra.
+Qed.
+
+(** One component of a Taylor cell, checked for a floor instead of a
+    ceiling: the centre read from below and the three steps from above. *)
+Definition check_component_t_lower (prec : F.precision)
+    (base len : nat) (du dv : Z)
+    (env0 envd envb envv : env I.type) (r : expr) (tb : tbounds) : bool :=
+  match slot_of r with
+  | None => false
+  | Some n =>
+      Nat.leb base n && Nat.ltb n (base + len) &&
+      check1_lower prec env0 r (tb_N0 tb) (tb_q0 tb) &&
+      check1 prec envd (Evar (n + len)) (tb_Nu tb) (tb_qu tb) &&
+      check1 prec envb (Evar (n + 2 * len)) (tb_Nuu tb) (tb_quu tb) &&
+      check1 prec envv (Evar (n + len)) (tb_Nv tb) (tb_qv tb) &&
+      nonneg (ieval prec eempty (combination_lower_t du dv tb))
+  end.
+
+(** What it means: at every real point of the cell the component is a real
+    number at least the cell floor. *)
+Definition component_t_bounded_away (ms : list Z) (binds : list binding)
+    (du dv : Z) (r : expr) (tb : tbounds) : Prop :=
+  forall Mu Mv, in_cell ms du dv Mu Mv ->
+  exists w,
+    xeval (xextend (cell_env ms Mu Mv) binds) r = Xreal w /\
+    (IZR (tb_Nc tb) * powerRZ 2%R (tb_qc tb) <= Rabs w)%R.
+
+Definition check_cell_t_lower (c : tcert) (cl : tcell) : bool :=
+  let prec := tprec_of c in
+  let ms := pt_ms (tc_pt cl) in
+  let es := pt_es (tc_pt cl) in
+  let base := n_inputs_t c in
+  let r3 := residual es (tc_cfg c) (tc_modes c) in
+  let binds := r_binds r3 in
+  let len := length binds in
+  let box := box_ienv prec ms (tc_du cl) (tc_dv cl) in
+  let env0 := iextend prec (ienv_of prec ms) binds in
+  let envd :=
+    iextend prec (ienv_of prec ms) (with_derivs2 slot_u base len binds) in
+  let envb := iextend prec box (with_derivs2 slot_u base len binds) in
+  let envv := iextend prec box (with_derivs slot_v base len binds) in
+  Nat.eqb (length ms) base &&
+  Nat.ltb slot_u base && Nat.ltb slot_v base &&
+  Nat.ltb 0 len &&
+  Z.leb 0 (tc_du cl) && Z.leb 0 (tc_dv cl) &&
+  well_formed base binds &&
+  (check_component_t_lower prec base len (tc_du cl) (tc_dv cl)
+     env0 envd envb envv (r_s r3) (tc_s cl) ||
+   check_component_t_lower prec base len (tc_du cl) (tc_dv cl)
+     env0 envd envb envv (r_u r3) (tc_u cl) ||
+   check_component_t_lower prec base len (tc_du cl) (tc_dv cl)
+     env0 envd envb envv (r_v r3) (tc_v cl)).
+
+Definition check_ccert_t_lower (c : tcert) : bool :=
+  forallb (check_cell_t_lower c) (tc_cells c).
+
+(* ---------------------------------------------------------------- *)
 (* A third varied slot                                               *)
 
 (** A cell ranges over two slots, so a covering resolves two coordinates and

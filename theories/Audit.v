@@ -31,6 +31,7 @@ Print Assumptions check_ccert3_correct.
 Print Assumptions taylor_step.
 Print Assumptions taylor_leg.
 Print Assumptions check_ccert_t_correct.
+Print Assumptions check_ccert_t_lower_correct.
 Print Assumptions isum_correct.
 Print Assumptions mercier_encloses.
 Print Assumptions dgeod_nonpositive.

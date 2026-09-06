@@ -1529,42 +1529,40 @@ Hypothesis Huv : slot_u <> slot_v.
     paying for a second derivative; the second slot keeps the mean-value step
     of [bound_between_dist], because its leg starts from a point that moves
     with the first slot. *)
-Lemma component_t_correct :
-  forall prec ms base len binds du dv r tb,
+(** The walk from the centre of a Taylor cell to one of its points, from the
+    three derivative checks alone. The upper cell bound and the floor are this
+    lemma followed by one inequality in opposite directions, which is how
+    [component_legs] serves the mean-value pair. *)
+Lemma component_t_legs :
+  forall prec ms base len binds du dv n tb Mu Mv,
   length ms = base -> (slot_u < base)%nat -> (slot_v < base)%nat ->
   (0 < len)%nat -> (0 <= du)%Z -> (0 <= dv)%Z ->
   well_formed base binds = true -> len = length binds ->
-  check_component_t prec base len du dv
-    (iextend prec (ienv_of prec ms) binds)
-    (iextend prec (ienv_of prec ms) (with_derivs2 slot_u base len binds))
-    (iextend prec (box_ienv slot_u slot_v prec ms du dv)
-       (with_derivs2 slot_u base len binds))
-    (iextend prec (box_ienv slot_u slot_v prec ms du dv)
-       (with_derivs slot_v base len binds))
-    r tb = true ->
-  component_t_sound slot_u slot_v ms binds du dv r tb.
+  (base <= n)%nat -> (n < base + len)%nat ->
+  check1 prec (iextend prec (ienv_of prec ms)
+                 (with_derivs2 slot_u base len binds))
+         (Evar (n + len)) (tb_Nu tb) (tb_qu tb) = true ->
+  check1 prec (iextend prec (box_ienv slot_u slot_v prec ms du dv)
+                 (with_derivs2 slot_u base len binds))
+         (Evar (n + 2 * len)) (tb_Nuu tb) (tb_quu tb) = true ->
+  check1 prec (iextend prec (box_ienv slot_u slot_v prec ms du dv)
+                 (with_derivs slot_v base len binds))
+         (Evar (n + len)) (tb_Nv tb) (tb_qv tb) = true ->
+  in_cell slot_u slot_v ms du dv Mu Mv ->
+  exists w0 w,
+    eget n (xextend (xenv_of ms) binds) Xnan = Xreal w0 /\
+    eget n (xextend (cell_env slot_u slot_v ms Mu Mv) binds) Xnan = Xreal w /\
+    (Rabs (w - w0) <=
+       IZR du * (IZR (tb_Nu tb) * powerRZ 2%R (tb_qu tb))
+       + IZR (tb_Nuu tb) * powerRZ 2%R (tb_quu tb) * IZR du * IZR du
+       + IZR (tb_Nv tb) * powerRZ 2%R (tb_qv tb) * IZR dv)%R.
 Proof.
-  intros prec ms base len binds du dv r tb
-         Hms Hbu Hbv Hlen0 Hdu Hdv Hwf Hlen Hchk.
-  unfold check_component_t in Hchk.
-  destruct r; simpl in Hchk; try discriminate.
-  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcomb].
-  apply andb_prop in Hchk. destruct Hchk as [Hchk Hv_chk].
-  apply andb_prop in Hchk. destruct Hchk as [Hchk Huu_chk].
-  apply andb_prop in Hchk. destruct Hchk as [Hchk Hu_chk].
-  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcentre].
-  apply andb_prop in Hchk. destruct Hchk as [Hbn Hn].
-  apply Nat.leb_le in Hbn. apply Nat.ltb_lt in Hn.
-  assert (Hcombi := combination_t_correct prec du dv tb Hcomb).
-  intros Mu Mv Hin.
+  intros prec ms base len binds du dv n tb Mu Mv
+         Hms Hbu Hbv Hlen0 Hdu Hdv Hwf Hlen Hbn Hn Hu_chk Huu_chk Hv_chk Hin.
   assert (HinU := proj1 Hin). assert (HinV := proj2 Hin).
   assert (Hin0 : in_cell slot_u slot_v ms du dv (IZR (nth slot_u ms 0%Z)) (IZR (nth slot_v ms 0%Z))).
   { unfold in_cell. rewrite !minus_IZR, !plus_IZR.
     generalize (IZR_le 0 du Hdu). generalize (IZR_le 0 dv Hdv). lra. }
-  (* the value at the centre *)
-  assert (Henv0 := iextend_correct prec binds _ _ (env_ok_fromZ prec ms)).
-  destruct (check1_correct _ _ _ _ _ _ Henv0 Hcentre) as [w0 [Hw0 Hb0]].
-  simpl in Hw0.
   (* the inputs of the point, which the centre of the cell is *)
   destruct (inputs_real slot_u slot_v Huv ms base (IZR (nth slot_u ms 0%Z)) (IZR (nth slot_v ms 0%Z)) Hms (conj Hbu Hbv))
     as [Hl Hr].
@@ -1604,7 +1602,6 @@ Proof.
               Hbu Hlen0 Hwf Hlen Hbn Hn Hdu Hl Hr Hd1 Hd2 Mu HinU')
     as [v1 [w1 [Hv1 [Hw1 Hleg1]]]].
   rewrite Hset in Hv1.
-  rewrite Hw0 in Hv1. injection Hv1 as <-.
   (* leg two, the mean-value step in the second slot *)
   set (Fv := fun t => xextend (eset slot_v (eset slot_u (xenv_of ms) (Xreal Mu))
                                  (Xreal t))
@@ -1649,8 +1646,8 @@ Proof.
   
   rewrite (cell_env_at_v_centre slot_u slot_v Huv ms base Mu Hms Hbv) in Hwa.
   rewrite Hw1 in Hwa. injection Hwa as <-.
-  exists wb. split. exact Hwb.
-  (* the centre, the Taylor leg, and the mean-value leg *)
+  exists v1, wb. split. exact Hv1. split. exact Hwb.
+  (* the Taylor leg in the first slot, then the mean-value leg in the second *)
   assert (HDv : (0 <= Dv)%R).
   { destruct (Hbnd_v (IZR (nth slot_v ms 0%Z)) Hcv) as [d [_ Hd]]. generalize (Rabs_pos d). lra. }
   assert (Hhalf_v : (Rabs (Mv - (IZR (nth slot_v ms 0%Z))) <= IZR dv)%R).
@@ -1660,18 +1657,103 @@ Proof.
   assert (Hleg2' : (Rabs (wb - w1) <= Dv * IZR dv)%R).
   { apply Rle_trans with (Dv * Rabs (Mv - (IZR (nth slot_v ms 0%Z))))%R. exact Hleg2.
     now apply Rmult_le_compat_l. }
-  apply Rle_trans with
-    (Rabs w0
-     + (IZR du * (IZR (tb_Nu tb) * powerRZ 2%R (tb_qu tb))
-        + IZR (tb_Nuu tb) * powerRZ 2%R (tb_quu tb) * IZR du * IZR du)
-     + Dv * IZR dv)%R.
-  - replace wb with (w0 + (w1 - w0) + (wb - w1))%R by ring.
+  replace (wb - v1)%R with ((w1 - v1) + (wb - w1))%R by ring.
+  eapply Rle_trans. apply Rabs_triang.
+  apply Rplus_le_compat. exact Hleg1. unfold Dv in Hleg2'. exact Hleg2'.
+Qed.
+
+(** A passing Taylor check bounds the component at every real point of the
+    cell, exactly as the mean-value check does. The first slot's leg is
+    charged against the derivative at the centre with the box paying for a
+    second derivative; the second slot keeps the mean-value step, because its
+    leg starts from a point that moves with the first slot. *)
+Lemma component_t_correct :
+  forall prec ms base len binds du dv r tb,
+  length ms = base -> (slot_u < base)%nat -> (slot_v < base)%nat ->
+  (0 < len)%nat -> (0 <= du)%Z -> (0 <= dv)%Z ->
+  well_formed base binds = true -> len = length binds ->
+  check_component_t prec base len du dv
+    (iextend prec (ienv_of prec ms) binds)
+    (iextend prec (ienv_of prec ms) (with_derivs2 slot_u base len binds))
+    (iextend prec (box_ienv slot_u slot_v prec ms du dv)
+       (with_derivs2 slot_u base len binds))
+    (iextend prec (box_ienv slot_u slot_v prec ms du dv)
+       (with_derivs slot_v base len binds))
+    r tb = true ->
+  component_t_sound slot_u slot_v ms binds du dv r tb.
+Proof.
+  intros prec ms base len binds du dv r tb
+         Hms Hbu Hbv Hlen0 Hdu Hdv Hwf Hlen Hchk.
+  unfold check_component_t in Hchk.
+  destruct r; simpl in Hchk; try discriminate.
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcomb].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hv_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Huu_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hu_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcentre].
+  apply andb_prop in Hchk. destruct Hchk as [Hbn Hn].
+  apply Nat.leb_le in Hbn. apply Nat.ltb_lt in Hn.
+  assert (Hcombi := combination_t_correct prec du dv tb Hcomb).
+  intros Mu Mv Hin.
+  destruct (component_t_legs prec ms base len binds du dv n tb Mu Mv
+              Hms Hbu Hbv Hlen0 Hdu Hdv Hwf Hlen Hbn Hn
+              Hu_chk Huu_chk Hv_chk Hin)
+    as [w0 [w [Hw0 [Hw Hinc]]]].
+  assert (Henv0 := iextend_correct prec binds _ _ (env_ok_fromZ prec ms)).
+  destruct (check1_correct _ _ _ _ _ _ Henv0 Hcentre) as [wc [Hwc Hb0]].
+  simpl in Hwc. rewrite Hwc in Hw0. injection Hw0 as <-.
+  exists w. split. exact Hw.
+  apply Rle_trans with (Rabs wc + Rabs (w - wc))%R.
+  - replace w with (wc + (w - wc))%R by ring.
     eapply Rle_trans. apply Rabs_triang.
-    apply Rplus_le_compat; [| exact Hleg2'].
-    eapply Rle_trans. apply Rabs_triang.
-    apply Rplus_le_compat; [apply Rle_refl | exact Hleg1].
-  - unfold Dv. rewrite (Rmult_comm (IZR (tb_Nv tb) * powerRZ 2 (tb_qv tb))).
-    lra.
+    replace (wc + (w - wc) - wc)%R with (w - wc)%R by ring.
+    apply Rle_refl.
+  - lra.
+Qed.
+
+(** The same walk read the other way: the centre bounded from below and the
+    three steps from above put the component at least the cell floor at every
+    real point of the cell, so no field of this form is in force balance
+    anywhere in it. *)
+Lemma component_t_lower_correct :
+  forall prec ms base len binds du dv r tb,
+  length ms = base -> (slot_u < base)%nat -> (slot_v < base)%nat ->
+  (0 < len)%nat -> (0 <= du)%Z -> (0 <= dv)%Z ->
+  well_formed base binds = true -> len = length binds ->
+  check_component_t_lower prec base len du dv
+    (iextend prec (ienv_of prec ms) binds)
+    (iextend prec (ienv_of prec ms) (with_derivs2 slot_u base len binds))
+    (iextend prec (box_ienv slot_u slot_v prec ms du dv)
+       (with_derivs2 slot_u base len binds))
+    (iextend prec (box_ienv slot_u slot_v prec ms du dv)
+       (with_derivs slot_v base len binds))
+    r tb = true ->
+  component_t_bounded_away slot_u slot_v ms binds du dv r tb.
+Proof.
+  intros prec ms base len binds du dv r tb
+         Hms Hbu Hbv Hlen0 Hdu Hdv Hwf Hlen Hchk.
+  unfold check_component_t_lower in Hchk.
+  destruct r; simpl in Hchk; try discriminate.
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcomb].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hv_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Huu_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hu_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcentre].
+  apply andb_prop in Hchk. destruct Hchk as [Hbn Hn].
+  apply Nat.leb_le in Hbn. apply Nat.ltb_lt in Hn.
+  assert (Hcombi := combination_lower_t_correct prec du dv tb Hcomb).
+  intros Mu Mv Hin.
+  destruct (component_t_legs prec ms base len binds du dv n tb Mu Mv
+              Hms Hbu Hbv Hlen0 Hdu Hdv Hwf Hlen Hbn Hn
+              Hu_chk Huu_chk Hv_chk Hin)
+    as [w0 [w [Hw0 [Hw Hinc]]]].
+  assert (Henv0 := iextend_correct prec binds _ _ (env_ok_fromZ prec ms)).
+  destruct (check1_lower_correct _ _ _ _ _ _ Henv0 Hcentre) as [wc [Hwc Hb0]].
+  simpl in Hwc. rewrite Hwc in Hw0. injection Hw0 as <-.
+  exists w. split. exact Hw.
+  assert (Htri : (Rabs wc - Rabs w <= Rabs (wc - w))%R) by apply Rabs_triang_inv.
+  rewrite Rabs_minus_sym in Htri.
+  lra.
 Qed.
 
 (** So a passing certificate bounds every component at every point of every
@@ -1714,6 +1796,58 @@ Proof.
     apply (component_t_correct (tprec_of c) _ (n_inputs_t c) _ _
              (tc_du cl) (tc_dv cl) _ _ Hms Hbu Hbv Hlen0 Hdu Hdv Hwf eq_refl);
     assumption.
+Qed.
+
+(** And a passing floor certificate puts the field out of force balance at
+    every real point of every cell it carries, with the first slot's step
+    charged against the derivative at the centre. Over cells that tile a
+    range that is an obstruction, as it is for the mean-value form. *)
+Theorem check_ccert_t_lower_correct :
+  forall c cl,
+  check_ccert_t_lower slot_u slot_v c = true ->
+  In cl (tc_cells c) ->
+  component_t_bounded_away slot_u slot_v (pt_ms (tc_pt cl))
+    (r_binds (residual (pt_es (tc_pt cl)) (tc_cfg c) (tc_modes c)))
+    (tc_du cl) (tc_dv cl)
+    (r_s (residual (pt_es (tc_pt cl)) (tc_cfg c) (tc_modes c))) (tc_s cl)
+  \/ component_t_bounded_away slot_u slot_v (pt_ms (tc_pt cl))
+       (r_binds (residual (pt_es (tc_pt cl)) (tc_cfg c) (tc_modes c)))
+       (tc_du cl) (tc_dv cl)
+       (r_u (residual (pt_es (tc_pt cl)) (tc_cfg c) (tc_modes c))) (tc_u cl)
+  \/ component_t_bounded_away slot_u slot_v (pt_ms (tc_pt cl))
+       (r_binds (residual (pt_es (tc_pt cl)) (tc_cfg c) (tc_modes c)))
+       (tc_du cl) (tc_dv cl)
+       (r_v (residual (pt_es (tc_pt cl)) (tc_cfg c) (tc_modes c))) (tc_v cl).
+Proof.
+  intros c cl Hc Hin.
+  assert (Hcell : check_cell_t_lower slot_u slot_v c cl = true).
+  { unfold check_ccert_t_lower in Hc. rewrite forallb_forall in Hc.
+    now apply Hc. }
+  unfold check_cell_t_lower in Hcell.
+  apply andb_prop in Hcell. destruct Hcell as [Hcell Hcomp].
+  apply andb_prop in Hcell. destruct Hcell as [Hcell Hwf].
+  apply andb_prop in Hcell. destruct Hcell as [Hcell Hdv].
+  apply andb_prop in Hcell. destruct Hcell as [Hcell Hdu].
+  apply andb_prop in Hcell. destruct Hcell as [Hcell Hlen0].
+  apply andb_prop in Hcell. destruct Hcell as [Hcell Hbv].
+  apply andb_prop in Hcell. destruct Hcell as [Hms Hbu].
+  apply Nat.eqb_eq in Hms.
+  apply Nat.ltb_lt in Hbu. apply Nat.ltb_lt in Hbv.
+  apply Nat.ltb_lt in Hlen0.
+  apply Z.leb_le in Hdu. apply Z.leb_le in Hdv.
+  apply orb_prop in Hcomp. destruct Hcomp as [Hcomp|Hv].
+  - apply orb_prop in Hcomp. destruct Hcomp as [Hs|Hu].
+    + left. apply (component_t_lower_correct (tprec_of c) _ (n_inputs_t c) _ _
+                     (tc_du cl) (tc_dv cl) _ _ Hms Hbu Hbv Hlen0 Hdu Hdv Hwf
+                     eq_refl Hs).
+    + right; left.
+      apply (component_t_lower_correct (tprec_of c) _ (n_inputs_t c) _ _
+               (tc_du cl) (tc_dv cl) _ _ Hms Hbu Hbv Hlen0 Hdu Hdv Hwf
+               eq_refl Hu).
+  - right; right.
+    apply (component_t_lower_correct (tprec_of c) _ (n_inputs_t c) _ _
+             (tc_du cl) (tc_dv cl) _ _ Hms Hbu Hbv Hlen0 Hdu Hdv Hwf
+             eq_refl Hv).
 Qed.
 
 End TaylorCell.

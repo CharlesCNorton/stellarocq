@@ -2059,15 +2059,26 @@ let () =
         (* the file carries ten-number bounds a "--tighten --taylor" run
            wrote, so this one only establishes them, with the first slot
            charged against its derivative at the centre *)
+        let ct_t_of cl_t =
+          { Cell.tc_prec = z_of_int64 prec; Cell.tc_cfg = cfg;
+            Cell.tc_modes = coq_modes; Cell.tc_cells = [cl_t] } in
+        if lower then begin
+          Printf.printf
+            "the floor is claimed at every point of every cell, with the \
+             first slot charged against the derivative at its centre\n%!";
+          let c = count_over_shards (fun k ->
+              Cell.check_ccert_t_lower xu xv (ct_t_of (tcell_at k))) in
+          let t1 = Unix.gettimeofday () in
+          Printf.printf
+            "%d of %d cells proven out of force balance at every point they \
+             cover (%.1f s)\n%!" c ncells (t1 -. t0);
+          exit (if c > 0 then 0 else 1)
+        end;
         Printf.printf
           "the file carries a Taylor bound, checked against the derivative at \
            each cell centre\n%!";
         let ok = over_shards (fun k ->
-            let cl_t = tcell_at k in
-            let ct_t =
-              { Cell.tc_prec = z_of_int64 prec; Cell.tc_cfg = cfg;
-                Cell.tc_modes = coq_modes; Cell.tc_cells = [cl_t] } in
-            Cell.check_ccert_t xu xv ct_t) in
+            Cell.check_ccert_t xu xv (ct_t_of (tcell_at k))) in
         let t1 = Unix.gettimeofday () in
         Printf.printf "verdict: %s   (%.1f s)\n%!"
           (if ok then "VALID" else "INVALID") (t1 -. t0);
