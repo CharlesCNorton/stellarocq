@@ -20,6 +20,8 @@ make all        # proofs, extraction, checker binary
 make audit      # Print Assumptions of every theorem
 ```
 
+`make static` links the same checker statically, and the [releases](https://github.com/CharlesCNorton/stellarocq/releases) carry that build for x86_64 Linux.
+
 ## Use
 
 ```sh

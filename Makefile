@@ -15,7 +15,7 @@ EXPECT := rocq-core:9.1.1 coq-stdlib:9.2.0 coq-interval:4.11.4 \
           coq-flocq:4.2.2 coq-coquelicot:3.4.5 \
           coq-mathcomp-ssreflect:2.4.0 ocaml:4.14.2
 
-.PHONY: all proofs extract checker audit versions clean
+.PHONY: all proofs extract checker static audit versions clean
 
 versions:
 	@opam list --switch=$(OPAM_SWITCH) --installed --short --columns=name,version > .versions.tmp 2>/dev/null; \
@@ -52,6 +52,11 @@ extract: proofs
 checker: extract
 	cd extract && dune build ./main.exe
 	@echo "checker: extract/_build/default/main.exe"
+
+# The same checker linked statically, for distribution on Linux.
+static: extract
+	cd extract && dune build --profile static ./main.exe
+	@echo "checker: extract/_build/default/main.exe, statically linked"
 
 audit: proofs
 	rocq compile -R theories Stellarocq theories/Audit.v

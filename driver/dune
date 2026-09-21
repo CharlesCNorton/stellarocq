@@ -2,5 +2,9 @@
  (name main)
  (libraries unix)
  (flags (:standard -w -a))
- (link_flags (-cclib %{env:COQRUN_STUBS=/home/unsymbolic/.opam/stellarocq/lib/rocq-runtime/vm/libcoqrun_stubs.a}))
+ (link_flags (:standard -cclib %{env:COQRUN_STUBS=/home/unsymbolic/.opam/stellarocq/lib/rocq-runtime/vm/libcoqrun_stubs.a}))
  (modules :standard))
+
+(env
+ (static
+  (link_flags (-ccopt -static))))
