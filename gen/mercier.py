@@ -222,7 +222,7 @@ def main():
                 "IPINT": ms[i]["dB_u/ds"],
                 "PHIP": (phip, phip), "SIGNGS": (signgs, signgs),
             }
-            lines = ["STELLAROCQ-MERC 1", f"PREC {a.prec}"]
+            lines = ["STELLAROCQ-MERC", f"PREC {a.prec}"]
             for t in TAGS:
                 lo, hi = vals[t]
                 mlo, elo = dyadic(lo)
@@ -300,7 +300,7 @@ def main():
         "PHIP": (phip, phip), "SIGNGS": (signgs, signgs),
     }
 
-    lines = ["STELLAROCQ-MERC 1", f"PREC {a.prec}"]
+    lines = ["STELLAROCQ-MERC", f"PREC {a.prec}"]
     for t in TAGS:
         lo, hi = vals[t]
         mlo, elo = dyadic(lo)

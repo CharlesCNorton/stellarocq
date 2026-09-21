@@ -147,7 +147,6 @@ def main():
     if kind not in ("STELLAROCQ-CERT", "STELLAROCQ-CCERT"):
         raise SystemExit(f"not a certificate: {kind!r}")
     cells = kind.endswith("CCERT")
-    r.next()  # version
     r.expect("PREC"); r.int()
     r.expect("LASYM"); lasym = r.next() == "1"
     r.expect("PROFILE")

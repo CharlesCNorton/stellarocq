@@ -890,7 +890,7 @@ let read_mercier path =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
   let i64 () = Int64.of_string (tok ()) in
-  expect "STELLAROCQ-MERC"; expect "1";
+  expect "STELLAROCQ-MERC";
   expect "PREC"; let prec = i64 () in
   let boxes =
     Array.map (fun tag ->
@@ -1040,8 +1040,7 @@ let () =
   let dyadic () = let m = int64 () in let e = int64 () in { m; e } in
 
   let cells_mode = (toks.(0) = "STELLAROCQ-CCERT") in
-  if cells_mode then (expect "STELLAROCQ-CCERT"; expect "7")
-  else (expect "STELLAROCQ-CERT"; expect "6");
+  expect (if cells_mode then "STELLAROCQ-CCERT" else "STELLAROCQ-CERT");
   expect "PREC"; let prec = int64 () in
   if Int64.compare prec 2L < 0 then (prerr_endline "PREC must be at least 2"; exit 2);
   (* Whether the reconstruction carries the antisymmetric half, and which

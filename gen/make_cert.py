@@ -889,7 +889,7 @@ def write_coefbox(a, w, K, phip, j, us, v0):
     d_coef = max(1, int(round(half * abs(m_coef))))
     lines = []
     P = lines.append
-    P("STELLAROCQ-CCERT 7")
+    P("STELLAROCQ-CCERT")
     P(f"PREC {a.prec}")
     P(f"LASYM {1 if w.lasym else 0}")
     P(f"PROFILE {w.profile}")
@@ -975,7 +975,7 @@ def write_ccert(a, w, K, phip, idx, us, vs, nv, three_d):
         wv = 0.0
     lines = []
     P = lines.append
-    P("STELLAROCQ-CCERT 7")
+    P("STELLAROCQ-CCERT")
     P(f"PREC {a.prec}")
     P(f"LASYM {1 if w.lasym else 0}")
     P(f"PROFILE {w.profile}")
@@ -1142,7 +1142,7 @@ def write_rcert(a, w, K, phip, idx, us, v0):
     wu = a.wscale * np.pi / len(us)
     lines = []
     P = lines.append
-    P("STELLAROCQ-CCERT 7")
+    P("STELLAROCQ-CCERT")
     P(f"PREC {a.prec}")
     P(f"LASYM {1 if w.lasym else 0}")
     P(f"PROFILE {w.profile}")
@@ -1779,7 +1779,7 @@ def main():
 
     lines = []
     P = lines.append
-    P("STELLAROCQ-CERT 6")
+    P("STELLAROCQ-CERT")
     P(f"PREC {a.prec}")
     P(f"LASYM {1 if w.lasym else 0}")
     P(f"PROFILE {w.profile}")

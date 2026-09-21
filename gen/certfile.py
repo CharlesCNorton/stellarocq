@@ -137,7 +137,6 @@ class Cert:
         if c.kind not in ("STELLAROCQ-CERT", "STELLAROCQ-CCERT"):
             msg = f"not a certificate: {c.kind!r}"
             raise ValueError(msg)
-        nxt()                                   # version
         expect("PREC")
         c.prec = int_()
         expect("LASYM")

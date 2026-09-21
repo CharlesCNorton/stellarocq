@@ -34,11 +34,11 @@ the exponent its centre carries, not in radians.
 
 ## Header
 
-Both kinds begin with a magic token and a version.
+Each kind begins with its magic token.
 
 ```
-STELLAROCQ-CERT 6          a point certificate
-STELLAROCQ-CCERT 7         a cell certificate
+STELLAROCQ-CERT            a point certificate
+STELLAROCQ-CCERT           a cell certificate
 ```
 
 The header continues the same way for both, except where noted.
