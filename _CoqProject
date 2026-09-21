@@ -6,6 +6,7 @@ theories/Checker.v
 theories/Deriv.v
 theories/Cover.v
 theories/Cell.v
+theories/Project.v
 theories/Hypotheses.v
 theories/Identities.v
 theories/Quad.v

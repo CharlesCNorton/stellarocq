@@ -1,7 +1,8 @@
 (** Print the axioms the main theorems depend on. *)
 From Stellarocq Require Import Checker Deriv Cell Cover Identities Quad Mercier
-     Hypotheses Kantorovich.
+     Hypotheses Kantorovich Project.
 Print Assumptions check_cert_correct.
+Print Assumptions harm_encloses.
 Print Assumptions check_cert_lower_correct.
 Print Assumptions check_ccert_correct.
 Print Assumptions check_ccert_lower_correct.

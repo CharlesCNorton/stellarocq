@@ -990,6 +990,10 @@ let () =
      evaluation; the box pays only for a second derivative against the square
      of the half-width. *)
   let taylor = has "--taylor" in
+  (* "--project" follows a passing point certificate with the discrete Fourier
+     harmonics of each component over the angles of each node, at every mode
+     the certificate names: theories/Project.v, harm_encloses. *)
+  let project = has "--project" in
   (* "--mercier FILE" assembles the criterion from the enclosures a covering
      produced, inside the extracted code. *)
   (if has "--mercier" then begin
@@ -1704,6 +1708,90 @@ let () =
       (fun sl -> if sl >= 0 && sl <= 2 then ignore (covering_report sl names.(sl)))
       [xu; xv]
   end;
+  (* The mean over a node's angles of each component times cos(mu - nv) and
+     sin(mu - nv), for every mode of the MODES line. The three components are
+     evaluated once per point and every harmonic reuses them, which is the sum
+     Project.harm_i writes with the repeated work shared. One process per
+     node. *)
+  let project_report () =
+    let prec_ = Checker.prec_of (cert_of (env_of (node_at 0) angles.(0))) in
+    let count = Expr.I.fromZ prec_ (z_of_int64 (Int64.of_int na)) in
+    let part i = Printf.sprintf "%s.proj%d" src i in
+    let pids =
+      Stdlib.List.init nb (fun node ->
+          match Unix.fork () with
+          | 0 ->
+              (* one point's environment at a time: a node's worth of them does
+                 not fit in memory at a few hundred modes *)
+              let comps =
+                Array.init na (fun a ->
+                    let p = env_of (node_at node) angles.(a) in
+                    let r3 = Physics.residual p.Checker.pt_es cfg coq_modes in
+                    let env =
+                      Expr.iextend prec_ (Checker.ienv_of prec_ p.Checker.pt_ms)
+                        r3.Physics.r_binds in
+                    [| Expr.ieval prec_ env r3.Physics.r_s;
+                       Expr.ieval prec_ env r3.Physics.r_u;
+                       Expr.ieval prec_ env r3.Physics.r_v |]) in
+              (* the angles as env_of lays them out, slots 1 and 2 of a point,
+                 which is all a kernel reads *)
+              let ang =
+                Array.map (fun (u, v, _, _) ->
+                    (z_of_int64 u.m, z_of_int64 u.e,
+                     z_of_int64 v.m, z_of_int64 v.e)) angles in
+              let best = Array.make 3 (0.0, 0L, 0L, false) in
+              Array.iter (fun (m, n) ->
+                  Stdlib.List.iter (fun sine ->
+                      let zm = z_of_int64 m and zn = z_of_int64 n in
+                      let ks =
+                        Array.map (fun (mu, eu, mv, ev) ->
+                            if not (Project.kern_ok_at sine zm zn prec_
+                                      mu eu mv ev) then begin
+                              prerr_endline "a kernel has no enclosure"; exit 3
+                            end;
+                            Project.kern_at sine zm zn prec_ mu eu mv ev) ang in
+                      for comp = 0 to 2 do
+                        let terms =
+                          Array.to_list
+                            (Array.mapi (fun i k ->
+                                 Expr.I.mul prec_ comps.(i).(comp) k) ks) in
+                        let mean =
+                          Expr.I.div prec_ (Cell.isum prec_ terms) count in
+                        let v = mag mean in
+                        let (b, _, _, _) = best.(comp) in
+                        if v > b then best.(comp) <- (v, m, n, sine)
+                      done)
+                    [false; true])
+                modes;
+              let oc = open_out (part node) in
+              Array.iter (fun (v, m, n, sine) ->
+                  Printf.fprintf oc "%h %Ld %Ld %d\n" v m n
+                    (if sine then 1 else 0)) best;
+              close_out oc; exit 0
+          | pid -> pid) in
+    Stdlib.List.iter (fun pid ->
+        match snd (Unix.waitpid [] pid) with
+        | Unix.WEXITED 0 -> ()
+        | _ -> prerr_endline "a projection failed"; exit 3) pids;
+    Printf.printf
+      "largest mean harmonic of each component over the %d modes, cosine and \
+       sine, and the %d angles of a node\n%!" nk na;
+    let worst = Array.make 3 0.0 in
+    for node = 0 to nb - 1 do
+      let (s_, _, _, _, _, _, _, _, _, _, _) = node_at node in
+      let ic = open_in (part node) in
+      Printf.printf "  node %d, s = %.4f:" node (f_of s_);
+      Stdlib.List.iteri (fun comp nm ->
+          Scanf.sscanf (input_line ic) "%h %Ld %Ld %d" (fun v m n sine ->
+              if v > worst.(comp) then worst.(comp) <- v;
+              Printf.printf "  %s %.3e at %s(%Ld,%Ld)" nm v
+                (if sine = 1 then "sin" else "cos") m n))
+        [ "r_s"; "r_u"; "r_v" ];
+      print_newline ();
+      close_in ic; Sys.remove (part node)
+    done;
+    Printf.printf "largest over the nodes:  r_s %.6e  r_u %.6e  r_v %.6e\n%!"
+      worst.(0) worst.(1) worst.(2) in
   let t0 = Unix.gettimeofday () in
   let ok =
     if cells_mode then begin
@@ -2155,9 +2243,13 @@ let () =
       else
         Printf.printf "claimed bounds: |r_s| <= %.6e  |r_u| <= %.6e  |r_v| <= %.6e\n%!"
           (f_of eps.(0)) (f_of eps.(1)) (f_of eps.(2));
-      over_shards (fun k ->
-          let ct = cert_of (env_of (node_at (k / na)) angles.(k mod na)) in
-          if lower then Checker.check_cert_lower ct else Checker.check_cert ct)
+      let ok =
+        over_shards (fun k ->
+            let ct = cert_of (env_of (node_at (k / na)) angles.(k mod na)) in
+            if lower then Checker.check_cert_lower ct else Checker.check_cert ct) in
+      (* harm_encloses needs every point of the certificate sound *)
+      if project && ok && not lower then project_report ();
+      ok
     end in
   let t1 = Unix.gettimeofday () in
   Printf.printf "verdict: %s   (%.1f s)\n%!"

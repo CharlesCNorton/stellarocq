@@ -1320,6 +1320,43 @@ def check_qs_reference(name, wout, node, nu, nv, main, python, tmp):
                   f"{(got / want - 1) * 1e6:.2f} ppm apart")
 
 
+def check_project(name, wout, main, python, tmp):
+    """The certified harmonics of a node against a float sum of the reference."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    cert = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{cert}" --node 22 --nu 32')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" --project "{cert}"')
+    m = re.search(r"largest over the nodes:\s+r_s (\S+)\s+r_u (\S+)\s+r_v (\S+)",
+                  out)
+    if rc != 0 or not m:
+        return "fail", "no projection reported"
+    got = [float(x) for x in m.groups()]
+    # the same sums in floating point, from the generator's own reference
+    code = (
+        "import sys, numpy as np; sys.path.insert(0, sys.argv[1]);"
+        "import make_cert as mc; w = mc.Wout(sys.argv[2]);"
+        "mc.calibrate_pressure(w); phip = float(w.phips[1]);"
+        "us = 2 * np.pi * np.arange(32) / 32;"
+        "r = np.array([mc.residual_ref(w, 22, u, 0.0, phip)[:3] for u in us]);"
+        "ms = np.array(sorted({int(m) for m in w.xm}));"
+        "c = np.cos(np.outer(ms, us)); s = np.sin(np.outer(ms, us));"
+        "print(*[max(np.abs(c @ r[:, k]).max(), np.abs(s @ r[:, k]).max()) / 32"
+        " for k in range(3)])"
+    )
+    rc, ref = run(f'"{python}" -c "{code}" "{GEN.parent}" "{wout}"')
+    if rc != 0:
+        return "fail", "reference: " + ref.strip().splitlines()[-1]
+    want = [float(x) for x in ref.split()]
+    for g, w_ in zip(got, want):
+        if not w_ * (1 - 1e-6) <= g <= w_ * 1.01:
+            return "fail", f"certified {g:.6e} against a float sum of {w_:.6e}"
+    return "ok", (f"r_s {got[0]:.3e}, r_u {got[1]:.3e}, r_v {got[2]:.3e}, "
+                  "each within one per cent above the float sum")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=None,
@@ -1552,6 +1589,16 @@ def main():
         t = time.time()
         status, detail = check_halfgrid(name, data / wout, node, a.main,
                                         a.python, tmp)
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
+              flush=True)
+
+    for name, wout in [("project/solovev_node22", "wout_solovev.nc")]:
+        if a.only and a.only not in name:
+            continue
+        t = time.time()
+        status, detail = check_project(name, data / wout, a.main, a.python, tmp)
         counts[status] += 1
         mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
         print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
