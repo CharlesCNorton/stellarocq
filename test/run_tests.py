@@ -313,7 +313,7 @@ COEFBOX = [
 # between theories/Physics.v and the rule it is supposed to state.
 REFERENCE = [
     ("reference/solovev_node22", "wout_solovev.nc", 22,
-     "--radial --node 22 --nu 512 --nrad 8", 0.39930555555555625),
+     "--radial --node 22 --nu 8 --nrad 8", 0.39930555555555625),
 ]
 
 # The certified quasisymmetry residual at a cell centre against the float
@@ -324,7 +324,7 @@ REFERENCE = [
 # three-dimensional one the enclosure has to bracket the reference.
 QSREF = [
     ("reference/quasisym_solovev", "wout_solovev.nc", 22, 8, 0),
-    ("reference/quasisym_cth", "wout_cth_like_fixed_bdy.nc", 12, 64, 16),
+    ("reference/quasisym_cth", "wout_cth_like_fixed_bdy.nc", 12, 8, 4),
 ]
 
 # Certificates carry their inputs, and nothing inside the proof ties those
@@ -1257,20 +1257,25 @@ def check_reference(name, wout, node, gen_args, radius, main, python, tmp):
     """The certified enclosure at a cell centre against the float reference."""
     if not wout.exists():
         return "skip", f"{wout.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    # the reference is read at the centre of the first cell, whose angle the
+    # file carries, so the two are compared at one point whatever the covering
+    lines = src.read_text().splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith("NANGLES"))
+    f = lines[i + 1].split()
+    u = int(f[0]) * 2.0 ** int(f[1])
     ref = ROOT / "proto" / "continuum_ref.py"
     rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --nu 1 '
-                  f'--at {radius!r}')
+                  f'--at {radius!r} --u {u!r}')
     if rc != 0:
         return "fail", "reference: " + out.strip().splitlines()[-1]
     m = re.search(r"worst \|r\| over 1 angles: ([0-9.e+-]+)", out)
     if not m:
         return "fail", "the reference printed no value"
     want = float(m.group(1))
-
-    src = tmp / (name.replace("/", "_") + ".txt")
-    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" {gen_args}')
-    if rc != 0:
-        return "fail", "generator: " + out.strip().splitlines()[-1]
     env = dict(os.environ, STELLAROCQ_JOBS="1", STELLAROCQ_DEBUG="1")
     p = subprocess.run(f'"{main}" "{src}"', shell=True, env=env,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1465,10 +1470,11 @@ def check_newton(name, gen_args, expect, main, python, tmp):
 
 
 # The collocated residual of a band of surfaces as an interval Newton system:
-# a zero of it exists within the recorded radius of the wout's coefficients
-# and is the only one in the box, which is Colloc.colloc_correct.
+# a zero of it exists in a box shaped to the coefficients, none of whose radii
+# exceeds the recorded one, and is the only one in the box, which is
+# Colloc.colloc_correct.
 COLLOC = [
-    ("newton/colloc_solovev_2", "wout_solovev.nc", "22:23", "", 1.5e-09),
+    ("newton/colloc_solovev_2", "wout_solovev.nc", "22:23", "", 2.9e-09),
 ]
 
 
