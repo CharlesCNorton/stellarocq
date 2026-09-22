@@ -17,10 +17,14 @@ around the centre.
 
   python gen/newton_colloc.py wout.nc cert.txt --rows 20:24 [--main PATH]
 
-The unknowns are mantissas against one exponent (--exp). The Jacobian, its
-inverse A, the contraction constant K, the entry bound M and the radius R are
-read off what the checker reports through `main --newton-eval`, and the run
-ends with the verdict of `main --newton` on the file it wrote.
+The unknowns are mantissas, each against its own exponent: the box is
+shaped to the coefficients, since the sensitivity of the residual to a
+coefficient varies by orders of magnitude across the modes and a cube in one
+exponent contracts for no radius once three surfaces are unknown. The
+Jacobian, its inverse A, the contraction constant K, the entry bound M and the
+radius R are read off what the checker reports through `main --newton-eval`,
+and the run ends with the verdict of `main --newton` on the file it wrote.
+`--cube` keeps every unknown on the one exponent of --exp.
 """
 
 import argparse
@@ -228,9 +232,9 @@ def main():
                     help="the exponent of every unknown")
     ap.add_argument("--iters", type=int, default=6,
                     help="Newton steps in floating point before the test")
-    ap.add_argument("--shape", action="store_true",
-                    help="give each unknown its own exponent, chosen so that "
-                    "the box is shaped like the uncertainty of the zero")
+    ap.add_argument("--cube", action="store_true",
+                    help="keep every unknown on the exponent of --exp, a cube "
+                    "in mantissa units, instead of giving each its own")
     ap.add_argument("--main",
                     default=str(ROOT / "extract" / "_build" / "default"
                                 / "main.exe"))
@@ -295,7 +299,7 @@ def main():
     r = 1
     M = 1.0
     verdict = "INVALID"
-    if a.shape:
+    if not a.cube:
         # the needed radius of each unknown from a thin box, then every
         # unknown on its own grid so that the box is that shape
         write_cert(a.out, w, lay, points, centre, r, K, M, A, J)
