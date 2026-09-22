@@ -959,6 +959,81 @@ let run_mercier path =
     Printf.printf
       "verdict: OPEN   the enclosure of DMerc straddles zero\n%!"
 
+(* ---- an interval Newton certificate ------------------------------------- *)
+
+(* theories/Newton.v: a system of expressions over input slots, a box
+   around a centre, an approximate inverse of the Jacobian and one of that
+   inverse, and a contraction constant. check_newton establishes that a zero
+   of the system exists in the box and is the only one there
+   (newton_correct). The file names the system, which is a definition of
+   Newton.v; the numbers are what the certificate claims.
+
+     STELLAROCQ-NEWTON
+     PREC 53
+     SYSTEM circle
+     N 2
+     EXP -50 -50              the exponent of each unknown
+     CENTRE m0 m1             the mantissas of the unknowns
+     R r                      the radius, in mantissa units
+     K m e                    the contraction constant
+     M m e                    a bound on every Jacobian entry over the box
+     A m e m e m e m e        n rows of n dyadic entries, row-major
+     B m e m e m e m e *)
+let run_newton path =
+  let t = tokens_of_file path in
+  let p = ref 0 in
+  let tok () = let x = t.(!p) in incr p; x in
+  let expect w =
+    let x = tok () in
+    if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
+  let i64 () = Int64.of_string (tok ()) in
+  let z () = z_of_int64 (i64 ()) in
+  expect "STELLAROCQ-NEWTON";
+  expect "PREC"; let prec = i64 () in
+  expect "SYSTEM"; let name = tok () in
+  expect "N"; let n = Int64.to_int (i64 ()) in
+  expect "EXP"; let exps = Stdlib.List.init n (fun _ -> z ()) in
+  expect "CENTRE"; let centre = Stdlib.List.init n (fun _ -> z ()) in
+  expect "R"; let r64 = i64 () in let r = z_of_int64 r64 in
+  expect "K"; let kn = z () in let kq = z () in
+  expect "M"; let mn = z () in let mq = z () in
+  let matrix () =
+    Stdlib.List.init n (fun _ ->
+        Stdlib.List.init n (fun _ -> let m = z () in let e = z () in (m, e))) in
+  expect "A"; let a = matrix () in
+  expect "B"; let b = matrix () in
+  let (binds, out) =
+    match name with
+    | "circle" ->
+        if n <> 2 then (prerr_endline "the circle has two unknowns"; exit 2);
+        (Newton.circle_binds exps, Newton.circle_out)
+    | s -> Printf.eprintf "unknown SYSTEM %s\n" s; exit 2 in
+  let sys =
+    { Newton.sy_prec = z_of_int64 prec; Newton.sy_n = n;
+      Newton.sy_centre = centre; Newton.sy_r = r;
+      Newton.sy_binds = binds; Newton.sy_out = out;
+      Newton.sy_A = a; Newton.sy_B = b;
+      Newton.sy_KN = kn; Newton.sy_Kq = kq;
+      Newton.sy_MN = mn; Newton.sy_Mq = mq } in
+  Printf.printf
+    "interval Newton test on %s: %d unknowns, radius %s mantissa units, \
+     contraction constant %.3e\n%!"
+    name n (Int64.to_string r64)
+    (float_of_z kn *. (2.0 ** float_of_z kq));
+  Stdlib.List.iteri (fun i (m, e) ->
+      let v = float_of_z m *. (2.0 ** float_of_z e) in
+      let w = float_of_z r *. (2.0 ** float_of_z e) in
+      Printf.printf "  unknown %d: %.17g, within %.3e\n%!" i v w)
+    (Stdlib.List.combine centre exps);
+  let t0 = Unix.gettimeofday () in
+  let ok = Newton.check_newton sys in
+  let t1 = Unix.gettimeofday () in
+  Printf.printf "verdict: %s   %s (%.1f s)\n%!"
+    (if ok then "VALID" else "INVALID")
+    (if ok then "a zero of the system exists in the box and is the only one there"
+     else "the test does not establish a zero")
+    (t1 -. t0)
+
 (* ---- certificate parsing ------------------------------------------------ *)
 
 (* A dyadic rational m * 2^e. *)
@@ -1003,6 +1078,16 @@ let () =
      residual's whole spectrum on the grid is certified, beyond the band the
      solver retains. *)
   let band = has "--band" in
+  (* "--newton FILE" runs the interval Newton test of theories/Newton.v on
+     the system and the box the file names. *)
+  (if has "--newton" then begin
+     let rec find = function
+       | "--newton" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--newton needs a file"; exit 2 in
+     run_newton (find args);
+     exit 0
+   end);
   (* "--mercier FILE" assembles the criterion from the enclosures a covering
      produced, inside the extracted code. *)
   (if has "--mercier" then begin

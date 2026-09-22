@@ -1516,10 +1516,11 @@ def main():
 
     if a.radial:
         a.cells = True
+    # The two quasisymmetry residuals are scalars at a point, so they take a
+    # point certificate as readily as a covering; the rest are integrands.
     if (a.geometry or a.mercier or a.shear or a.covariant
             or a.covariant_sin or a.stream_defect or a.boozer
-            or a.terms or a.current or a.quasisym
-            or a.quasisym_two) and not a.cells:
+            or a.terms or a.current) and not a.cells:
         msg = "these outputs carry integrands, so they need --cells"
         raise SystemExit(msg)
     if a.slot3 is not None and a.taylor:
@@ -1774,6 +1775,10 @@ def main():
             for u, v_ in angles
         )
         eps = np.full(3, 0.5 * floor)
+    elif a.quasisym or a.quasisym_two:
+        # the float reference is the residual's, which these outputs do not
+        # share; the claim is nominal and the projection carries the content
+        eps = np.full(3, 1.0e300)
     else:
         eps = np.maximum(worst * a.slack, 1e-10 * scale)
 
@@ -1820,6 +1825,11 @@ def main():
             P(tag)
             for row in M:
                 P(" ".join("{} {}".format(*dyadic(x)) for x in row))
+        if a.quasisym_two:
+            f0 = qs_F0(w, j, phip)
+            P("FZERO")
+            P("{} {}".format(*dyadic(f0)))
+            print(f"  node {j}: quasisymmetry ratio F0 = {f0:.9e}")
     pathlib.Path(a.out).write_text("\n".join(lines) + "\n")
 
     print(

@@ -1385,6 +1385,59 @@ def check_project(name, wout, main, python, tmp):
                   f"spectrum lists {len(lines)} harmonics")
 
 
+# The two-term quasisymmetry ratio read off certified harmonics: the span of
+# the ratios of matching harmonics of the defect and the product, which one
+# constant would make zero. The axisymmetric case spans what its residual
+# leaves, and the QH case spans order one.
+QUASISYM = [
+    ("quasisym/qh_node24", "wout_nfp4_QH_ns50.nc", 24, 32, 16, 1.686e+00),
+    ("quasisym/solovev_node24", "wout_solovev.nc", 24, 32, 16, 2.046e-04),
+]
+
+
+def check_quasisym(name, wout, node, nu, nv, span, main, python):
+    """The span of the certified harmonic ratios against the recorded one."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "quasisym.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --nodes {node} --nu {nu} '
+                  f'--nv {nv} --main "{main}"')
+    if rc != 0:
+        return "fail", "quasisym: " + out.strip().splitlines()[-1]
+    m = re.search(r"not one constant: (\d+) of (\d+) pairs.*span (\S+)", out)
+    if not m:
+        return "fail", "the ratio was not decided"
+    got = float(m.group(3))
+    if abs(got - span) > 1e-6 * span:
+        return "fail", f"the ratios span {got:.6e}, recorded {span:.6e}"
+    return "ok", f"{m.group(1)} of {m.group(2)} pairs disjoint, span {got:.3e}"
+
+
+# The interval Newton test of theories/Newton.v on the circle system: at the
+# zero it passes, with the centre moved past the radius the first step fails,
+# and with a contraction constant the rows do not meet it fails.
+NEWTON = [
+    ("newton/circle", "", "VALID"),
+    ("newton/circle_offset", "--offset 1e-6", "INVALID"),
+    ("newton/circle_constant", "--k -30", "INVALID"),
+]
+
+
+def check_newton(name, gen_args, expect, main, python, tmp):
+    """The Newton certificate the generator writes, against the verdict."""
+    tool = ROOT / "gen" / "newton_circle.py"
+    cert = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{tool}" "{cert}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" --newton "{cert}"')
+    m = re.search(r"verdict: (\w+)", out)
+    got = m.group(1) if m else "NONE"
+    if got != expect:
+        return "fail", f"verdict {got}, expected {expect}"
+    return "ok", got
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=None,
@@ -1422,6 +1475,8 @@ def main():
                 + [len(r[0]) for r in FIELD]
                 + [len(r[0]) for r in CANCEL]
                 + [len(r[0]) for r in MODESETS]
+                + [len(r[0]) for r in QUASISYM]
+                + [len(r[0]) for r in NEWTON]
                 + [len("reference/terms_node22"),
                    len("reference/halfgrid_node22"),
                    len("correspond/swapped_radial"),
@@ -1676,6 +1731,27 @@ def main():
             mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
             print(f"{mark} {name:<{width}}  {detail}  "
                   f"({time.time() - t:.1f} s)", flush=True)
+
+    for name, gen_args, expect in NEWTON:
+        if a.only and a.only not in name:
+            continue
+        t = time.time()
+        status, detail = check_newton(name, gen_args, expect, a.main, a.python, tmp)
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
+              flush=True)
+
+    for name, wout, node, nu, nv, span in QUASISYM:
+        if a.only and a.only not in name:
+            continue
+        t = time.time()
+        status, detail = check_quasisym(name, data / wout, node, nu, nv, span,
+                                        a.main, a.python)
+        counts[status] += 1
+        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
+              flush=True)
 
     for name, wout, node, nu, nv in QSREF:
         if a.only and a.only not in name:

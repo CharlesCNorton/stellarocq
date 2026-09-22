@@ -315,3 +315,28 @@ Nothing in the file names the wout it was made from. A verdict is a theorem
 about the numbers the file carries, and tying those numbers to an equilibrium
 is what [gen/verify_cert.py](gen/verify_cert.py) does, by reading the wout
 with its own parser and comparing every input slot.
+
+## The interval Newton certificate
+
+`main --newton FILE` reads a third kind of file, which names a system of
+expressions defined in [theories/Newton.v](theories/Newton.v) rather than a
+reconstruction, and the box and matrices the test needs.
+
+```
+STELLAROCQ-NEWTON
+PREC <bits>
+SYSTEM <name>              a system Newton.v defines; `circle` is the one it carries
+N <n>                      the number of unknowns
+EXP <e> x n                the exponent of each unknown
+CENTRE <m> x n             the mantissa of each unknown at the centre
+R <r>                      the radius of the box, in mantissa units
+K <m> <e>                  the claimed contraction constant
+M <m> <e>                  a claimed bound on every Jacobian entry over the box
+A <m> <e> x n*n            an approximate inverse of the Jacobian, row-major
+B <m> <e> x n*n            an approximate inverse of A
+```
+
+A VALID verdict is `newton_correct`: the system has exactly one zero in the
+box. The unknowns are the mantissas, so the Jacobian and both matrices are in
+mantissa units, and [gen/newton_circle.py](gen/newton_circle.py) writes the
+file for the circle.
