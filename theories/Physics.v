@@ -1954,16 +1954,24 @@ Definition full_point_b (b : builder) (lasym : bool)
 (** The mu0-scaled force residual: r_s at the node from the centered
     differences and averages of its two half points, r_u and r_v at the
     outer half point. *)
-Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
+(** The state of the surface residual once everything but its two angular
+    components is allocated: the builder, and what the outputs read from it.
+    A theorem about those components reads this as one value instead of
+    unfolding the builder, which is what keeps Identities.v cheap. *)
+Record rstate := RState {
+  st_b : builder ;
+  st_kers : list mode_kernels ;
+  st_hcp : half_coefs ;
+  st_qp : halfq ;
+  st_mq : mercq ;
+  st_mu0pp : expr ;
+  st_rs : expr ;
+  st_tt : expr * expr }.
+
+Definition residual_pre (cfg : pconfig) (modes : list (Z * Z)) : rstate :=
   let K := length modes in
   let lasym := pc_lasym cfg in
   let b := Builder (base_scratch_of lasym (pc_out cfg) K) [] in
-  if is_radial (pc_out cfg) then
-      (* the continuum residual at the free radius of slot 0, over the
-         interval the node's two half points bracket. It allocates its own
-         kernels, after the stage no angle or radius reaches. *)
-      snd (full_point_b b lasym modes K (pc_prof cfg) (pc_out cfg))
-  else
   (* The bindings that read no angle come first: the coefficients of both
      half points, and the node-row coefficients the Mercier geometry reads.
      The driver evaluates that leading run once per node and shares it across
@@ -2013,7 +2021,17 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
         (b, (t1, t2))
     | _ => (b, (e0, e0))
     end in
-  let (b, ru) := alloc b (r_u_e (q_mu0Js qp) (q_Bv qp)) in
+  RState b kers hcp qp mq mu0pp rs tt.
+
+(** The two angular components, then the output the certificate asks for. *)
+Definition residual_tail (cfg : pconfig) (modes : list (Z * Z)) (st : rstate)
+    : residual3 :=
+  let K := length modes in
+  let lasym := pc_lasym cfg in
+  let kers := st_kers st in let hcp := st_hcp st in let qp := st_qp st in
+  let mq := st_mq st in let mu0pp := st_mu0pp st in
+  let rs := st_rs st in let tt := st_tt st in
+  let (b, ru) := alloc (st_b st) (r_u_e (q_mu0Js qp) (q_Bv qp)) in
   let (b, rv) := alloc b (r_v_e (q_mu0Js qp) (q_Bu qp)) in
   (* With a harmonic requested, each component is multiplied by the kernel
      of that mode. Every downstream check is unchanged: the same cell
@@ -2142,5 +2160,17 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
   | RRadialTerms => Residual3 (bindings_of b) rs ru rv
   | RRadialJsTerms => Residual3 (bindings_of b) rs ru rv
   end.
+
+
+Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
+  let K := length modes in
+  let lasym := pc_lasym cfg in
+  let b := Builder (base_scratch_of lasym (pc_out cfg) K) [] in
+  if is_radial (pc_out cfg) then
+      (* the continuum residual at the free radius of slot 0, over the
+         interval the node's two half points bracket. It allocates its own
+         kernels, after the stage no angle or radius reaches. *)
+      snd (full_point_b b lasym modes K (pc_prof cfg) (pc_out cfg))
+  else residual_tail cfg modes (residual_pre cfg modes).
 
 End WithExponents.

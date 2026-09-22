@@ -667,32 +667,12 @@ Lemma residual_components :
     In (nv, r_v_e js bu) (r_binds (residual exps (PConfig lasym prof RResidual) modes)).
 Proof.
   intros exps lasym prof modes.
-  unfold residual.
-  cbv beta iota zeta delta [pc_lasym pc_prof pc_out is_radial].
-  match goal with
-  | |- context [half_coefs_b ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
-      destruct (half_coefs_b a b c d e f g h i j) as [b1 hcm]
-  end.
-  cbv beta iota zeta.
-  match goal with
-  | |- context [half_coefs_b ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
-      destruct (half_coefs_b a b c d e f g h i j) as [b2 hcp]
-  end.
-  cbv beta iota zeta.
-  match goal with
-  | |- context [kernels_b ?a ?b] => destruct (kernels_b a b) as [b3 kers]
-  end.
-  cbv beta iota zeta.
-  match goal with
-  | |- context [half_point_b ?a ?b ?c ?d ?e] =>
-      destruct (half_point_b a b c d e) as [b4 qm]
-  end.
-  cbv beta iota zeta.
-  match goal with
-  | |- context [half_point_b ?a ?b ?c ?d ?e] =>
-      destruct (half_point_b a b c d e) as [b5 qp]
-  end.
-  cbv beta iota zeta delta [alloc r_u r_v r_binds].
+  unfold residual. cbv beta iota delta [pc_out is_radial].
+  set (st := residual_pre exps (PConfig lasym prof RResidual) modes).
+  clearbody st. destruct st as [b kers hcp qp mq mu0pp rs tt].
+  unfold residual_tail.
+  cbv beta iota zeta delta [pc_out st_b st_kers st_hcp st_qp st_mq st_mu0pp
+                            st_rs st_tt alloc r_u r_v r_binds].
   do 5 eexists. split. reflexivity. split. reflexivity. split.
   - unfold bindings_of. apply in_rev. rewrite rev_involutive. simpl. tauto.
   - unfold bindings_of. apply in_rev. rewrite rev_involutive. simpl. tauto.
