@@ -3,7 +3,8 @@
 The Boozer angles differ from VMEC's by a stream function w:
 
   B_u = I(s) + d_u w,   B_v = G(s) + d_v w,
-  p = w / (G + iota I),  theta_B = u + lambda + iota p,  zeta_B = v + p.
+  p = (w - I lambda) / (G + iota I),  theta_B = u + lambda + iota p,
+  zeta_B = v + p.
 
 Two things have to hold for that to mean anything, and both are certified here
 rather than assumed. w exists on a surface only when the covariant components
@@ -151,6 +152,10 @@ def main():
     ap.add_argument("--spectrum", nargs="*", default=None,
                     metavar="M,N",
                     help="certify the harmonics of |B| in the Boozer angles")
+    ap.add_argument("--booz", action="store_true",
+                    help="beside each certified harmonic, the coefficient "
+                    "booz_xform computes for the same surface, and whether "
+                    "the enclosure contains it")
     ap.add_argument(
         "--main",
         default=str(ROOT / "extract" / "_build" / "default" / "main.exe"))
@@ -229,6 +234,20 @@ def main():
 
     if a.spectrum is not None:
         two_pi2_ = 2.0 * math.pi * math.pi
+        theirs = None
+        if a.booz:
+            # the same surface in booz_xform: its surface js is the half-grid
+            # row node + 1 of the wout, the outer half point of the node
+            import booz_xform
+            b = booz_xform.Booz_xform()
+            b.read_wout(a.wout)
+            b.compute_surfs = [a.node]
+            b.run()
+            theirs = {(int(mm), int(nn)): (float(c), float(s))
+                      for mm, nn, c, s in zip(b.xm_b, b.xn_b, b.bmnc_b[:, 0],
+                                              b.bmns_b[:, 0] if b.asym
+                                              else [0.0] * len(b.xm_b))}
+            print(f"\nbooz_xform on its surface {a.node}, s = {float(b.s_b[0]):.6f}")
         print("\nthe harmonics of |B| in the Boozer angles:")
         for spec in (a.spectrum or ["0,0"]):
             m, n = (int(x) for x in spec.split(","))
@@ -238,8 +257,17 @@ def main():
                 ["|B| cos J", "|B| sin J", "J"])
             norm = (2.0 * two_pi2_) if (m == 0 and n == 0) else two_pi2_
             print(f"\n  (m, n) = ({m}, {n}):")
-            show("B cos", div_out(ivs["|B| cos J"], norm))
-            show("B sin", div_out(ivs["|B| sin J"], norm))
+            bc = div_out(ivs["|B| cos J"], norm)
+            bs = div_out(ivs["|B| sin J"], norm)
+            if theirs is not None and (m, n) in theirs:
+                c, s = theirs[(m, n)]
+                show("B cos", bc, f"booz_xform {c:+.9e}, "
+                     + ("enclosed" if bc[0] <= c <= bc[1] else "NOT enclosed"))
+                show("B sin", bs, f"booz_xform {s:+.9e}, "
+                     + ("enclosed" if bs[0] <= s <= bs[1] else "NOT enclosed"))
+            else:
+                show("B cos", bc)
+                show("B sin", bs)
             jac = ivs["J"]
             ok = jac[0] <= 2.0 * two_pi2_ <= jac[1]
             show("int J", jac,

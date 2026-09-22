@@ -3,7 +3,7 @@ From Coq Require Import Extraction.
 From Coq Require Import ExtrOcamlBasic ExtrOcamlNatInt.
 From Coq Require Import ExtrOCamlInt63 ExtrOCamlFloats.
 From Stellarocq Require Import Physics Checker Cell Cover Deriv Quad Mercier
-     Project Newton.
+     Project Newton Colloc.
 Extraction Language OCaml.
 Set Extraction Output Directory ".".
 Separate Extraction check_cert check_cert_lower Cert CPoint check_ccert check_ccert_lower CCert CCell CBounds covers check_ccert3 CCert3 CCell3 check_ccert_t check_ccert_t_lower TCert TCell TBounds var_free isum
@@ -15,4 +15,6 @@ Separate Extraction check_cert check_cert_lower Cert CPoint check_ccert check_cc
   RStreamDefect RBoozer RTerms RRadialTerms RJsTerms RRadialJsTerms
   RQuasiSym RQuasiTwo base_scratch_of
   kern_at kern_ok_at harm_i
-  check_newton System circle_binds circle_out.
+  check_newton System circle_binds circle_out
+  Jtab Fctab Jt Ft Giv Hiv Viv rowsum Kiv Riv Miv entry_ok
+  CPt colloc_check colloc_system point_ok local_res out_slot sigma_of.

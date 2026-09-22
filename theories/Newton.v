@@ -623,10 +623,24 @@ Definition Aiv (s : system) (i k : nat) : I.type := dyad (sprec s) (entry (sy_A 
 Definition AR (s : system) (i k : nat) : R := dyadR (entry (sy_A s) i k).
 Definition Biv (s : system) (i k : nat) : I.type := dyad (sprec s) (entry (sy_B s) i k).
 Definition BR (s : system) (i k : nat) : R := dyadR (entry (sy_B s) i k).
+Definition Miv (s : system) : I.type := dyad (sprec s) (sy_MN s, sy_Mq s).
 Definition delta (i j : nat) : Z := if Nat.eqb i j then 1%Z else 0%Z.
-Definition Giv (s : system) (i j : nat) : I.type :=
+
+(** The Jacobian, tabulated: one environment per unknown, read once for
+    every output. [J] is what an entry means and [Jtab] is what the check
+    computes; [Jtab_spec] says they agree. Written as a table so that the
+    extracted code builds each column's environment once rather than once
+    per entry it reads from it. *)
+Definition colvals (s : system) (j : nat) : list I.type :=
+  let env := colenv s j in
+  map (fun k => ieval (sprec s) env (Evar (oslot s k + slen s))) (seq 0 (sy_n s)).
+Definition Jtab (s : system) : list (list I.type) := map (colvals s) (seq 0 (sy_n s)).
+Definition Jt (jt : list (list I.type)) (k j : nat) : I.type :=
+  nth k (nth j jt []) I.nai.
+
+Definition Giv (jt : list (list I.type)) (s : system) (i j : nat) : I.type :=
   I.sub (sprec s) (I.fromZ (sprec s) (delta i j))
-    (isum (sprec s) (map (fun k => I.mul (sprec s) (Aiv s i k) (J s k j))
+    (isum (sprec s) (map (fun k => I.mul (sprec s) (Aiv s i k) (Jt jt k j))
                          (seq 0 (sy_n s)))).
 Definition Hiv (s : system) (i j : nat) : I.type :=
   I.sub (sprec s) (I.fromZ (sprec s) (delta i j))
@@ -638,15 +652,29 @@ Definition centre_env (s : system) : env I.type :=
   iextend (sprec s) (ienv_of (sprec s) (sy_centre s)) (sy_binds s).
 Definition Fc (s : system) (k : nat) : I.type :=
   ieval (sprec s) (centre_env s) (Evar (oslot s k)).
-Definition Viv (s : system) (i : nat) : I.type :=
-  isum (sprec s) (map (fun k => I.mul (sprec s) (Aiv s i k) (Fc s k))
+
+(** The outputs at the centre, tabulated the same way. *)
+Definition Fctab (s : system) : list I.type :=
+  let env := centre_env s in
+  map (fun k => ieval (sprec s) env (Evar (oslot s k))) (seq 0 (sy_n s)).
+Definition Ft (ft : list I.type) (k : nat) : I.type := nth k ft I.nai.
+
+Definition Viv (ft : list I.type) (s : system) (i : nat) : I.type :=
+  isum (sprec s) (map (fun k => I.mul (sprec s) (Aiv s i k) (Ft ft k))
                       (seq 0 (sy_n s))).
+
+(** The Jacobian entry is a real number when its enclosure sits below the
+    claimed bound M, since an enclosure of a NaN is unbounded. *)
+Definition entry_ok (s : system) (xi : I.type) : bool :=
+  nonneg (I.sub (sprec s) (Miv s) (I.abs xi)).
 
 Definition check_newton (s : system) : bool :=
   let prec := sprec s in
   let n := sy_n s in
   let base := sbase s in
   let len := slen s in
+  let jt := Jtab s in
+  let ft := Fctab s in
   Nat.leb n base && Nat.ltb 0 len && well_formed base (sy_binds s) &&
   Nat.eqb (length (sy_out s)) n &&
   forallb (fun o => Nat.leb base o && Nat.ltb o (base + len)) (sy_out s) &&
@@ -654,19 +682,32 @@ Definition check_newton (s : system) : bool :=
   nonneg (Kiv s) &&
   nonneg (ieval prec eempty
             (Esub (Esub e1 (eps_e (sy_KN s) (sy_Kq s))) (epow2 (-20)))) &&
-  forallb (fun j =>
-             forallb (fun k =>
-                        check1 prec (colenv s j) (Evar (oslot s k + len))
-                               (sy_MN s) (sy_Mq s))
-                     (seq 0 n))
-          (seq 0 n) &&
-  forallb (fun i => nonneg (I.sub prec (Kiv s) (rowsum s (Giv s i)))) (seq 0 n) &&
+  forallb (fun j => forallb (fun k => entry_ok s (Jt jt k j)) (seq 0 n)) (seq 0 n) &&
+  forallb (fun i => nonneg (I.sub prec (Kiv s) (rowsum s (Giv jt s i)))) (seq 0 n) &&
   forallb (fun i => nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i)))) (seq 0 n) &&
   forallb (fun i =>
              nonneg (I.sub prec (Riv s)
-                       (I.add prec (I.abs (Viv s i))
+                       (I.add prec (I.abs (Viv ft s i))
                               (I.mul prec (Kiv s) (Riv s)))))
           (seq 0 n).
+
+Lemma Jtab_spec :
+  forall s k j, (k < sy_n s)%nat -> (j < sy_n s)%nat -> Jt (Jtab s) k j = J s k j.
+Proof.
+  intros s k j Hk Hj. unfold Jt, Jtab, colvals, J.
+  rewrite (nth_map_in _ _ _ _ _ 0%nat) by (rewrite length_seq; lia).
+  rewrite seq_nth by lia. cbv zeta.
+  rewrite (nth_map_in _ _ _ _ _ 0%nat) by (rewrite length_seq; lia).
+  rewrite seq_nth by lia. reflexivity.
+Qed.
+
+Lemma Fctab_spec :
+  forall s k, (k < sy_n s)%nat -> Ft (Fctab s) k = Fc s k.
+Proof.
+  intros s k Hk. unfold Ft, Fctab, Fc. cbv zeta.
+  rewrite (nth_map_in _ _ _ _ _ 0%nat) by (rewrite length_seq; lia).
+  rewrite seq_nth by lia. reflexivity.
+Qed.
 
 (* ---------------------------------------------------------------- *)
 (* What the outputs mean                                             *)
@@ -748,16 +789,16 @@ Lemma chk_all :
   nonneg (ieval prec eempty
             (Esub (Esub e1 (eps_e (sy_KN s) (sy_Kq s))) (epow2 (-20)))) = true /\
   (forall j k, (j < n)%nat -> (k < n)%nat ->
-     check1 prec (colenv s j) (Evar (oslot s k + len)) (sy_MN s) (sy_Mq s) = true) /\
+     entry_ok s (Jt (Jtab s) k j) = true) /\
   (forall i, (i < n)%nat ->
-     nonneg (I.sub prec (Kiv s) (rowsum s (Giv s i))) = true) /\
+     nonneg (I.sub prec (Kiv s) (rowsum s (Giv (Jtab s) s i))) = true) /\
   (forall i, (i < n)%nat ->
      nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i))) = true) /\
   (forall i, (i < n)%nat ->
      nonneg (I.sub prec (Riv s)
-               (I.add prec (I.abs (Viv s i)) (I.mul prec (Kiv s) (Riv s)))) = true).
+               (I.add prec (I.abs (Viv (Fctab s) s i)) (I.mul prec (Kiv s) (Riv s)))) = true).
 Proof.
-  unfold check_newton in Hchk.
+  unfold check_newton in Hchk. cbv zeta in Hchk.
   rewrite !andb_true_iff in Hchk.
   destruct Hchk as [[[[[[[[[[[H1 H2] H3] H4] H5] H6] H7] H8] H9] H10] H11] H12].
   apply Nat.leb_le in H1. apply Nat.ltb_lt in H2. apply Nat.eqb_eq in H4.
@@ -787,17 +828,17 @@ Proof. destruct chk_all as (_ & _ & _ & _ & H & _). exact H. Qed.
 Lemma c_r : (0 <= r)%Z.
 Proof. destruct chk_all as (_ & _ & _ & _ & _ & H & _). exact H. Qed.
 Lemma c_jac : forall j k, (j < n)%nat -> (k < n)%nat ->
-  check1 prec (colenv s j) (Evar (oslot s k + len)) (sy_MN s) (sy_Mq s) = true.
+  entry_ok s (Jt (Jtab s) k j) = true.
 Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & H & _). exact H. Qed.
 Lemma c_rowG : forall i, (i < n)%nat ->
-  nonneg (I.sub prec (Kiv s) (rowsum s (Giv s i))) = true.
+  nonneg (I.sub prec (Kiv s) (rowsum s (Giv (Jtab s) s i))) = true.
 Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & _ & H & _). exact H. Qed.
 Lemma c_rowH : forall i, (i < n)%nat ->
   nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i))) = true.
 Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & H & _). exact H. Qed.
 Lemma c_first : forall i, (i < n)%nat ->
   nonneg (I.sub prec (Riv s)
-            (I.add prec (I.abs (Viv s i)) (I.mul prec (Kiv s) (Riv s)))) = true.
+            (I.add prec (I.abs (Viv (Fctab s) s i)) (I.mul prec (Kiv s) (Riv s)))) = true.
 Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & H). exact H. Qed.
 
 Lemma K_nonneg : 0 <= KR s.
@@ -858,10 +899,23 @@ Proof.
     - now apply in_boxf_eset.
     - apply point_spec_eset. exact Hj. exact c_nb. exact He. }
   assert (Henv := iextend_correct prec (with_derivs j base len binds) _ _ Hok).
-  destruct (check1_correct _ _ _ _ _ _ Henv (c_jac j k Hj Hk)) as [d [Hd _]].
-  exists d. split. exact Hd.
   assert (Hc := ieval_correct prec _ _ (Evar (oslot s k + len)) Henv).
-  rewrite Hd in Hc. exact Hc.
+  cbn [xeval] in Hc.
+  change (xextend (eset j e (Xreal t)) (with_derivs j base len binds))
+    with (Fu e j t) in Hc.
+  change (ieval prec (iextend prec (box s) (with_derivs j base len binds))
+            (Evar (oslot s k + len))) with (J s k j) in Hc.
+  (* the entry's enclosure sits below M, so the value it encloses is real *)
+  assert (Hm := c_jac j k Hj Hk). unfold entry_ok in Hm.
+  rewrite Jtab_spec in Hm by assumption.
+  assert (Hc2 : contains (I.convert (I.sub prec (Miv s) (I.abs (J s k j))))
+                  (Xsub (Xreal (dyadR (sy_MN s, sy_Mq s)))
+                        (Xabs (eget (oslot s k + len) (Fu e j t) Xnan)))).
+  { apply I.sub_correct. apply dyad_correct. apply I.abs_correct. exact Hc. }
+  destruct (nonneg_correct _ _ Hc2 Hm) as [d0 [Hd0 _]].
+  destruct (eget (oslot s k + len) (Fu e j t) Xnan) as [|d] eqn:Hd.
+  { simpl in Hd0. discriminate. }
+  exists d. split. reflexivity. exact Hc.
 Qed.
 
 (** The derivative slot of an output along unknown j. *)
@@ -1118,7 +1172,7 @@ Lemma G_contains :
   forall (D : nat -> nat -> R) i j,
   (i < n)%nat -> (j < n)%nat ->
   (forall k, (k < n)%nat -> contains (I.convert (J s k j)) (Xreal (D k j))) ->
-  contains (I.convert (Giv s i j))
+  contains (I.convert (Giv (Jtab s) s i j))
     (Xreal (IZR (delta i j) - sumn (fun k => AR s i k * D k j) n)).
 Proof.
   intros D i j Hi Hj HD. unfold Giv.
@@ -1127,7 +1181,8 @@ Proof.
   apply I.sub_correct. apply I.fromZ_correct.
   apply isum_seq_correct. intros k Hk.
   change (Xreal (AR s i k * D k j)) with (Xmul (Xreal (AR s i k)) (Xreal (D k j))).
-  apply I.mul_correct. apply dyad_correct. now apply HD.
+  apply I.mul_correct. apply dyad_correct.
+  rewrite Jtab_spec by assumption. now apply HD.
 Qed.
 
 Lemma H_contains :
@@ -1206,7 +1261,7 @@ Proof.
   rewrite Hrow.
   eapply Rle_trans. apply (sumn_prod_bound g _ n M HM).
   apply Rmult_le_compat_r. apply vmax_nonneg.
-  apply (row_bound (Giv s i) g).
+  apply (row_bound (Giv (Jtab s) s i) g).
   - intros j Hj. apply G_contains; try assumption. intros k Hk. now apply HD.
   - now apply c_rowG.
 Qed.
@@ -1257,15 +1312,16 @@ Proof.
     assert (Henv := iextend_correct prec binds _ _ (env_ok_fromZ prec c)).
     assert (H := ieval_correct prec _ _ (Evar (oslot s k)) Henv).
     unfold Fx in Hv. rewrite Hv in H. exact H. }
-  assert (HV : contains (I.convert (Viv s i))
+  assert (HV : contains (I.convert (Viv (Fctab s) s i))
                  (Xreal (sumn (fun k => AR s i k * Freal s x0 k) n))).
   { unfold Viv. apply isum_seq_correct. intros k Hk.
     change (Xreal (AR s i k * Freal s x0 k))
       with (Xmul (Xreal (AR s i k)) (Xreal (Freal s x0 k))).
-    apply I.mul_correct. apply dyad_correct. now apply HF. }
+    apply I.mul_correct. apply dyad_correct.
+    rewrite Fctab_spec by assumption. now apply HF. }
   set (v := sumn (fun k => AR s i k * Freal s x0 k) n) in *.
   assert (Hc : contains (I.convert (I.sub prec (Riv s)
-                           (I.add prec (I.abs (Viv s i)) (I.mul prec (Kiv s) (Riv s)))))
+                           (I.add prec (I.abs (Viv (Fctab s) s i)) (I.mul prec (Kiv s) (Riv s)))))
                         (Xreal (IZR r - (Rabs v + KR s * IZR r)))).
   { change (Xreal (IZR r - (Rabs v + KR s * IZR r)))
       with (Xsub (Xreal (IZR r)) (Xadd (Xreal (Rabs v)) (Xmul (Xreal (KR s)) (Xreal (IZR r))))).

@@ -401,7 +401,8 @@ Definition is_radial (o : rout) : bool :=
     of the transformation is certified by the same machinery that certifies
     force balance. Given w, the transformation is explicit,
 
-      p = w / (G + iota I),  theta_B = u + lambda + iota p,  zeta_B = v + p,
+      p = (w - I lambda) / (G + iota I),  theta_B = u + lambda + iota p,
+      zeta_B = v + p,
 
     so what is needed from a covering is the Fourier coefficients of w. Those
     follow from the coefficients of the covariant components, which are
@@ -2059,9 +2060,9 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
       (* the harmonic of |B| in the Boozer angles, as an integral over the
          VMEC angles with the Jacobian of the angle map. Every piece is
          explicit once w is given: the angles are u + lambda + iota p and
-         v + p with p = w / (G + iota I), and that denominator is a flux
-         function, so it is constant over the surface and its reciprocal is
-         allocated once. *)
+         v + p with p = (w - I lambda) / (G + iota I), and that denominator
+         is a flux function, so it is constant over the surface and its
+         reciprocal is allocated once. *)
       let wpair := combine kers (map (fun k => slot_wcoef lasym K k)
                                      (seq 0 K)) in
       let (b, w) :=
@@ -2079,9 +2080,13 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
         alloc b (Eadd (slot_Gpol lasym K)
                       (Emul slot_iota_p (slot_Itor lasym K))) in
       let (b, ip) := alloc b (Ediv e1 denom) in
-      let (b, p) := alloc b (Emul w ip) in
-      let (b, pu) := alloc b (Emul wu ip) in
-      let (b, pv) := alloc b (Emul wv ip) in
+      (* p = (w - I lambda) / (G + iota I). The covariant components
+         transform with the map, so B_u = I (1 + lambda_u + iota p_u) + G p_u
+         has to equal I + w_u, which is what fixes p_u, and likewise p_v. *)
+      let itor := slot_Itor lasym K in
+      let (b, p) := alloc b (Emul (Esub w (Emul itor (q_L qp))) ip) in
+      let (b, pu) := alloc b (Emul (Esub wu (Emul itor (q_Lu qp))) ip) in
+      let (b, pv) := alloc b (Emul (Esub wv (Emul itor (q_Lv qp))) ip) in
       let (b, thb) :=
         alloc b (Eadd (Eadd vU (q_L qp)) (Emul slot_iota_p p)) in
       let (b, zeb) := alloc b (Eadd vV p) in

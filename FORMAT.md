@@ -340,3 +340,30 @@ A VALID verdict is `newton_correct`: the system has exactly one zero in the
 box. The unknowns are the mantissas, so the Jacobian and both matrices are in
 mantissa units, and [gen/newton_circle.py](gen/newton_circle.py) writes the
 file for the circle.
+
+A `colloc` system ([theories/Colloc.v](theories/Colloc.v)) is the force
+residual of Physics.v collocated at points. It carries its parameters after
+`CENTRE` and the residual's configuration and its points after the matrices:
+
+```
+NPARAM <q>                 the parameters, which follow the unknowns in the
+PARAM <m> <e> x q          global layout as slots n .. n+q-1
+...
+LASYM <0|1>
+PROFILE <name> <ints...>
+MODES <K>                  followed by K pairs of plain integers, m and n
+NPOINTS <P>
+POINT <out> <g> x L        one line per point
+```
+
+`out` is 0 for `r_s`, 1 for `r_u` and 2 for `r_v`, and the `L` integers that
+follow name the global slot each of the point's local input slots reads, in
+the environment layout below, `L` being `32 + 8K` under `LASYM 0` and
+`32 + 16K` under `LASYM 1`. A global slot below `n` is an unknown and one at
+or above it a parameter. A VALID verdict is `colloc_correct`: with the
+parameters fixed, exactly one choice of the unknowns in the box makes the
+collocated component of every point zero.
+[gen/newton_colloc.py](gen/newton_colloc.py) writes the file for a band of
+surfaces of a wout, with the R and Z coefficients of those surfaces as the
+unknowns and the stream function, the rotational transform, the pressure and
+the surfaces beside the band as parameters.

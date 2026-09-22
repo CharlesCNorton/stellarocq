@@ -979,7 +979,50 @@ let run_mercier path =
      M m e                    a bound on every Jacobian entry over the box
      A m e m e m e m e        n rows of n dyadic entries, row-major
      B m e m e m e m e *)
-let run_newton path =
+(* The pressure's closed form, as a certificate names it. *)
+let parse_profile tok int64 =
+  match tok () with
+  | "POWER" -> Physics.PPower
+  | "TWOPOWER" ->
+      let p = Int64.to_int (int64 ()) in
+      let q = Int64.to_int (int64 ()) in Physics.PTwoPower (p, q)
+  | "CUBIC" -> Physics.PCubic
+  | "RATIONAL" ->
+      let a = Int64.to_int (int64 ()) in
+      let b = Int64.to_int (int64 ()) in Physics.PRational (a, b)
+  | "GAUSSTRUNC" -> Physics.PGaussTrunc
+  | "TWOPOWERGS" ->
+      let p = Int64.to_int (int64 ()) in
+      let q = Int64.to_int (int64 ()) in
+      let g = Int64.to_int (int64 ()) in Physics.PTwoPowerGs (p, q, g)
+  | "PEDESTAL" -> Physics.PPedestal
+  | "TWOLORENTZ" ->
+      let p = Int64.to_int (int64 ()) in
+      let q = Int64.to_int (int64 ()) in
+      let r = Int64.to_int (int64 ()) in
+      let t = Int64.to_int (int64 ()) in Physics.PTwoLorentz (p, q, r, t)
+  | s -> Printf.eprintf "unknown PROFILE %s\n" s; exit 2
+
+(* A collocation system (theories/Colloc.v) carries, after the matrices, the
+   residual's configuration and its points:
+
+     NPARAM q                 after CENTRE: the parameters, q dyadic pairs
+     PARAM m e ...
+     ...
+     LASYM 0
+     PROFILE POWER
+     MODES K then K pairs
+     NPOINTS P
+     POINT out s0 s1 ...      out is 0 for r_s, 1 for r_u, 2 for r_v, then the
+                              global slot of each of the point's local input
+                              slots, 32 + 8K of them (16K under LASYM 1)
+
+   The unknowns are slots 0 .. N-1 and the parameters follow them.
+   "--newton-eval" prints, instead of a verdict, the enclosures of the
+   outputs at the centre and of every Jacobian entry over the box, and the
+   row sums the test compares with K, so that a generator can place the
+   centre by Newton's method and choose K and R. *)
+let run_newton path eval_only =
   let t = tokens_of_file path in
   let p = ref 0 in
   let tok () = let x = t.(!p) in incr p; x in
@@ -994,6 +1037,12 @@ let run_newton path =
   expect "N"; let n = Int64.to_int (i64 ()) in
   expect "EXP"; let exps = Stdlib.List.init n (fun _ -> z ()) in
   expect "CENTRE"; let centre = Stdlib.List.init n (fun _ -> z ()) in
+  let params =
+    if name = "colloc" then begin
+      expect "NPARAM"; let q = Int64.to_int (i64 ()) in
+      expect "PARAM";
+      Stdlib.List.init q (fun _ -> let m = z () in let e = z () in (m, e))
+    end else [] in
   expect "R"; let r64 = i64 () in let r = z_of_int64 r64 in
   expect "K"; let kn = z () in let kq = z () in
   expect "M"; let mn = z () in let mq = z () in
@@ -1002,37 +1051,115 @@ let run_newton path =
         Stdlib.List.init n (fun _ -> let m = z () in let e = z () in (m, e))) in
   expect "A"; let a = matrix () in
   expect "B"; let b = matrix () in
-  let (binds, out) =
+  let gexps = exps @ Stdlib.List.map snd params in
+  let gcentre = centre @ Stdlib.List.map fst params in
+  let zprec = z_of_int64 prec in
+  let (sys, check) =
     match name with
     | "circle" ->
         if n <> 2 then (prerr_endline "the circle has two unknowns"; exit 2);
-        (Newton.circle_binds exps, Newton.circle_out)
+        let sys =
+          { Newton.sy_prec = zprec; Newton.sy_n = n;
+            Newton.sy_centre = centre; Newton.sy_r = r;
+            Newton.sy_binds = Newton.circle_binds exps;
+            Newton.sy_out = Newton.circle_out;
+            Newton.sy_A = a; Newton.sy_B = b;
+            Newton.sy_KN = kn; Newton.sy_Kq = kq;
+            Newton.sy_MN = mn; Newton.sy_Mq = mq } in
+        (sys, (fun () -> Newton.check_newton sys))
+    | "colloc" ->
+        expect "LASYM"; let lasym = (tok () = "1") in
+        expect "PROFILE"; let prof = parse_profile tok i64 in
+        expect "MODES"; let nk = Int64.to_int (i64 ()) in
+        let modes =
+          Stdlib.List.init nk (fun _ -> let m = z () in let nn = z () in (m, nn)) in
+        let cfg = { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
+                    Physics.pc_out = Physics.RResidual } in
+        let base_local = Physics.base_scratch_of lasym Physics.RResidual nk in
+        expect "NPOINTS"; let np = Int64.to_int (i64 ()) in
+        let pts =
+          Stdlib.List.init np (fun _ ->
+              expect "POINT";
+              let out = Int64.to_int (i64 ()) in
+              let sigma =
+                Stdlib.List.init base_local (fun _ -> Int64.to_int (i64 ())) in
+              { Colloc.cp_sigma = sigma; Colloc.cp_out = out }) in
+        Printf.printf
+          "collocation: %d points over %d modes, %d parameters, %d local \
+           slots per point\n%!" np nk (Stdlib.List.length params) base_local;
+        let sys =
+          Colloc.colloc_system base_local gexps cfg modes zprec n gcentre r a b
+            kn kq mn mq pts in
+        (sys,
+         (fun () ->
+            (* name the point a failing assembly check refuses, since the
+               verdict alone does not *)
+            Stdlib.List.iteri (fun i pt ->
+                if not (Colloc.point_ok base_local gexps cfg modes
+                          (Stdlib.List.length gcentre) pt) then
+                  Printf.printf "  point %d fails the assembly check\n%!" i)
+              pts;
+            Colloc.colloc_check base_local gexps cfg modes zprec n gcentre r a b
+              kn kq mn mq pts))
     | s -> Printf.eprintf "unknown SYSTEM %s\n" s; exit 2 in
-  let sys =
-    { Newton.sy_prec = z_of_int64 prec; Newton.sy_n = n;
-      Newton.sy_centre = centre; Newton.sy_r = r;
-      Newton.sy_binds = binds; Newton.sy_out = out;
-      Newton.sy_A = a; Newton.sy_B = b;
-      Newton.sy_KN = kn; Newton.sy_Kq = kq;
-      Newton.sy_MN = mn; Newton.sy_Mq = mq } in
   Printf.printf
     "interval Newton test on %s: %d unknowns, radius %s mantissa units, \
-     contraction constant %.3e\n%!"
+     contraction constant %.3e, %d bindings\n%!"
     name n (Int64.to_string r64)
-    (float_of_z kn *. (2.0 ** float_of_z kq));
-  Stdlib.List.iteri (fun i (m, e) ->
-      let v = float_of_z m *. (2.0 ** float_of_z e) in
-      let w = float_of_z r *. (2.0 ** float_of_z e) in
-      Printf.printf "  unknown %d: %.17g, within %.3e\n%!" i v w)
-    (Stdlib.List.combine centre exps);
+    (float_of_z kn *. (2.0 ** float_of_z kq))
+    (Stdlib.List.length sys.Newton.sy_binds);
+  if n <= 4 then
+    Stdlib.List.iteri (fun i (m, e) ->
+        let v = float_of_z m *. (2.0 ** float_of_z e) in
+        let w = float_of_z r *. (2.0 ** float_of_z e) in
+        Printf.printf "  unknown %d: %.17g, within %.3e\n%!" i v w)
+      (Stdlib.List.combine centre exps);
   let t0 = Unix.gettimeofday () in
-  let ok = Newton.check_newton sys in
-  let t1 = Unix.gettimeofday () in
-  Printf.printf "verdict: %s   %s (%.1f s)\n%!"
-    (if ok then "VALID" else "INVALID")
-    (if ok then "a zero of the system exists in the box and is the only one there"
-     else "the test does not establish a zero")
-    (t1 -. t0)
+  if eval_only then begin
+    (* the outputs at the centre and the Jacobian over the box, in the same
+       tabulation the check reads, with the row sums the test compares *)
+    let ft = Newton.coq_Fctab sys in
+    let jt = Newton.coq_Jtab sys in
+    let nth_i l k = match nth_list l k with Some v -> v | None -> Expr.I.nai in
+    let entry k j = nth_i (match nth_list jt j with Some c -> c | None -> []) k in
+    Printf.printf "NEWTON-EVAL %d\n" n;
+    for k = 0 to n - 1 do
+      let v = nth_i ft k in
+      Printf.printf "F %d %h %h\n" k (ilo v) (ihi v)
+    done;
+    let jmax = ref 0.0 in
+    for j = 0 to n - 1 do
+      for k = 0 to n - 1 do
+        let v = entry k j in
+        if mag v > !jmax then jmax := mag v;
+        Printf.printf "J %d %d %h %h\n" k j (ilo v) (ihi v)
+      done
+    done;
+    let rowg = ref 0.0 and rowh = ref 0.0 and vmax = ref 0.0 in
+    for i = 0 to n - 1 do
+      let g = ihi (Newton.rowsum sys (fun j -> Newton.coq_Giv jt sys i j)) in
+      let h = ihi (Newton.rowsum sys (fun j -> Newton.coq_Hiv sys i j)) in
+      let v = mag (Newton.coq_Viv ft sys i) in
+      Printf.printf "V %d %h %h %h\n" i v g h;
+      if g > !rowg then rowg := g;
+      if h > !rowh then rowh := h;
+      if v > !vmax then vmax := v
+    done;
+    let t1 = Unix.gettimeofday () in
+    Printf.printf "ROWG %h\nROWH %h\nVMAX %h\nJMAX %h\n" !rowg !rowh !vmax !jmax;
+    Printf.printf
+      "row sums of |I - A J| at most %.3e and of |I - B A| at most %.3e, \
+       |A F(c)| at most %.3e, entries at most %.3e (%.1f s)\n%!"
+      !rowg !rowh !vmax !jmax (t1 -. t0)
+  end else begin
+    let ok = check () in
+    let t1 = Unix.gettimeofday () in
+    Printf.printf "verdict: %s   %s (%.1f s)\n%!"
+      (if ok then "VALID" else "INVALID")
+      (if ok then "a zero of the system exists in the box and is the only one there"
+       else "the test does not establish a zero")
+      (t1 -. t0)
+  end
 
 (* ---- certificate parsing ------------------------------------------------ *)
 
@@ -1080,12 +1207,13 @@ let () =
   let band = has "--band" in
   (* "--newton FILE" runs the interval Newton test of theories/Newton.v on
      the system and the box the file names. *)
-  (if has "--newton" then begin
+  (if has "--newton" || has "--newton-eval" then begin
+     let flag = if has "--newton" then "--newton" else "--newton-eval" in
      let rec find = function
-       | "--newton" :: f :: _ -> f
+       | f' :: f :: _ when f' = flag -> f
        | _ :: tl -> find tl
-       | [] -> prerr_endline "--newton needs a file"; exit 2 in
-     run_newton (find args);
+       | [] -> prerr_endline (flag ^ " needs a file"); exit 2 in
+     run_newton (find args) (flag = "--newton-eval");
      exit 0
    end);
   (* "--mercier FILE" assembles the criterion from the enclosures a covering

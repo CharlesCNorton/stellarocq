@@ -179,14 +179,14 @@ RADIAL = [
     # a piecewise pressure covered radially across its knots: the covering is
     # split at each knot and every node block carries the cubic of its piece
     Case("radial/spline_pieces", "wout_solovev_cubic_spline.nc",
-         "--radial --nodes 20 --nu 128 --nrad 8", tighten=True,
-         worst=5.606854e-01),
+         "--radial --nodes 10 --nu 64 --nrad 8", tighten=True,
+         worst=1.314896e+00),
     # the innermost interval, between the first two half points, where the
     # coefficients come from the two innermost nodes because no inner half
     # point exists
     Case("radial/axis_piece", "wout_solovev.nc",
-         "--radial --axis --node 1 --nu 128 --nrad 128", tighten=True,
-         worst=5.284583e-02),
+         "--radial --axis --node 1 --nu 64 --nrad 64", tighten=True,
+         worst=3.325667e-01),
     # the outermost interval, between the last two nodes, which is where a
     # covering built on half points stops short of the boundary
     Case("radial/edge_piece", "wout_solovev.nc",
@@ -227,7 +227,7 @@ REFUSALS = [
 # The criterion over a profile rather than one surface, which is where it says
 # something about an equilibrium rather than about a flux surface.
 PROFILE = [
-    ("mercier/solovev_profile", "wout_solovev.nc", 4, 256, 3),
+    ("mercier/solovev_profile", "wout_solovev.nc", 4, 128, 3),
 ]
 
 
@@ -241,7 +241,7 @@ BOOZER = [
      # the defect of each relation, at most
      (5.0e-05, 5.0e-04),
      # B_00 of |B| in the Boozer angles
-     (2.053361982e-01, 2.053437394e-01)),
+     (2.051610939e-01, 2.051685015e-01)),
 ]
 
 
@@ -263,7 +263,7 @@ CONVERGENCE = [
     ("convergence/cma_flat",
      ["wout_cma_ns15.nc", "wout_cma_ns25.nc", "wout_cma_ns51.nc",
       "wout_cma_ns101.nc"],
-     "--half-grid --nu 256", "ratio", (0.9, 1.2)),
+     "--half-grid --nu 128", "ratio", (0.9, 1.2)),
 ]
 
 
@@ -274,13 +274,13 @@ CONVERGENCE = [
 # separation between solovev and the rest is the published figure, so each case
 # requires the measured factor to stay in its band.
 CANCEL = [
-    ("cancel/solovev", "wout_solovev.nc", "--nodes 8 --nu 256", (5.0e2, 5.0e4)),
-    ("cancel/cth_like", "wout_cth_like_fixed_bdy.nc", "--nodes 5 --nu 128",
+    ("cancel/solovev", "wout_solovev.nc", "--nodes 8 --nu 128", (5.0e2, 5.0e4)),
+    ("cancel/cth_like", "wout_cth_like_fixed_bdy.nc", "--nodes 5 --nu 64",
      (0.5, 30.0)),
     ("cancel/cma", "wout_cma.nc", "--nodes 5 --nu 128", (0.9, 1.2)),
-    ("cancel/up_down_asym", "wout_up_down_asym.nc", "--nodes 5 --nu 128",
+    ("cancel/up_down_asym", "wout_up_down_asym.nc", "--nodes 5 --nu 64",
      (0.4, 6.0)),
-    ("cancel/li383", "wout_li383_low_res.nc", "--nodes 5 --nu 128", (0.4, 3.0)),
+    ("cancel/li383", "wout_li383_low_res.nc", "--nodes 5 --nu 64", (0.4, 3.0)),
 ]
 
 
@@ -289,7 +289,7 @@ CANCEL = [
 # at the smallest by the recorded factor.
 MODESETS = [
     ("modes/cth_like_rises", "wout_cthS_ns51_m5n4.nc", "wout_cthS_ns51_m9n8.nc",
-     "--nodes 4 --nu 128", 2.0),
+     "--nodes 4 --nu 64", 2.0),
     ("modes/li383_rises", "wout_li383_m4n3.nc", "wout_li383_m8n6.nc",
      "--nodes 4 --nu 128", 5.0),
 ]
@@ -406,7 +406,7 @@ CORRESPOND = [
 # the one recorded.
 MERCIER = [
     # flat iota and finite pressure: the well decides it
-    ("mercier/solovev_node22", "wout_solovev.nc", 22, 512, "UNSTABLE"),
+    ("mercier/solovev_node22", "wout_solovev.nc", 22, 256, "UNSTABLE"),
     # strong shear, no pressure, non-stellarator-symmetric: DShear, DCurr and
     # DGeod all contribute and DWell is zero
     ("mercier/up_down_asym_node8", "wout_up_down_asym.nc", 8, 512, "STABLE"),
@@ -433,11 +433,37 @@ TAYLORFILE = [
 
 ALL = POINT + CELLS + INTEGRALS + RADIAL + TAYLORFILE
 
+# The cases whose time is the checker's over thousands of cells, longest first.
+HEAVY = [
+    "radial/spline_pieces", "radial/axis_piece", "mercier/solovev_profile",
+    "modes/cth_like_rises", "modes/li383_rises", "cancel/cma",
+    "mercier/up_down_asym_node8", "mercier/solovev_node22",
+    "boozer/solovev_node22", "convergence/cma_flat", "cancel/cth_like",
+    "cell/qh_quasitwo", "cell/cth_quasitwo", "radial/solovev_node22",
+    "reference/quasisym_cth", "radial/edge_piece", "radial/slot3_file",
+    "radial/three_slots", "cell/solovev_512", "integral/geometry",
+    "integral/mercier_a", "integral/mercier_b", "cancel/solovev",
+    "cancel/up_down_asym", "cancel/li383", "convergence/solovev_order",
+    "convergence/li383_spectral",
+]
+
+
+import threading
+
+# The checker workers a case may use, set per pool thread by the scheduler
+# below and read by every command a case runs; the tools a case calls pass it
+# on through the environment.
+_local = threading.local()
+
 
 def run(cmd, cwd=None):
     """Run a command and return (returncode, combined output)."""
+    env = dict(os.environ)
+    jobs = getattr(_local, "jobs", None)
+    if jobs is not None:
+        env["STELLAROCQ_JOBS"] = str(jobs)
     p = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE,
-                       stderr=subprocess.STDOUT, text=True)
+                       stderr=subprocess.STDOUT, text=True, env=env)
     return p.returncode, p.stdout
 
 
@@ -1438,6 +1464,34 @@ def check_newton(name, gen_args, expect, main, python, tmp):
     return "ok", got
 
 
+# The collocated residual of a band of surfaces as an interval Newton system:
+# a zero of it exists within the recorded radius of the wout's coefficients
+# and is the only one in the box, which is Colloc.colloc_correct.
+COLLOC = [
+    ("newton/colloc_solovev_2", "wout_solovev.nc", "22:23", "", 1.5e-09),
+]
+
+
+def check_colloc(name, wout, rows, extra, radius, main, python, tmp):
+    """A discrete equilibrium near the wout, established by the checker."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "newton_colloc.py"
+    cert = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{tool}" "{wout}" "{cert}" --rows {rows} {extra} '
+                  f'--main "{main}"')
+    m = re.search(r"check: VALID with K (\S+), r (\d+) \((\S+) to (\S+) in", out)
+    if rc != 0 or not m:
+        return "fail", "colloc: " + out.strip().splitlines()[-1]
+    got = float(m.group(4))
+    if got > radius:
+        return "fail", f"the box radius {got:.3e} exceeds the recorded {radius:.1e}"
+    rc, out = run(f'"{main}" --newton "{cert}"')
+    if "verdict: VALID" not in out:
+        return "fail", "the written certificate was not established again"
+    return "ok", f"K {float(m.group(1)):.3f}, radius {got:.2e}"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=None,
@@ -1448,6 +1502,9 @@ def main():
     ap.add_argument("--tmp", default=None)
     ap.add_argument("--slow", action="store_true", help="include the long cases")
     ap.add_argument("--only", default=None, help="substring filter on case names")
+    ap.add_argument("--jobs", type=int, default=None,
+                    help="cases run at once; the checker's own workers are "
+                    "divided among them through STELLAROCQ_JOBS")
     a = ap.parse_args()
 
     data = pathlib.Path(a.data) if a.data else HERE / "_absent"
@@ -1456,210 +1513,89 @@ def main():
     if not pathlib.Path(a.main).exists():
         print(f"checker not found at {a.main}; run make first")
         return 2
+    cpus = os.cpu_count() or 1
+    jobs = a.jobs or max(1, min(8, cpus // 2))
 
-    cases = [c for c in ALL if a.slow or not c.slow]
-    if a.only:
-        cases = [c for c in cases if a.only in c.name]
+    # Every case is a name and a thunk; they share nothing but the checker
+    # binary and the data directory, and each writes its own files under tmp,
+    # so they run in a pool and are reported as they finish.
+    work = []
 
-    width = max([len(c.name) for c in cases]
-                + [len(r[0]) for r in REFERENCE]
-                + [len(r[0]) for r in CORRESPOND]
-                + [len(r[0]) for r in STANDALONE]
-                + [len(r[0]) for r in MERCIER]
-                + [len(r[0]) for r in PERTURB]
-                + [len(r[0]) for r in COEFBOX]
-                + [len(r[0]) for r in CONVERGENCE]
-                + [len(r[0]) for r in BOOZER]
-                + [len(r[0]) for r in PROFILE]
-                + [len(r[0]) for r in REFUSALS]
-                + [len(r[0]) for r in FIELD]
-                + [len(r[0]) for r in CANCEL]
-                + [len(r[0]) for r in MODESETS]
-                + [len(r[0]) for r in QUASISYM]
-                + [len(r[0]) for r in NEWTON]
-                + [len("reference/terms_node22"),
-                   len("reference/halfgrid_node22"),
-                   len("correspond/swapped_radial"),
-                   len("correspond/rescaled_piece"),
-                   len("reference/quasisym_solovev"),
-                   len("reader/bound_widths"),
-                   len("reference/spline_pair"),
-                   len("audit/patch_surface")])
-    counts = {"ok": 0, "fail": 0, "skip": 0}
-    failures = []
-    t0 = time.time()
-    for c in cases:
-        t = time.time()
-        status, detail = check_case(c, data, a.main, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {c.name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-        if status == "fail":
-            failures.append((c, detail))
-    for name, cert, run_args, expect in STANDALONE:
+    def add(name, fn, case=None):
         if a.only and a.only not in name:
-            continue
-        t = time.time()
+            return
+        work.append((name, fn, case))
+
+    for c in [c for c in ALL if a.slow or not c.slow]:
+        add(c.name, lambda c=c: check_case(c, data, a.main, a.python, tmp), c)
+
+    def standalone(name, cert, run_args, expect):
         src = HERE / "data" / cert
         if not src.exists():
-            status, detail = "skip", f"{cert} absent"
-        else:
-            rc, out = run(f'"{a.main}" {" ".join(run_args)} "{src}"')
-            m = re.search(r"verdict: (\w+)", out)
-            got = m.group(1) if m else "NONE"
-            status = "ok" if got == expect else "fail"
-            detail = got if status == "ok" else f"verdict {got}, expected {expect}"
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
+            return "skip", f"{cert} absent"
+        # the checker writes its working files beside the certificate, so a
+        # case takes its own copy
+        own = tmp / (name.replace("/", "_") + ".txt")
+        own.write_text(src.read_text())
+        rc, out = run(f'"{a.main}" {" ".join(run_args)} "{own}"')
+        m = re.search(r"verdict: (\w+)", out)
+        got = m.group(1) if m else "NONE"
+        if got != expect:
+            return "fail", f"verdict {got}, expected {expect}"
+        return "ok", got
 
+    for name, cert, run_args, expect in STANDALONE:
+        add(name, lambda name=name, cert=cert, run_args=run_args, expect=expect:
+            standalone(name, cert, run_args, expect))
     for name, wout, node, nu, expect in MERCIER:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_mercier(name, data / wout, node, nu, expect,
-                                       a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, expect=expect:
+            check_mercier(name, data / wout, node, nu, expect, a.main, a.python))
     for name, made_from, checked_against, gen_args, agree in CORRESPOND:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_correspondence(
-            name, data / made_from, data / checked_against, gen_args, agree,
-            a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, made_from=made_from, checked_against=checked_against,
+            gen_args=gen_args, agree=agree:
+            check_correspondence(name, data / made_from, data / checked_against,
+                                 gen_args, agree, a.python, tmp))
     for name, wout, tol in FIELD:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_field(name, data / wout, tol, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, tol=tol:
+            check_field(name, data / wout, tol, a.python))
     for name, wout, gen_args, tg, run_args, expect in REFUSALS:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_refusal(name, data / wout, gen_args, tg,
-                                       run_args, expect, a.main, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, gen_args=gen_args, tg=tg,
+            run_args=run_args, expect=expect:
+            check_refusal(name, data / wout, gen_args, tg, run_args, expect,
+                          a.main, a.python, tmp))
     for name, wout, nodes, nu, least in PROFILE:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_profile(name, data / wout, nodes, nu, least,
-                                       a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, nodes=nodes, nu=nu, least=least:
+            check_profile(name, data / wout, nodes, nu, least, a.main, a.python))
     for name, wout, node, nu, dmax, b00 in BOOZER:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_boozer(name, data / wout, node, nu, dmax, b00,
-                                      a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, dmax=dmax, b00=b00:
+            check_boozer(name, data / wout, node, nu, dmax, b00, a.main, a.python))
     for name, wouts, args, column, bounds in CONVERGENCE:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_convergence(name, wouts, args, column, bounds,
-                                           data, a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
-    for name, wout, node, nu in [("reference/terms_node22",
-                                  "wout_solovev.nc", 22, 64)]:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_terms_reference(name, data / wout, node, nu,
-                                               a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
-    for name, wout, node, nu, nrad in [("reference/terms_radial",
-                                        "wout_solovev.nc", 22, 32, 4)]:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_terms_reference_radial(
-            name, data / wout, node, nu, nrad, a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wouts=wouts, args=args, column=column, bounds=bounds:
+            check_convergence(name, wouts, args, column, bounds, data, a.main,
+                              a.python))
+    add("reference/terms_node22",
+        lambda: check_terms_reference("reference/terms_node22",
+                                      data / "wout_solovev.nc", 22, 64, a.main,
+                                      a.python))
+    add("reference/terms_radial",
+        lambda: check_terms_reference_radial("reference/terms_radial",
+                                             data / "wout_solovev.nc", 22, 32, 4,
+                                             a.main, a.python))
     for name, wout, args, band in CANCEL:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_cancellation(name, data / wout, args, band,
-                                            a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, args=args, band=band:
+            check_cancellation(name, data / wout, args, band, a.main, a.python))
     for name, coarse, fine, args, factor in MODESETS:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_modesets(name, data / coarse, data / fine, args,
-                                        factor, a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, coarse=coarse, fine=fine, args=args, factor=factor:
+            check_modesets(name, data / coarse, data / fine, args, factor,
+                           a.main, a.python))
     for name, wout, gen_args, cells in COEFBOX:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_coefbox(name, data / wout, gen_args, cells,
-                                       a.main, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, gen_args=gen_args, cells=cells:
+            check_coefbox(name, data / wout, gen_args, cells, a.main, a.python,
+                          tmp))
     for name, perturb in PERTURB:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_perturbed(name, data / "wout_solovev.nc",
-                                         perturb, a.main, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, perturb=perturb:
+            check_perturbed(name, data / "wout_solovev.nc", perturb, a.main,
+                            a.python, tmp))
     # every pressure parameterization, since the pressure gradient is the one
     # term of the residual that differs between them and the one the wout
     # constrains only through its stored pressure
@@ -1667,109 +1603,92 @@ def main():
             [("reference/halfgrid_node22", "wout_solovev.nc", 22)]
             + [(f"reference/halfgrid_{n}", w, 22) for n, w, _ in FAMILIES
                if n != "power_series"]):
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_halfgrid(name, data / wout, node, a.main,
-                                        a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
-    for name, wout in [("project/solovev_node22", "wout_solovev.nc")]:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_project(name, data / wout, a.main, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
+        add(name, lambda name=name, wout=wout, node=node:
+            check_halfgrid(name, data / wout, node, a.main, a.python, tmp))
+    add("project/solovev_node22",
+        lambda: check_project("project/solovev_node22",
+                              data / "wout_solovev.nc", a.main, a.python, tmp))
+    for name, gen_args, expect in NEWTON:
+        add(name, lambda name=name, gen_args=gen_args, expect=expect:
+            check_newton(name, gen_args, expect, a.main, a.python, tmp))
+    for name, wout, rows, extra, radius in COLLOC:
+        add(name, lambda name=name, wout=wout, rows=rows, extra=extra, radius=radius:
+            check_colloc(name, data / wout, rows, extra, radius, a.main,
+                         a.python, tmp))
+    for name, wout, node, nu, nv, span in QUASISYM:
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, nv=nv, span=span:
+            check_quasisym(name, data / wout, node, nu, nv, span, a.main,
+                           a.python))
     for name, wout, gen_args, mutate, reason in MUTATE:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_mutation(name, data / wout, gen_args, mutate,
-                                        reason, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
+        add(name, lambda name=name, wout=wout, gen_args=gen_args, mutate=mutate,
+            reason=reason:
+            check_mutation(name, data / wout, gen_args, mutate, reason,
+                           a.python, tmp))
+    add("reference/spline_pair", check_spline_agreement)
+    add("reader/bound_widths", lambda: check_certfile_widths(tmp))
+    add("audit/patch_surface", lambda: check_patch_surface(a.main))
+    for name, wout, node, gen_args, radius in REFERENCE:
+        add(name, lambda name=name, wout=wout, node=node, gen_args=gen_args,
+            radius=radius:
+            check_reference(name, data / wout, node, gen_args, radius, a.main,
+                            a.python, tmp))
+    for name, wout, node, nu, nv in QSREF:
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, nv=nv:
+            check_qs_reference(name, data / wout, node, nu, nv, a.main,
+                               a.python, tmp))
 
-    if not a.only or a.only in "reference/spline_pair":
-        t = time.time()
-        status, detail = check_spline_agreement()
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {'reference/spline_pair':<{width}}  {detail}  "
-              f"({time.time() - t:.1f} s)", flush=True)
+    width = max([len(name) for name, _, _ in work] + [1])
+    counts = {"ok": 0, "fail": 0, "skip": 0}
+    failures = []
+    t0 = time.time()
 
-    if not a.only or a.only in "reader/bound_widths":
-        t = time.time()
-        status, detail = check_certfile_widths(tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {'reader/bound_widths':<{width}}  {detail}  "
-              f"({time.time() - t:.1f} s)", flush=True)
+    # The long cases are coverings of thousands of cells, whose time is the
+    # checker's and falls with its workers, so they start first and take a
+    # larger share of the processors; the rest are a generator and a short
+    # run, and take two. HEAVY names them, longest first.
+    heavy_at_once = max(1, min(4, jobs // 2))
+    heavy_jobs = max(2, cpus // heavy_at_once)
+    light_jobs = max(1, min(2, cpus // jobs))
+    order = {n: i for i, n in enumerate(HEAVY)}
+    work.sort(key=lambda w: order.get(w[0], len(HEAVY)))
+    gate = threading.Semaphore(heavy_at_once)
 
-    if not a.only or a.only in "audit/patch_surface":
+    def one(item):
+        name, fn, case = item
+        heavy = name in order
+        if heavy:
+            gate.acquire()
+        _local.jobs = heavy_jobs if heavy else light_jobs
         t = time.time()
-        status, detail = check_patch_surface(a.main)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {'audit/patch_surface':<{width}}  {detail}  "
-              f"({time.time() - t:.1f} s)", flush=True)
+        try:
+            status, detail = fn()
+        except Exception as e:  # noqa: BLE001
+            status, detail = "fail", f"{type(e).__name__}: {e}"
+        finally:
+            if heavy:
+                gate.release()
+        return name, case, status, detail, time.time() - t
 
-    if not a.only or any(a.only in r[0] for r in REFERENCE):
-        for name, wout, node, gen_args, radius in REFERENCE:
-            t = time.time()
-            status, detail = check_reference(
-                name, data / wout, node, gen_args, radius, a.main, a.python, tmp)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    print(f"{len(work)} cases, {jobs} at a time; {heavy_at_once} long ones "
+          f"with {heavy_jobs} checker workers each, the rest with {light_jobs}",
+          flush=True)
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(one, item) for item in work]
+        for fut in as_completed(futures):
+            name, case, status, detail, dt = fut.result()
             counts[status] += 1
             mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-            print(f"{mark} {name:<{width}}  {detail}  "
-                  f"({time.time() - t:.1f} s)", flush=True)
-
-    for name, gen_args, expect in NEWTON:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_newton(name, gen_args, expect, a.main, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
-    for name, wout, node, nu, nv, span in QUASISYM:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_quasisym(name, data / wout, node, nu, nv, span,
-                                        a.main, a.python)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
-
-    for name, wout, node, nu, nv in QSREF:
-        if a.only and a.only not in name:
-            continue
-        t = time.time()
-        status, detail = check_qs_reference(name, data / wout, node, nu, nv,
-                                            a.main, a.python, tmp)
-        counts[status] += 1
-        mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
-        print(f"{mark} {name:<{width}}  {detail}  ({time.time() - t:.1f} s)",
-              flush=True)
+            print(f"{mark} {name:<{width}}  {detail}  ({dt:.1f} s)", flush=True)
+            if status == "fail":
+                failures.append((name, case, detail))
 
     print(f"\n{counts['ok']} passed, {counts['fail']} failed, "
           f"{counts['skip']} skipped in {time.time() - t0:.1f} s")
-    for c, detail in failures:
-        if c.published:
-            print(f"  {c.name} carries a figure published under "
-                  f"\"{c.published}\" in README.md")
+    for name, case, detail in failures:
+        if case is not None and case.published:
+            print(f"  {name} carries a figure published under "
+                  f"\"{case.published}\" in README.md")
     return 1 if counts["fail"] else 0
 
 

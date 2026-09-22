@@ -19,8 +19,15 @@ coefficient and through their certificates.
            lambda carries a factor m or n (Identities.lambda_gauge), so that
            coefficient drives nothing and the restart has to converge at once
            to the same equilibrium.
+  nfp      a five-period stellarator solved over one period and over the
+           whole torus, with the same toroidal sample points and the modes
+           written in absolute toroidal numbers. The reconstruction reads a
+           mode by its absolute number and nothing else (Physics.kern_arg), so
+           the two runs describe one field and their coefficients have to
+           agree, with every mode the full torus admits and the period does
+           not coming out zero.
 
-  python gen/oracle.py --out DIR [--tests axisym lasym gauge]
+  python gen/oracle.py --out DIR [--tests axisym lasym gauge nfp]
 
 VMEC++ is not a dependency of the checker or the generator; this is one of
 the tools here that run a solver.
@@ -225,10 +232,66 @@ def gauge(out, python, main):
     return report("gauge: a restart with the (0,0) lambda coefficient set", rows)
 
 
+def nfp(out, python, main):
+    import numpy as np
+    import vmecpp
+    base = test_data() / "cth_like_fixed_bdy.json"
+    vi = vmecpp.VmecInput.from_file(base)
+    period, ntor, mpol = int(vi.nfp), int(vi.ntor), int(vi.mpol)
+    nzeta = int(vi.nzeta)
+    dst5 = out / "wout_nfp_period.nc"
+    solve(vi, dst5)
+    # the same boundary and axis over the whole torus: mode n of the period
+    # is mode period * n of the torus, and the torus is sampled at the same
+    # points, period times as many per turn
+    vt = vmecpp.VmecInput.from_file(base)
+    vt.nfp = 1
+    vt.ntor = period * ntor
+    vt.nzeta = period * nzeta
+    rbc = np.zeros((mpol, 2 * vt.ntor + 1))
+    zbs = np.zeros((mpol, 2 * vt.ntor + 1))
+    for n in range(-ntor, ntor + 1):
+        rbc[:, vt.ntor + period * n] = vi.rbc[:, ntor + n]
+        zbs[:, vt.ntor + period * n] = vi.zbs[:, ntor + n]
+    raxis = np.zeros(vt.ntor + 1)
+    zaxis = np.zeros(vt.ntor + 1)
+    for n in range(ntor + 1):
+        raxis[period * n] = vi.raxis_c[n]
+        zaxis[period * n] = vi.zaxis_s[n]
+    vt.rbc, vt.zbs = rbc, zbs
+    vt.raxis_c, vt.zaxis_s = raxis, zaxis
+    dst1 = out / "wout_nfp_torus.nc"
+    solve(vt, dst1)
+    a, b = arrays(dst5), arrays(dst1)
+    # the torus modes that the period admits, in the period's order
+    idx = {(int(m), int(n)): k for k, (m, n) in enumerate(zip(b["xm"], b["xn"]))}
+    shared = [idx[(int(m), int(n))] for m, n in zip(a["xm"], a["xn"])]
+    others = [k for k in range(len(b["xm"])) if k not in set(shared)]
+    rows = []
+    for k in ("rmnc", "zmns", "lmns"):
+        scale = float(np.abs(a[k]).max()) or 1.0
+        rows.append((f"{k}: the torus against the period on the period's modes",
+                     float(np.abs(b[k][:, shared] - a[k]).max()) / scale, 1e-8))
+        rows.append((f"{k}: modes of the torus the period does not admit, of "
+                     f"the largest", float(np.abs(b[k][:, others]).max()) / scale,
+                     1e-10))
+    rows.append(("iota on the half grid",
+                 float(np.abs(a["iotas"] - b["iotas"]).max()), 1e-10))
+    va, ma = certify(dst5, python, main, out)
+    vb, mb = certify(dst1, python, main, out)
+    rows.append((f"certificates {va} and {vb}: largest residual, relative gap",
+                 max(abs(x - y) / max(abs(x), 1e-300)
+                     for p, q in zip(ma, mb) for x, y in zip(p, q))
+                 if ma and mb and va == vb == "VALID" else 1.0, 1e-6))
+    return report(f"nfp: a {period}-period stellarator over one period and "
+                  f"over the torus ({len(a['xm'])} and {len(b['xm'])} modes)",
+                  rows)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--tests", nargs="+", default=["axisym", "lasym", "gauge"])
+    ap.add_argument("--tests", nargs="+", default=["axisym", "lasym", "gauge", "nfp"])
     ap.add_argument("--main",
                     default=str(ROOT / "extract" / "_build" / "default" / "main.exe"))
     ap.add_argument("--python", default=sys.executable)
@@ -238,7 +301,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     ok = True
     for t in a.tests:
-        ok = {"axisym": axisym, "lasym": lasym, "gauge": gauge}[t](
+        ok = {"axisym": axisym, "lasym": lasym, "gauge": gauge, "nfp": nfp}[t](
             out, a.python, a.main) and ok
     print("\nevery invariance holds" if ok else "\nan invariance fails")
     return 0 if ok else 1
