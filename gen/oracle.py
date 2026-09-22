@@ -18,7 +18,8 @@ coefficient and through their certificates.
            coefficient set to a nonzero value. Every angular derivative of
            lambda carries a factor m or n (Identities.lambda_gauge), so that
            coefficient drives nothing and the restart has to converge at once
-           to the same equilibrium.
+           to the same equilibrium, where the same restart with the (1,0)
+           coefficient set iterates. The restart reads lambda from lmns_full.
   nfp      a five-period stellarator solved over one period and over the
            whole torus, with the same toroidal sample points and the modes
            written in absolute toroidal numbers. The reconstruction reads a
@@ -201,16 +202,20 @@ def gauge(out, python, main):
     # a hot restart takes one grid, the state's
     vi.ns_array = np.array(vi.ns_array)[-1:]
     first = solve(vi, out / "wout_gauge_0.nc")
-    # the (0,0) mode is the first of the list; the python wout holds the
-    # coefficients as (mnmax, ns)
-    k = [i for i, (m, n) in enumerate(zip(first.wout.xm, first.wout.xn))
-         if m == 0 and n == 0][0]
-    lm = np.array(first.wout.lmns)
-    if lm.shape[0] != len(first.wout.xm):
-        lm = lm.T
-    lm[k, :] = 0.05
-    first.wout.lmns = lm if np.array(first.wout.lmns).shape == lm.shape else lm.T
-    second = solve(vi, out / "wout_gauge_1.nc", restart=first)
+    # the python wout holds the coefficients as (mnmax, ns), and a hot restart
+    # reads lambda from lmns_full
+    modes = {(int(m), int(n)): i
+             for i, (m, n) in enumerate(zip(first.wout.xm, first.wout.xn))}
+
+    def restarted(mode, dst):
+        state = first.model_copy(deep=True)
+        lm = np.array(state.wout.lmns_full)
+        lm[modes[mode], :] += 0.05
+        state.wout.lmns_full = lm
+        return solve(vi, dst, restart=state)
+
+    second = restarted((0, 0), out / "wout_gauge_1.nc")
+    third = restarted((1, 0), out / "wout_gauge_2.nc")
     a, b = arrays(out / "wout_gauge_0.nc"), arrays(out / "wout_gauge_1.nc")
     rows = []
     not00 = ~((b["xm"] == 0) & (b["xn"] == 0))
@@ -220,8 +225,11 @@ def gauge(out, python, main):
     rows.append(("lmns: modes other than (0,0) after the restart against before",
                  match(a, b, "lmns", "lmns", not00, not00), 1e-9))
     rows.append(("iota on the half grid", float(np.abs(a["iotas"] - b["iotas"]).max()), 1e-12))
-    rows.append((f"iterations of the restart ({second.wout.niter if hasattr(second.wout, 'niter') else '?'})",
-                 float(getattr(second.wout, "niter", 0)), 50.0))
+    rows.append((f"iterations of the restart ({second.wout.niter})",
+                 float(second.wout.niter), 5.0))
+    rows.append((f"iterations of the same restart with the (1,0) coefficient "
+                 f"set ({third.wout.niter}), at least",
+                 -float(third.wout.niter), -50.0))
     print(f"  lmns(0,0) after the restart: {float(np.abs(np.asarray(b['lmns'])[:, ~not00]).max()):.3e}")
     va, ma = certify(out / "wout_gauge_0.nc", python, main, out)
     vb, mb = certify(out / "wout_gauge_1.nc", python, main, out)
