@@ -152,6 +152,8 @@ let debug_cell xu xv (c : Cell.ccert) (cl : Cell.ccell) =
     Expr.iextend prec box (Deriv.with_derivs slot base len binds) in
   let env_du = at_box xu in
   let env_dv = at_box xv in
+  let env_duv =
+    Expr.iextend prec box (Deriv.with_derivs_uv xu xv base len binds) in
   (* the same derivative read at the centre instead of over the box: the
      ratio is what a Taylor bound would save, since it would charge the box
      only for a second-order remainder *)
@@ -184,8 +186,8 @@ let debug_cell xu xv (c : Cell.ccert) (cl : Cell.ccell) =
                  (base + k + len) k);
   Stdlib.List.iter (fun (nm, r, cb) ->
       let ok =
-        Cell.check_component prec base len cl.Cell.cc_du cl.Cell.cc_dv
-          at_centre env_du env_dv r cb in
+        Cell.check_component_uv prec base len cl.Cell.cc_du cl.Cell.cc_dv
+          at_centre env_duv r cb in
       (match Cell.slot_of r with
        | None -> Printf.printf "  component %s: not a slot reference\n%!" nm
        | Some n ->
@@ -254,6 +256,7 @@ type nodectx = {
   nc_dv : (int * Expr.expr) list Lazy.t ;
   nc_du_suf : (int * Expr.expr) list Lazy.t ;
   nc_dv_suf : (int * Expr.expr) list Lazy.t ;
+  nc_duv_suf : (int * Expr.expr) list Lazy.t ;
   nc_ddu : (int * Expr.expr) list Lazy.t ;
   nc_ddv : (int * Expr.expr) list Lazy.t ;
 }
@@ -281,6 +284,7 @@ let node_ctx xu xv (c : Cell.ccert) (cl : Cell.ccell) =
        the shared environment *)
     nc_du_suf = lazy (Deriv.with_derivs xu base len suf);
     nc_dv_suf = lazy (Deriv.with_derivs xv base len suf);
+    nc_duv_suf = lazy (Deriv.with_derivs_uv xu xv base len suf);
     nc_ddu = lazy (Deriv.with_derivs2 xu base len binds);
     nc_ddv = lazy (Deriv.with_derivs2 xv base len binds) }
 
@@ -300,6 +304,7 @@ type prectx = {
   pe_val : Expr.I.coq_type Expr.env ;
   pe_du : Expr.I.coq_type Expr.env ;
   pe_dv : Expr.I.coq_type Expr.env ;
+  pe_duv : Expr.I.coq_type Expr.env ;
 }
 
 let pre_cache = ref (-1, None)
@@ -314,7 +319,9 @@ let pre_env_for xu xv prec node ctx base =
           pe_du = Expr.iextend prec base
                     (Deriv.with_derivs xu base_ len ctx.nc_pre) ;
           pe_dv = Expr.iextend prec base
-                    (Deriv.with_derivs xv base_ len ctx.nc_pre) } in
+                    (Deriv.with_derivs xv base_ len ctx.nc_pre) ;
+          pe_duv = Expr.iextend prec base
+                     (Deriv.with_derivs_uv xu xv base_ len ctx.nc_pre) } in
       pre_cache := (node, Some p);
       p
 
@@ -389,14 +396,15 @@ let tighten_cell ?slot3 xu xv node ctx (c : Cell.ccert) (cl : Cell.ccell)
   (* The three environments do not depend on the component, so they are built
      once for the cell rather than once per component. *)
   let env0 = Expr.iextend prec (at_pt pre.pe_val) ctx.nc_suf in
-  let env_du =
-    Expr.iextend prec (at_box pre.pe_du) (Lazy.force ctx.nc_du_suf) in
   (* a cell with no toroidal width needs no bound on the toroidal derivative,
-     and Cell.check_component_flat does not ask for one, so neither the
-     environment nor the search that reads it is built *)
+     and Cell.check_component_flat does not ask for one, so its environment
+     carries the poloidal derivative alone. A cell with both widths carries
+     both in one environment, Deriv.with_derivs_uv, the toroidal derivative
+     at twice the offset, so the values over the box are evaluated once. *)
   let flat = Int64.compare dv_i 0L = 0 in
-  let env_dv =
-    lazy (Expr.iextend prec (at_box pre.pe_dv) (Lazy.force ctx.nc_dv_suf)) in
+  let env_du =
+    if flat then Expr.iextend prec (at_box pre.pe_du) (Lazy.force ctx.nc_du_suf)
+    else Expr.iextend prec (at_box pre.pe_duv) (Lazy.force ctx.nc_duv_suf) in
   (* With a third slot the derivative along it is enclosed over a box wide in
      all three, and the cell bound has to carry that step as well. *)
   let env_dw =
@@ -417,7 +425,7 @@ let tighten_cell ?slot3 xu xv node ctx (c : Cell.ccert) (cl : Cell.ccell)
         let (ndu, qdu) = bound_for prec env_du (Expr.Evar (n + len)) in
         let (ndv, qdv) =
           if flat then (1L, 0L)
-          else bound_for prec (Lazy.force env_dv) (Expr.Evar (n + len)) in
+          else bound_for prec env_du (Expr.Evar (n + 2 * len)) in
         let f m e = Int64.to_float m *. (2.0 ** Int64.to_float e) in
         let cb nc qc =
           { Cell.cb_N0 = z_of_int64 n0; Cell.cb_q0 = z_of_int64 q0;

@@ -140,6 +140,143 @@ Proof.
 Qed.
 
 (* ---------------------------------------------------------------- *)
+(* One environment carrying both angular derivatives                 *)
+
+(** Two environments that agree on the slots an expression reads give it
+    the same value. *)
+Lemma xeval_agree_occ :
+  forall e (env1 env2 : env ExtendedR),
+  (forall k, var_free k e = false -> eget k env1 Xnan = eget k env2 Xnan) ->
+  xeval env1 e = xeval env2 e.
+Proof.
+  induction e; intros env1 env2 H; simpl;
+    try (rewrite (IHe env1 env2) by (intros k Hk; apply H; simpl; exact Hk);
+         reflexivity);
+    try (rewrite (IHe1 env1 env2)
+           by (intros k Hk; apply H; simpl; rewrite Hk; apply andb_false_l);
+         rewrite (IHe2 env1 env2)
+           by (intros k Hk; apply H; simpl; rewrite Hk; apply andb_false_r);
+         reflexivity);
+    try reflexivity.
+  apply H. simpl. now rewrite Nat.eqb_refl.
+Qed.
+
+(** A hypothesis about the slots of a compound expression, read at one of
+    its parts. *)
+Local Ltac restrict H :=
+  intros k Hk; apply H; simpl; rewrite Hk;
+  first [ apply andb_false_l | apply andb_false_r | reflexivity ].
+
+(** The derivative of an expression along two derivative maps that agree on
+    the slots it reads, in two environments that agree there. *)
+Lemma xeval_deriv_ext :
+  forall e (d1 d2 : nat -> expr) (env1 env2 : env ExtendedR),
+  (forall k, var_free k e = false -> xeval env1 (d1 k) = xeval env2 (d2 k)) ->
+  (forall k, var_free k e = false -> eget k env1 Xnan = eget k env2 Xnan) ->
+  xeval env1 (deriv d1 e) = xeval env2 (deriv d2 e).
+Proof.
+  induction e; intros d1 d2 env1 env2 Hd He; simpl;
+    try reflexivity;
+    try (assert (V := xeval_agree_occ e env1 env2 ltac:(restrict He));
+         assert (D := IHe d1 d2 env1 env2 ltac:(restrict Hd) ltac:(restrict He));
+         now (rewrite D; try rewrite V));
+    try (assert (V1 := xeval_agree_occ e1 env1 env2 ltac:(restrict He));
+         assert (V2 := xeval_agree_occ e2 env1 env2 ltac:(restrict He));
+         assert (D1 := IHe1 d1 d2 env1 env2 ltac:(restrict Hd) ltac:(restrict He));
+         assert (D2 := IHe2 d1 d2 env1 env2 ltac:(restrict Hd) ltac:(restrict He));
+         now (rewrite D1, D2; try rewrite V1; try rewrite V2)).
+  apply Hd. simpl. now rewrite Nat.eqb_refl.
+Qed.
+
+Lemma with_derivs_uv_cons :
+  forall x y base delta n e tl,
+  with_derivs_uv x y base delta ((n, e) :: tl)
+  = (n, e) :: ((n + delta)%nat, deriv (dvar_of x base delta) e)
+    :: ((n + 2 * delta)%nat, deriv (dvar_of y base (2 * delta)) e)
+    :: with_derivs_uv x y base delta tl.
+Proof. reflexivity. Qed.
+
+(** The list carrying both derivatives gives the slots the two doubled lists
+    give: below two deltas it is the list doubled along x, and its third
+    level is the derivative level of the list doubled along y. Stated for
+    three starting environments that agree the same way, which is what the
+    induction needs after each binding. *)
+Lemma uv_agree :
+  forall x y base delta bs next (e1 e2 e3 : env ExtendedR),
+  (x < base)%nat -> (y < base)%nat -> (0 < delta)%nat ->
+  well_formed next bs = true ->
+  (base <= next)%nat -> (next + length bs <= base + delta)%nat ->
+  (forall k, (k < base + 2 * delta)%nat -> eget k e1 Xnan = eget k e2 Xnan) ->
+  (forall k, (k < base + delta)%nat -> eget k e1 Xnan = eget k e3 Xnan) ->
+  (forall k, (base <= k)%nat -> (k < base + delta)%nat ->
+     eget (k + 2 * delta) e1 Xnan = eget (k + delta) e3 Xnan) ->
+  (forall k, (k < base + 2 * delta)%nat ->
+     eget k (xextend e1 (with_derivs_uv x y base delta bs)) Xnan
+     = eget k (xextend e2 (with_derivs x base delta bs)) Xnan) /\
+  (forall k, (k < base + delta)%nat ->
+     eget k (xextend e1 (with_derivs_uv x y base delta bs)) Xnan
+     = eget k (xextend e3 (with_derivs y base delta bs)) Xnan) /\
+  (forall k, (base <= k)%nat -> (k < base + delta)%nat ->
+     eget (k + 2 * delta) (xextend e1 (with_derivs_uv x y base delta bs)) Xnan
+     = eget (k + delta) (xextend e3 (with_derivs y base delta bs)) Xnan).
+Proof.
+  intros x y base delta bs. induction bs as [|[n e] tl IH];
+    intros next e1 e2 e3 Hx Hy Hd Hwf Hbn Hlen H12 H13 H3.
+  - simpl. auto.
+  - simpl in Hwf. apply andb_prop in Hwf. destruct Hwf as [Hwf Htl].
+    apply andb_prop in Hwf. destruct Hwf as [Hn He]. apply Nat.eqb_eq in Hn.
+    simpl length in Hlen.
+    rewrite with_derivs_uv_cons, !with_derivs_cons, !xextend_cons. cbn [fst snd].
+    assert (Hv2 : xeval e1 e = xeval e2 e).
+    { apply (xeval_agree n e e1 e2 He). intros i Hi. apply H12. lia. }
+    assert (Hv3 : xeval e1 e = xeval e3 e).
+    { apply (xeval_agree n e e1 e3 He). intros i Hi. apply H13. lia. }
+    rewrite <- Hv2, <- Hv3. set (v := xeval e1 e) in *.
+    assert (Hdu : xeval (eset n e2 v) (deriv (dvar_of x base delta) e)
+                  = xeval (eset n e1 v) (deriv (dvar_of x base delta) e)).
+    { apply (xeval_agree (n + delta)).
+      - apply vars_below_deriv; try exact He; try lia.
+      - intros i Hi. destruct (Nat.eq_dec i n) as [->|Hne].
+        + now rewrite !eget_eset_eq.
+        + rewrite !eget_eset_neq by exact Hne. symmetry. apply H12. lia. }
+    rewrite Hdu. set (du := xeval (eset n e1 v) (deriv (dvar_of x base delta) e)) in *.
+    assert (Hdv : xeval (eset (n + delta) (eset n e1 v) du)
+                        (deriv (dvar_of y base (2 * delta)) e)
+                  = xeval (eset n e3 v) (deriv (dvar_of y base delta) e)).
+    { apply xeval_deriv_ext.
+      - intros k Hk. assert (Hkn := vars_below_occ n k e He Hk).
+        unfold dvar_of. destruct (Nat.eqb k y). reflexivity.
+        destruct (Nat.ltb k base) eqn:Hkb. reflexivity.
+        apply Nat.ltb_ge in Hkb. simpl.
+        rewrite eget_eset_neq by lia. rewrite eget_eset_neq by lia.
+        rewrite eget_eset_neq by lia. apply H3; lia.
+      - intros k Hk. assert (Hkn := vars_below_occ n k e He Hk).
+        rewrite eget_eset_neq by lia. rewrite eget_eset_neq by lia.
+        rewrite eget_eset_neq by lia. apply H13. lia. }
+    rewrite Hdv. set (dv := xeval (eset n e3 v) (deriv (dvar_of y base delta) e)) in *.
+    apply (IH (S next)); try assumption; try lia.
+    + intros k Hk. destruct (Nat.eq_dec k (n + delta)) as [->|Hk1].
+      * rewrite eget_eset_neq by lia. now rewrite !eget_eset_eq.
+      * rewrite (eget_eset_neq _ (n + 2 * delta)) by lia.
+        rewrite !(eget_eset_neq _ (n + delta)) by exact Hk1.
+        destruct (Nat.eq_dec k n) as [->|Hk2]. now rewrite !eget_eset_eq.
+        rewrite !eget_eset_neq by exact Hk2. apply H12. lia.
+    + intros k Hk.
+      rewrite (eget_eset_neq _ (n + 2 * delta)) by lia.
+      rewrite !(eget_eset_neq _ (n + delta)) by lia.
+      destruct (Nat.eq_dec k n) as [->|Hk2]. now rewrite !eget_eset_eq.
+      rewrite !eget_eset_neq by exact Hk2. apply H13. lia.
+    + intros k Hk1 Hk2. destruct (Nat.eq_dec k n) as [->|Hne].
+      * now rewrite !eget_eset_eq.
+      * rewrite (eget_eset_neq _ (n + 2 * delta)) by lia.
+        rewrite (eget_eset_neq _ (n + delta)) by lia.
+        rewrite (eget_eset_neq _ n) by lia.
+        rewrite (eget_eset_neq _ (n + delta)) by lia.
+        rewrite (eget_eset_neq _ n) by lia.
+        apply H3; lia.
+Qed.
+
+(* ---------------------------------------------------------------- *)
 (* Summing per-cell enclosures                                       *)
 
 (** [tiling_encloses] adds the per-cell midpoint rules with [rsum], and the
@@ -515,6 +652,23 @@ Definition check_component (prec : F.precision)
       nonneg (ieval prec eempty (combination_e du dv cb))
   end.
 
+(** The same checks with both derivatives read from one environment over the
+    box, the derivative along the first slot at len above the component and
+    the one along the second at twice that, which is how [with_derivs_uv]
+    lays them out. *)
+Definition check_component_uv (prec : F.precision)
+    (base len : nat) (du dv : Z)
+    (env0 envuv : env I.type) (r : expr) (cb : cbounds) : bool :=
+  match slot_of r with
+  | None => false
+  | Some n =>
+      Nat.leb base n && Nat.ltb n (base + len) &&
+      check1 prec env0 r (cb_N0 cb) (cb_q0 cb) &&
+      check1 prec envuv (Evar (n + len)) (cb_NDu cb) (cb_qDu cb) &&
+      check1 prec envuv (Evar (n + 2 * len)) (cb_NDv cb) (cb_qDv cb) &&
+      nonneg (ieval prec eempty (combination_e du dv cb))
+  end.
+
 (* ---------------------------------------------------------------- *)
 (* A cell of no width in the second angle                            *)
 
@@ -584,14 +738,14 @@ Definition check_cell (c : ccert) (cl : ccell) : bool :=
      check_component_flat prec base len (cc_du cl) env0 envu
                           (r_v r3) (cc_v cl)
    else
-     let envu := iextend prec box (with_derivs slot_u base len binds) in
-     let envv := iextend prec box (with_derivs slot_v base len binds) in
-     check_component prec base len (cc_du cl) (cc_dv cl) env0 envu envv
-                     (r_s r3) (cc_s cl) &&
-     check_component prec base len (cc_du cl) (cc_dv cl) env0 envu envv
-                     (r_u r3) (cc_u cl) &&
-     check_component prec base len (cc_du cl) (cc_dv cl) env0 envu envv
-                     (r_v r3) (cc_v cl)).
+     let envuv :=
+       iextend prec box (with_derivs_uv slot_u slot_v base len binds) in
+     check_component_uv prec base len (cc_du cl) (cc_dv cl) env0 envuv
+                        (r_s r3) (cc_s cl) &&
+     check_component_uv prec base len (cc_du cl) (cc_dv cl) env0 envuv
+                        (r_u r3) (cc_u cl) &&
+     check_component_uv prec base len (cc_du cl) (cc_dv cl) env0 envuv
+                        (r_v r3) (cc_v cl)).
 
 (** Check every cell of a certificate. *)
 Definition check_ccert (c : ccert) : bool :=
@@ -1078,6 +1232,260 @@ Proof.
 Qed.
 
 (* ---------------------------------------------------------------- *)
+(* The walk from the centre of a cell to one of its points           *)
+
+(** From the two derivative checks alone: the component is a real number at
+    the centre of the cell and at any point of it, and the two differ by at
+    most the mean-value step in each angle. The upper cell bound and the
+    lower one are this lemma followed by one inequality in opposite
+    directions. *)
+Lemma component_legs_bounds :
+  forall (prec : F.precision) ms base len binds du dv n Ndu qdu Ndv qdv Mu Mv,
+  length ms = base -> (slot_u < base /\ slot_v < base)%nat -> (0 < len)%nat ->
+  0 <= du -> 0 <= dv ->
+  well_formed base binds = true -> len = length binds ->
+  (base <= n)%nat -> (n < base + len)%nat ->
+  (forall Mu' Mv', in_cell ms du dv Mu' Mv' ->
+     exists d, eget (n + len) (xextend (cell_env ms Mu' Mv')
+                                 (with_derivs slot_u base len binds)) Xnan
+               = Xreal d /\ (Rabs d <= IZR Ndu * powerRZ 2%R qdu)%R) ->
+  (forall Mu' Mv', in_cell ms du dv Mu' Mv' ->
+     exists d, eget (n + len) (xextend (cell_env ms Mu' Mv')
+                                 (with_derivs slot_v base len binds)) Xnan
+               = Xreal d /\ (Rabs d <= IZR Ndv * powerRZ 2%R qdv)%R) ->
+  in_cell ms du dv Mu Mv ->
+  exists w0 w,
+    eget n (xextend (xenv_of ms) binds) Xnan = Xreal w0 /\
+    eget n (xextend (cell_env ms Mu Mv) binds) Xnan = Xreal w /\
+    (Rabs (w - w0) <=
+       IZR du * (IZR Ndu * powerRZ 2%R qdu)
+     + IZR dv * (IZR Ndv * powerRZ 2%R qdv))%R.
+Proof.
+  intros prec ms base len binds du dv n Ndu qdu Ndv qdv Mu Mv
+         Hms Hb Hlen0 Hdu Hdv Hwf Hlen Hbn Hn Hdu_chk Hdv_chk Hin.
+  set (Mu0 := IZR (nth slot_u ms 0)).
+  set (Mv0 := IZR (nth slot_v ms 0)).
+  assert (HinU := proj1 Hin). assert (HinV := proj2 Hin).
+  assert (Hin0 : in_cell ms du dv Mu0 Mv0).
+  { unfold in_cell, Mu0, Mv0. rewrite !minus_IZR, !plus_IZR.
+    generalize (IZR_le 0 du Hdu). generalize (IZR_le 0 dv Hdv). lra. }
+  set (Fu := fun t => xextend (eset slot_u (eset slot_v (xenv_of ms) (Xreal Mv0)) (Xreal t))
+                              (with_derivs slot_u base len binds)).
+  assert (Hinv_u : inv slot_u base len Fu (base + len)).
+  { destruct (inputs_real ms base Mu0 Mv0 Hms Hb) as [Hl Hr].
+    unfold cell_env in Hl, Hr.
+    assert (Hbase := inv_base slot_u base len ltac:(lia)
+                       ltac:(lia) _ Hl Hr).
+    assert (Hres := inv_bindings slot_u base len ltac:(lia)
+                      ltac:(lia) binds _ base Hbase Hwf ltac:(lia) ltac:(lia)).
+    rewrite <- Hlen in Hres.
+    refine (inv_ext slot_u base len _ Fu (base + len) _ Hres).
+    intros t. unfold Fu. now rewrite eset_overwrite. }
+  set (Fv := fun t => xextend (eset slot_v (eset slot_u (xenv_of ms) (Xreal Mu)) (Xreal t))
+                              (with_derivs slot_v base len binds)).
+  assert (Hinv_v : inv slot_v base len Fv (base + len)).
+  { destruct (inputs_real ms base Mu Mv0 Hms Hb) as [Hl Hr].
+    rewrite cell_env_v in Hl, Hr.
+    assert (Hbase := inv_base slot_v base len ltac:(lia)
+                       ltac:(lia) _ Hl Hr).
+    assert (Hres := inv_bindings slot_v base len ltac:(lia)
+                      ltac:(lia) binds _ base Hbase Hwf ltac:(lia) ltac:(lia)).
+    rewrite <- Hlen in Hres.
+    refine (inv_ext slot_v base len _ Fv (base + len) _ Hres).
+    intros t. unfold Fv. now rewrite eset_overwrite. }
+  assert (Hdu_n := deriv_slot_of slot_u base len Fu (base + len) n
+                     ltac:(lia) Hbn Hinv_u).
+  assert (Hdv_n := deriv_slot_of slot_v base len Fv (base + len) n
+                     ltac:(lia) Hbn Hinv_v).
+  set (Du := (IZR Ndu * powerRZ 2%R qdu)%R).
+  set (Dv := (IZR Ndv * powerRZ 2%R qdv)%R).
+  set (lo_u := IZR (nth slot_u ms 0 - du)).
+  set (hi_u := IZR (nth slot_u ms 0 + du)).
+  set (lo_v := IZR (nth slot_v ms 0 - dv)).
+  set (hi_v := IZR (nth slot_v ms 0 + dv)).
+  assert (Hbnd_u : forall t, (lo_u <= t <= hi_u)%R ->
+            exists d, eget (n + len) (Fu t) Xnan = Xreal d /\ (Rabs d <= Du)%R).
+  { intros t Ht.
+    assert (Hin_t : in_cell ms du dv t Mv0). { split. exact Ht. exact (proj2 Hin0). }
+    exact (Hdu_chk t Mv0 Hin_t). }
+  assert (Hbnd_v : forall t, (lo_v <= t <= hi_v)%R ->
+            exists d, eget (n + len) (Fv t) Xnan = Xreal d /\ (Rabs d <= Dv)%R).
+  { intros t Ht.
+    assert (Hin_t : in_cell ms du dv Mu t). { split. exact HinU. exact Ht. }
+    assert (Hd := Hdv_chk Mu t Hin_t).
+    rewrite cell_env_v in Hd. exact Hd. }
+  destruct (bound_between_dist Fu n (n + len) Du lo_u hi_u Mu0 Mu Hdu_n Hbnd_u
+              (proj1 Hin0) HinU) as [wu0 [wu1 [Hwu0 [Hwu1 Hinc_u]]]].
+  destruct (bound_between_dist Fv n (n + len) Dv lo_v hi_v Mv0 Mv Hdv_n Hbnd_v
+              (proj2 Hin0) HinV) as [wv0 [wv1 [Hwv0 [Hwv1 Hinc_v]]]].
+  assert (Hval_u : forall t, eget n (Fu t) Xnan
+                     = eget n (xextend (cell_env ms t Mv0) binds) Xnan).
+  { intros t. unfold Fu, cell_env.
+    apply (values_with_derivs slot_u base len binds _ _ base Hwf);
+      try lia; try (intros k _; reflexivity). }
+  assert (Hval_v : forall t, eget n (Fv t) Xnan
+                     = eget n (xextend (cell_env ms Mu t) binds) Xnan).
+  { intros t. unfold Fv. rewrite cell_env_v.
+    apply (values_with_derivs slot_v base len binds _ _ base Hwf);
+      try lia; try (intros k _; reflexivity). }
+  rewrite Hval_u in Hwu0, Hwu1.
+  rewrite Hval_v in Hwv0, Hwv1.
+  unfold Mu0, Mv0 in Hwu0.
+  rewrite (cell_env_center ms base Hms Hb) in Hwu0.
+  rewrite Hwu1 in Hwv0. injection Hwv0 as <-.
+  exists wu0, wv1. split. exact Hwu0. split. exact Hwv1.
+  assert (HDu : (0 <= Du)%R).
+  { destruct (Hbnd_u Mu0 (proj1 Hin0)) as [d [_ Hd]]. generalize (Rabs_pos d). lra. }
+  assert (HDv : (0 <= Dv)%R).
+  { destruct (Hbnd_v Mv0 (proj2 Hin0)) as [d [_ Hd]]. generalize (Rabs_pos d). lra. }
+  assert (Hhalf_u : (Rabs (Mu - Mu0) <= IZR du)%R).
+  { unfold Mu0. destruct HinU as [Hl Hr].
+    unfold lo_u in Hl. unfold hi_u in Hr.
+    rewrite minus_IZR in Hl. rewrite plus_IZR in Hr. apply Rabs_le. lra. }
+  assert (Hhalf_v : (Rabs (Mv - Mv0) <= IZR dv)%R).
+  { unfold Mv0. destruct HinV as [Hl Hr].
+    unfold lo_v in Hl. unfold hi_v in Hr.
+    rewrite minus_IZR in Hl. rewrite plus_IZR in Hr. apply Rabs_le. lra. }
+  assert (Hu' : (Rabs (wu1 - wu0) <= Du * IZR du)%R).
+  { apply Rle_trans with (Du * Rabs (Mu - Mu0))%R. exact Hinc_u.
+    now apply Rmult_le_compat_l. }
+  assert (Hv' : (Rabs (wv1 - wu1) <= Dv * IZR dv)%R).
+  { apply Rle_trans with (Dv * Rabs (Mv - Mv0))%R. exact Hinc_v.
+    now apply Rmult_le_compat_l. }
+  replace (wv1 - wu0)%R with ((wu1 - wu0) + (wv1 - wu1))%R by ring.
+  eapply Rle_trans. apply Rabs_triang.
+  rewrite (Rmult_comm (IZR du)), (Rmult_comm (IZR dv)).
+  now apply Rplus_le_compat.
+Qed.
+
+(** The same walk from the two derivative checks over the box. *)
+Lemma component_legs :
+  forall prec ms base len binds du dv n Ndu qdu Ndv qdv Mu Mv,
+  length ms = base -> (slot_u < base /\ slot_v < base)%nat -> (0 < len)%nat ->
+  0 <= du -> 0 <= dv ->
+  well_formed base binds = true -> len = length binds ->
+  (base <= n)%nat -> (n < base + len)%nat ->
+  check1 prec (iextend prec (box_ienv prec ms du dv)
+                       (with_derivs slot_u base len binds))
+         (Evar (n + len)) Ndu qdu = true ->
+  check1 prec (iextend prec (box_ienv prec ms du dv)
+                       (with_derivs slot_v base len binds))
+         (Evar (n + len)) Ndv qdv = true ->
+  in_cell ms du dv Mu Mv ->
+  exists w0 w,
+    eget n (xextend (xenv_of ms) binds) Xnan = Xreal w0 /\
+    eget n (xextend (cell_env ms Mu Mv) binds) Xnan = Xreal w /\
+    (Rabs (w - w0) <=
+       IZR du * (IZR Ndu * powerRZ 2%R qdu)
+     + IZR dv * (IZR Ndv * powerRZ 2%R qdv))%R.
+Proof.
+  intros prec ms base len binds du dv n Ndu qdu Ndv qdv Mu Mv
+         Hms Hb Hlen0 Hdu Hdv Hwf Hlen Hbn Hn Hdu_chk Hdv_chk Hin.
+  apply (component_legs_bounds prec ms base len binds du dv n Ndu qdu Ndv qdv
+           Mu Mv Hms Hb Hlen0 Hdu Hdv Hwf Hlen Hbn Hn); try exact Hin.
+  - intros Mu' Mv' Hin'.
+    exact (deriv_bound_on_cell prec ms base len binds du dv slot_u n _ _ Mu' Mv'
+             Hin' Hdu_chk).
+  - intros Mu' Mv' Hin'.
+    exact (deriv_bound_on_cell prec ms base len binds du dv slot_v n _ _ Mu' Mv'
+             Hin' Hdv_chk).
+Qed.
+
+(** Both derivative bounds of a component from the one environment that
+    carries both, read back as the bounds the two doubled lists would give:
+    [uv_agree] at the point environment, whose slots above the inputs are
+    unset. *)
+Lemma deriv_bound_on_cell_uv :
+  forall prec ms base len binds du dv n Nu qu Nv qv Mu Mv,
+  length ms = base -> (slot_u < base /\ slot_v < base)%nat -> (0 < len)%nat ->
+  well_formed base binds = true -> len = length binds ->
+  (base <= n)%nat -> (n < base + len)%nat ->
+  in_cell ms du dv Mu Mv ->
+  check1 prec (iextend prec (box_ienv prec ms du dv)
+                       (with_derivs_uv slot_u slot_v base len binds))
+         (Evar (n + len)) Nu qu = true ->
+  check1 prec (iextend prec (box_ienv prec ms du dv)
+                       (with_derivs_uv slot_u slot_v base len binds))
+         (Evar (n + 2 * len)) Nv qv = true ->
+  (exists d, eget (n + len) (xextend (cell_env ms Mu Mv)
+                               (with_derivs slot_u base len binds)) Xnan
+             = Xreal d /\ (Rabs d <= IZR Nu * powerRZ 2%R qu)%R) /\
+  (exists d, eget (n + len) (xextend (cell_env ms Mu Mv)
+                               (with_derivs slot_v base len binds)) Xnan
+             = Xreal d /\ (Rabs d <= IZR Nv * powerRZ 2%R qv)%R).
+Proof.
+  intros prec ms base len binds du dv n Nu qu Nv qv Mu Mv
+         Hms Hb Hlen0 Hwf Hlen Hbn Hn Hin Hu Hv.
+  assert (Henv := iextend_correct prec (with_derivs_uv slot_u slot_v base len binds)
+                    _ _ (box_env_ok prec ms du dv Mu Mv Hin)).
+  destruct (check1_correct _ _ _ _ _ _ Henv Hu) as [d1 [Hd1 Hb1]].
+  destruct (check1_correct _ _ _ _ _ _ Henv Hv) as [d2 [Hd2 Hb2]].
+  simpl in Hd1, Hd2.
+  destruct (inputs_real ms base Mu Mv Hms Hb) as [Hunset _].
+  assert (Hlen' : (base + length binds <= base + len)%nat) by lia.
+  assert (H3 : forall k, (base <= k)%nat -> (k < base + len)%nat ->
+            eget (k + 2 * len) (cell_env ms Mu Mv) Xnan
+            = eget (k + len) (cell_env ms Mu Mv) Xnan).
+  { intros k Hk1 Hk2. rewrite (Hunset (k + 2 * len)%nat) by lia.
+    rewrite (Hunset (k + len)%nat) by lia. reflexivity. }
+  destruct (uv_agree slot_u slot_v base len binds base
+              (cell_env ms Mu Mv) (cell_env ms Mu Mv) (cell_env ms Mu Mv)
+              (proj1 Hb) (proj2 Hb) Hlen0 Hwf (Nat.le_refl base) Hlen'
+              (fun k _ => eq_refl) (fun k _ => eq_refl) H3)
+    as [A1 [_ A3]].
+  split.
+  - exists d1. split. rewrite <- (A1 (n + len)%nat ltac:(lia)). exact Hd1. exact Hb1.
+  - exists d2. split. rewrite <- (A3 n Hbn Hn). exact Hd2. exact Hb2.
+Qed.
+
+(** A passing component check over the one environment bounds the component
+    over the cell, as the two-environment check does. *)
+Lemma component_correct_uv :
+  forall prec ms base len binds du dv r cb,
+  length ms = base -> (slot_u < base /\ slot_v < base)%nat -> (0 < len)%nat ->
+  0 <= du -> 0 <= dv ->
+  well_formed base binds = true -> len = length binds ->
+  check_component_uv prec base len du dv
+    (iextend prec (ienv_of prec ms) binds)
+    (iextend prec (box_ienv prec ms du dv)
+       (with_derivs_uv slot_u slot_v base len binds))
+    r cb = true ->
+  component_sound ms binds du dv r cb.
+Proof.
+  intros prec ms base len binds du dv r cb Hms Hb Hlen0 Hdu Hdv Hwf Hlen Hchk.
+  unfold check_component_uv in Hchk.
+  destruct r; simpl in Hchk; try discriminate.
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcomb].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hdv_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hdu_chk].
+  apply andb_prop in Hchk. destruct Hchk as [Hchk Hcentre].
+  apply andb_prop in Hchk. destruct Hchk as [Hbn Hn].
+  apply Nat.leb_le in Hbn. apply Nat.ltb_lt in Hn.
+  assert (Hcombi := combination_correct prec du dv cb Hcomb).
+  intros Mu Mv Hin.
+  destruct (component_legs_bounds prec ms base len binds du dv n
+              (cb_NDu cb) (cb_qDu cb) (cb_NDv cb) (cb_qDv cb) Mu Mv
+              Hms Hb Hlen0 Hdu Hdv Hwf Hlen Hbn Hn
+              (fun Mu' Mv' Hin' =>
+                 proj1 (deriv_bound_on_cell_uv prec ms base len binds du dv n
+                          _ _ _ _ Mu' Mv' Hms Hb Hlen0 Hwf Hlen Hbn Hn Hin'
+                          Hdu_chk Hdv_chk))
+              (fun Mu' Mv' Hin' =>
+                 proj2 (deriv_bound_on_cell_uv prec ms base len binds du dv n
+                          _ _ _ _ Mu' Mv' Hms Hb Hlen0 Hwf Hlen Hbn Hn Hin'
+                          Hdu_chk Hdv_chk))
+              Hin)
+    as [w0 [w [Hw0 [Hw Hinc]]]].
+  assert (Henv0 := iextend_correct prec binds _ _ (env_ok_fromZ prec ms)).
+  destruct (check1_correct _ _ _ _ _ _ Henv0 Hcentre) as [wc [Hwc Hb0]].
+  simpl in Hwc. rewrite Hwc in Hw0. injection Hw0 as <-.
+  exists w. split. exact Hw.
+  assert (Htri : (Rabs w <= Rabs wc + Rabs (w - wc))%R).
+  { replace w with (wc + (w - wc))%R at 1 by ring. apply Rabs_triang. }
+  lra.
+Qed.
+
+(* ---------------------------------------------------------------- *)
 (* Soundness of a whole certificate                                  *)
 
 (** A passing certificate bounds all three residual components at every
@@ -1137,136 +1545,9 @@ Proof.
     + apply andb_prop in Hcomp. destruct Hcomp as [Hcomp Hv].
       apply andb_prop in Hcomp. destruct Hcomp as [Hs Hu].
       repeat split;
-        apply (component_correct (cprec_of c) _ (n_inputs c) _ _
+        apply (component_correct_uv (cprec_of c) _ (n_inputs c) _ _
                  (cc_du cl) (cc_dv cl) _ _ Hms Hb Hlen0 Hdu Hdv Hwf eq_refl);
         assumption.
-Qed.
-
-(* ---------------------------------------------------------------- *)
-(* The walk from the centre of a cell to one of its points           *)
-
-(** From the two derivative checks alone: the component is a real number at
-    the centre of the cell and at any point of it, and the two differ by at
-    most the mean-value step in each angle. The upper cell bound and the
-    lower one are this lemma followed by one inequality in opposite
-    directions. *)
-Lemma component_legs :
-  forall prec ms base len binds du dv n Ndu qdu Ndv qdv Mu Mv,
-  length ms = base -> (slot_u < base /\ slot_v < base)%nat -> (0 < len)%nat ->
-  0 <= du -> 0 <= dv ->
-  well_formed base binds = true -> len = length binds ->
-  (base <= n)%nat -> (n < base + len)%nat ->
-  check1 prec (iextend prec (box_ienv prec ms du dv)
-                       (with_derivs slot_u base len binds))
-         (Evar (n + len)) Ndu qdu = true ->
-  check1 prec (iextend prec (box_ienv prec ms du dv)
-                       (with_derivs slot_v base len binds))
-         (Evar (n + len)) Ndv qdv = true ->
-  in_cell ms du dv Mu Mv ->
-  exists w0 w,
-    eget n (xextend (xenv_of ms) binds) Xnan = Xreal w0 /\
-    eget n (xextend (cell_env ms Mu Mv) binds) Xnan = Xreal w /\
-    (Rabs (w - w0) <=
-       IZR du * (IZR Ndu * powerRZ 2%R qdu)
-     + IZR dv * (IZR Ndv * powerRZ 2%R qdv))%R.
-Proof.
-  intros prec ms base len binds du dv n Ndu qdu Ndv qdv Mu Mv
-         Hms Hb Hlen0 Hdu Hdv Hwf Hlen Hbn Hn Hdu_chk Hdv_chk Hin.
-  set (Mu0 := IZR (nth slot_u ms 0)).
-  set (Mv0 := IZR (nth slot_v ms 0)).
-  assert (HinU := proj1 Hin). assert (HinV := proj2 Hin).
-  assert (Hin0 : in_cell ms du dv Mu0 Mv0).
-  { unfold in_cell, Mu0, Mv0. rewrite !minus_IZR, !plus_IZR.
-    generalize (IZR_le 0 du Hdu). generalize (IZR_le 0 dv Hdv). lra. }
-  set (Fu := fun t => xextend (eset slot_u (eset slot_v (xenv_of ms) (Xreal Mv0)) (Xreal t))
-                              (with_derivs slot_u base len binds)).
-  assert (Hinv_u : inv slot_u base len Fu (base + len)).
-  { destruct (inputs_real ms base Mu0 Mv0 Hms Hb) as [Hl Hr].
-    unfold cell_env in Hl, Hr.
-    assert (Hbase := inv_base slot_u base len ltac:(lia)
-                       ltac:(lia) _ Hl Hr).
-    assert (Hres := inv_bindings slot_u base len ltac:(lia)
-                      ltac:(lia) binds _ base Hbase Hwf ltac:(lia) ltac:(lia)).
-    rewrite <- Hlen in Hres.
-    refine (inv_ext slot_u base len _ Fu (base + len) _ Hres).
-    intros t. unfold Fu. now rewrite eset_overwrite. }
-  set (Fv := fun t => xextend (eset slot_v (eset slot_u (xenv_of ms) (Xreal Mu)) (Xreal t))
-                              (with_derivs slot_v base len binds)).
-  assert (Hinv_v : inv slot_v base len Fv (base + len)).
-  { destruct (inputs_real ms base Mu Mv0 Hms Hb) as [Hl Hr].
-    rewrite cell_env_v in Hl, Hr.
-    assert (Hbase := inv_base slot_v base len ltac:(lia)
-                       ltac:(lia) _ Hl Hr).
-    assert (Hres := inv_bindings slot_v base len ltac:(lia)
-                      ltac:(lia) binds _ base Hbase Hwf ltac:(lia) ltac:(lia)).
-    rewrite <- Hlen in Hres.
-    refine (inv_ext slot_v base len _ Fv (base + len) _ Hres).
-    intros t. unfold Fv. now rewrite eset_overwrite. }
-  assert (Hdu_n := deriv_slot_of slot_u base len Fu (base + len) n
-                     ltac:(lia) Hbn Hinv_u).
-  assert (Hdv_n := deriv_slot_of slot_v base len Fv (base + len) n
-                     ltac:(lia) Hbn Hinv_v).
-  set (Du := (IZR Ndu * powerRZ 2%R qdu)%R).
-  set (Dv := (IZR Ndv * powerRZ 2%R qdv)%R).
-  set (lo_u := IZR (nth slot_u ms 0 - du)).
-  set (hi_u := IZR (nth slot_u ms 0 + du)).
-  set (lo_v := IZR (nth slot_v ms 0 - dv)).
-  set (hi_v := IZR (nth slot_v ms 0 + dv)).
-  assert (Hbnd_u : forall t, (lo_u <= t <= hi_u)%R ->
-            exists d, eget (n + len) (Fu t) Xnan = Xreal d /\ (Rabs d <= Du)%R).
-  { intros t Ht.
-    assert (Hin_t : in_cell ms du dv t Mv0). { split. exact Ht. exact (proj2 Hin0). }
-    exact (deriv_bound_on_cell prec ms base len binds du dv slot_u n _ _ t Mv0
-             Hin_t Hdu_chk). }
-  assert (Hbnd_v : forall t, (lo_v <= t <= hi_v)%R ->
-            exists d, eget (n + len) (Fv t) Xnan = Xreal d /\ (Rabs d <= Dv)%R).
-  { intros t Ht.
-    assert (Hin_t : in_cell ms du dv Mu t). { split. exact HinU. exact Ht. }
-    assert (Hd := deriv_bound_on_cell prec ms base len binds du dv slot_v n _ _ Mu t
-                    Hin_t Hdv_chk).
-    rewrite cell_env_v in Hd. exact Hd. }
-  destruct (bound_between_dist Fu n (n + len) Du lo_u hi_u Mu0 Mu Hdu_n Hbnd_u
-              (proj1 Hin0) HinU) as [wu0 [wu1 [Hwu0 [Hwu1 Hinc_u]]]].
-  destruct (bound_between_dist Fv n (n + len) Dv lo_v hi_v Mv0 Mv Hdv_n Hbnd_v
-              (proj2 Hin0) HinV) as [wv0 [wv1 [Hwv0 [Hwv1 Hinc_v]]]].
-  assert (Hval_u : forall t, eget n (Fu t) Xnan
-                     = eget n (xextend (cell_env ms t Mv0) binds) Xnan).
-  { intros t. unfold Fu, cell_env.
-    apply (values_with_derivs slot_u base len binds _ _ base Hwf);
-      try lia; try (intros k _; reflexivity). }
-  assert (Hval_v : forall t, eget n (Fv t) Xnan
-                     = eget n (xextend (cell_env ms Mu t) binds) Xnan).
-  { intros t. unfold Fv. rewrite cell_env_v.
-    apply (values_with_derivs slot_v base len binds _ _ base Hwf);
-      try lia; try (intros k _; reflexivity). }
-  rewrite Hval_u in Hwu0, Hwu1.
-  rewrite Hval_v in Hwv0, Hwv1.
-  unfold Mu0, Mv0 in Hwu0.
-  rewrite (cell_env_center ms base Hms Hb) in Hwu0.
-  rewrite Hwu1 in Hwv0. injection Hwv0 as <-.
-  exists wu0, wv1. split. exact Hwu0. split. exact Hwv1.
-  assert (HDu : (0 <= Du)%R).
-  { destruct (Hbnd_u Mu0 (proj1 Hin0)) as [d [_ Hd]]. generalize (Rabs_pos d). lra. }
-  assert (HDv : (0 <= Dv)%R).
-  { destruct (Hbnd_v Mv0 (proj2 Hin0)) as [d [_ Hd]]. generalize (Rabs_pos d). lra. }
-  assert (Hhalf_u : (Rabs (Mu - Mu0) <= IZR du)%R).
-  { unfold Mu0. destruct HinU as [Hl Hr].
-    unfold lo_u in Hl. unfold hi_u in Hr.
-    rewrite minus_IZR in Hl. rewrite plus_IZR in Hr. apply Rabs_le. lra. }
-  assert (Hhalf_v : (Rabs (Mv - Mv0) <= IZR dv)%R).
-  { unfold Mv0. destruct HinV as [Hl Hr].
-    unfold lo_v in Hl. unfold hi_v in Hr.
-    rewrite minus_IZR in Hl. rewrite plus_IZR in Hr. apply Rabs_le. lra. }
-  assert (Hu' : (Rabs (wu1 - wu0) <= Du * IZR du)%R).
-  { apply Rle_trans with (Du * Rabs (Mu - Mu0))%R. exact Hinc_u.
-    now apply Rmult_le_compat_l. }
-  assert (Hv' : (Rabs (wv1 - wu1) <= Dv * IZR dv)%R).
-  { apply Rle_trans with (Dv * Rabs (Mv - Mv0))%R. exact Hinc_v.
-    now apply Rmult_le_compat_l. }
-  replace (wv1 - wu0)%R with ((wu1 - wu0) + (wv1 - wu1))%R by ring.
-  eapply Rle_trans. apply Rabs_triang.
-  rewrite (Rmult_comm (IZR du)), (Rmult_comm (IZR dv)).
-  now apply Rplus_le_compat.
 Qed.
 
 (* ---------------------------------------------------------------- *)

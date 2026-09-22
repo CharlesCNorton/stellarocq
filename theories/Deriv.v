@@ -877,3 +877,16 @@ Proof.
 Qed.
 
 End Bindings3.
+
+(* ---------------------------------------------------------------- *)
+(* Both angular derivatives in one pass                              *)
+
+(** Each binding followed by its derivative along x, one delta above it, and
+    its derivative along y, two deltas above it. One walk over a box then
+    carries both derivatives, where two doubled lists evaluate the values
+    twice. The derivative map along y reads its scratch slots two deltas up. *)
+Definition with_derivs_uv (x y base delta : nat) (bs : list binding) : list binding :=
+  flat_map (fun b => [b;
+                      (fst b + delta, deriv (dvar_of x base delta) (snd b));
+                      (fst b + 2 * delta, deriv (dvar_of y base (2 * delta)) (snd b))])
+    bs.
