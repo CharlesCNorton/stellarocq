@@ -5,10 +5,11 @@ theories/Colloc.v collocates the force residual of Physics.v at points over
 a band of surfaces, with the Fourier coefficients of R and Z on those
 surfaces as the unknowns and everything else the wout says taken as given:
 the stream function, the rotational transform, the pressure, and the surfaces
-outside the band. Two components carry force balance, since F . B = 0 makes
-the third a combination of them: r_s, even under stellarator symmetry, is
-collocated at as many angles as R has modes, and r_u, odd, at as many as Z
-has, so the system is square. Newton's method in floating point moves the
+outside the band. Two components carry force balance, since the third
+vanishes with r_u wherever B^v does not (Identities.residual_along_field,
+which is F . B = 0 on the reconstruction): r_s, even under stellarator
+symmetry, is collocated at as many angles as R has modes, and r_u, odd, at
+as many as Z has, so the system is square. Newton's method in floating point moves the
 centre from the wout's coefficients to a zero of the system, and the checker
 establishes it: `main --newton` on the certificate this writes is
 Colloc.colloc_correct, exactly one zero of the collocated residual in the box

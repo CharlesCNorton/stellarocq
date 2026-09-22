@@ -2089,3 +2089,57 @@ Qed.
 End ThirdSlot.
 
 End VariedSlots.
+
+(* ---------------------------------------------------------------- *)
+(* A binding holds after the whole list                              *)
+
+(** Well-formed bindings write their slots once, in increasing order, and
+    each reads slots below its own. So after the whole list every bound slot
+    still holds the value of its expression read in the final environment:
+    the slots the expression reads were set before it and never written
+    again. This is what lets a theorem about a slot reference be read as a
+    theorem about the expression bound to it. *)
+Lemma xextend_leaves :
+  forall bs (env : env ExtendedR) k,
+  (forall b, In b bs -> (k < fst b)%nat) ->
+  eget k (xextend env bs) Xnan = eget k env Xnan.
+Proof.
+  induction bs as [|b bs IH]; intros env k H. reflexivity.
+  rewrite xextend_cons. rewrite IH.
+  - apply eget_eset_neq. assert (Hb := H b (or_introl eq_refl)). lia.
+  - intros b' Hb'. apply H. now right.
+Qed.
+
+Lemma well_formed_above :
+  forall m bs b,
+  well_formed m bs = true -> In b bs -> (m <= fst b)%nat.
+Proof.
+  intros m bs. revert m.
+  induction bs as [|[k e] bs IH]; intros m b Hwf Hin. inversion Hin.
+  simpl in Hwf. apply andb_prop in Hwf. destruct Hwf as [Hwf Htl].
+  apply andb_prop in Hwf. destruct Hwf as [Hk _]. apply Nat.eqb_eq in Hk.
+  destruct Hin as [<-|Hin].
+  - simpl. lia.
+  - assert (H := IH (S m) b Htl Hin). lia.
+Qed.
+
+Lemma binding_holds :
+  forall bs (env : env ExtendedR) m n e,
+  well_formed m bs = true -> In (n, e) bs ->
+  eget n (xextend env bs) Xnan = xeval (xextend env bs) e.
+Proof.
+  induction bs as [|[k e0] bs IH]; intros env m n e Hwf Hin. inversion Hin.
+  simpl in Hwf. apply andb_prop in Hwf. destruct Hwf as [Hwf Htl].
+  apply andb_prop in Hwf. destruct Hwf as [Hk He0]. apply Nat.eqb_eq in Hk.
+  rewrite xextend_cons. cbn [fst snd].
+  assert (Habove : forall b, In b bs -> (k < fst b)%nat).
+  { intros b Hb. assert (H := well_formed_above (S m) bs b Htl Hb). lia. }
+  destruct Hin as [Heq|Hin].
+  - injection Heq as -> ->.
+    rewrite (xextend_leaves bs _ n Habove). rewrite eget_eset_eq.
+    (* the expression reads slots below n, which nothing here touches *)
+    apply (xeval_agree n e _ _ He0).
+    intros i Hi. rewrite (xextend_leaves bs _ i) by (intros b Hb; assert (H := Habove b Hb); lia).
+    rewrite eget_eset_neq by lia. reflexivity.
+  - apply (IH _ (S m) n e Htl Hin).
+Qed.

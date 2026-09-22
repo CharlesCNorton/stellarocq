@@ -130,9 +130,15 @@ Definition discretization_is_consistent (bound : R -> R) : Prop :=
     unstable (Bernstein, Frieman, Kruskal and Kulsrud, 1958).
 
     The half of that which is physics is the identification of the force with
-    the gradient of W, and it is the premise. The half which is calculus is
-    proven below: where the gradient is negative the energy decreases, so a
-    stationary point is not reached by staying put.
+    the gradient of W. [Energy.energy_gradient_is_force] proves it pointwise
+    for the reconstruction with gamma = 0: the Euler-Lagrange expressions of
+    (B^2 / 2 - mu0 p) sqrt(g) in R and in Z, with the flux through the
+    coordinate surfaces held, are -2 sqrt(g) times the cylindrical components
+    of J x B - mu0 grad p as Physics.v writes them. What stays a premise is
+    that W is the energy of the plasma, whose equilibria are its stationary
+    points. The half which is calculus is proven below: where the gradient is
+    negative the energy decreases, so a stationary point is not reached by
+    staying put.
 
     Contradicted by: an equilibrium observed unstable whose second variation
     is positive. *)
@@ -210,12 +216,14 @@ Definition free_boundary_balanced (p B2 Bvac2 : expr) : Prop :=
     vanishes, a scalar of the field at a point that needs neither the Boozer
     transform nor a choice of helicity (Helander 2014; Rodriguez, Paul and
     Bhattacharjee 2020). [Physics.qs_triple_e] builds it from the
-    reconstruction and a covering bounds it. That the vanishing of the
-    triple product is equivalent to quasisymmetry is a theorem of the
-    literature cited and is not proven here; what is proven is that the
-    residual is that triple product and that it vanishes exactly for an
-    axisymmetric reconstruction, [Identities.qs_triple_zero] with
-    [Identities.toroidal_terms3_vanish].
+    reconstruction and a covering bounds it. [Symmetry.triple_product_vanishes]
+    proves that a quasisymmetric field makes it zero, and
+    [Symmetry.two_term_flux_function] the same for the two-term ratio, which
+    is the direction a verdict reads: a residual bounded away from zero
+    refutes quasisymmetry. The converse, that a vanishing triple product
+    forces quasisymmetry, is not needed by any verdict and is not proven.
+    It also vanishes exactly for an axisymmetric reconstruction,
+    [Identities.qs_triple_zero] with [Identities.toroidal_terms3_vanish].
 
     Contradicted by: a certified triple product bounded away from zero on a
     surface, which is a departure from quasisymmetry of every helicity at

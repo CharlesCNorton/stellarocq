@@ -1,10 +1,17 @@
 (** Print the axioms the main theorems depend on. *)
 From Stellarocq Require Import Checker Deriv Cell Cover Identities Quad Mercier
-     Hypotheses Kantorovich Project Newton Colloc.
+     Hypotheses Kantorovich Project Newton Colloc Symmetry Energy.
 Print Assumptions check_cert_correct.
 Print Assumptions harm_encloses.
 Print Assumptions newton_correct.
 Print Assumptions colloc_correct.
+Print Assumptions harmonic_ratios_refute.
+Print Assumptions two_term_refuted.
+Print Assumptions residual_along_field.
+Print Assumptions two_term_flux_function.
+Print Assumptions triple_product_vanishes.
+Print Assumptions qs_triple_vanishes.
+Print Assumptions energy_gradient_is_force.
 Print Assumptions check_cert_lower_correct.
 Print Assumptions check_ccert_correct.
 Print Assumptions check_ccert_lower_correct.

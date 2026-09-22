@@ -7,15 +7,16 @@ F0 the certificate names, beside the two terms t1 = J C F and t2 = F0 J C
 themselves. For a quasisymmetric field t1 = F* J C at every point for one
 constant F*, so Q = (F* / F0 - 1) t2 pointwise, and every discrete harmonic of
 Q over the angles of a point certificate is that one number times the
-matching harmonic of t2. Project.harm_encloses certifies both harmonics, so
-two ratios Q_mn / t2_mn whose enclosures are disjoint prove that no such F*
-exists: the ratio is not a flux function of the reconstructed field. The one
-step outside the checker is that a pointwise proportionality carries to the
-discrete sums, which is the distributive law. The identity behind the
-criterion holds of an exact equilibrium, and a reconstruction carries a
-residual, so the ratios of an axisymmetric field, which is quasisymmetric,
-spread by that much: 2e-4 on wout_solovev. The span of the ratios is what
-the tool reports, and a span of order one is the field's own.
+matching harmonic of t2. Project.harm_encloses certifies both harmonics, and
+Project.two_term_refuted proves that two ratios Q_mn / t2_mn whose enclosures
+are disjoint leave no such F*: the ratio is not one constant on the points.
+Symmetry.two_term_defect_proportional is the step before it, that a
+quasisymmetric field makes Q that constant times t2 at every point. The
+identity behind the criterion holds of an exact equilibrium, and a
+reconstruction carries a residual, so the ratios of an axisymmetric field,
+which is quasisymmetric, spread by that much: 2e-4 on wout_solovev. The span
+of the ratios is what the tool reports, and a span of order one is the
+field's own.
 
   python gen/quasisym.py wout.nc --nodes 5,12,24,37,44 [--nu 64] [--nv 32]
 

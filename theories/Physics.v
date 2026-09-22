@@ -1003,6 +1003,14 @@ Definition half_point_b (b : builder) (lasym : bool)
 Definition qs_triple_e (num_u num_v den_u den_v den : expr) : expr :=
   Esub (Ediv (Emul num_u den_v) den) (Ediv (Emul num_v den_u) den).
 
+(** The two angular components of the residual: the surface current against
+    the contravariant field, r_u = - mu0 sqrt(g) J^s B^v and
+    r_v = mu0 sqrt(g) J^s B^u. [Identities.force_along_field] is stated on
+    these combinators, so it holds whatever the arguments are; what they mean
+    is fixed where [residual] and [full_point_b] allocate them. *)
+Definition r_u_e (js bv : expr) : expr := Eneg (Emul js bv).
+Definition r_v_e (js bu : expr) : expr := Emul js bu.
+
 (* ---------------------------------------------------------------- *)
 (* A surface quantity carried with its angular derivatives           *)
 
@@ -1913,8 +1921,8 @@ Definition full_point_b (b : builder) (lasym : bool)
         (b, (t1, t2))
     | _ => (b, (e0, e0))
     end in
-  let (b, ru) := alloc b (Eneg (Emul mu0Js Bv)) in
-  let (b, rv) := alloc b (Emul mu0Js Bu) in
+  let (b, ru) := alloc b (r_u_e mu0Js Bv) in
+  let (b, rv) := alloc b (r_v_e mu0Js Bu) in
   (* The Jacobian and its radial derivative, which are what a magnetic well
      needs. Integrating the first over the angles is dV/ds and integrating the
      second is V'', by Quad.diff_under_integral: the average is differentiable
@@ -2005,8 +2013,8 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
         (b, (t1, t2))
     | _ => (b, (e0, e0))
     end in
-  let (b, ru) := alloc b (Eneg (Emul (q_mu0Js qp) (q_Bv qp))) in
-  let (b, rv) := alloc b (Emul (q_mu0Js qp) (q_Bu qp)) in
+  let (b, ru) := alloc b (r_u_e (q_mu0Js qp) (q_Bv qp)) in
+  let (b, rv) := alloc b (r_v_e (q_mu0Js qp) (q_Bu qp)) in
   (* With a harmonic requested, each component is multiplied by the kernel
      of that mode. Every downstream check is unchanged: the same cell
      machinery then bounds the integrand of the harmonic, and Quad.v turns

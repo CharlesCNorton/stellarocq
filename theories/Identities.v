@@ -7,7 +7,7 @@
 
 From Coq Require Import ZArith Reals List Bool Lia Lra.
 From Interval Require Import Real.Xreal.
-From Stellarocq Require Import Expr Physics Deriv.
+From Stellarocq Require Import Expr Physics Deriv Cell.
 
 Import ListNotations.
 
@@ -621,4 +621,116 @@ Proof.
   generalize (is_zero_spec d). case (is_zero d).
   - intros Hz. inversion Hz. contradiction.
   - intros _. cbn [Xsub]. f_equal. unfold Rdiv. ring.
+Qed.
+
+(* ---------------------------------------------------------------- *)
+(* The angular residual is orthogonal to the field                   *)
+
+(** The two angular components are the surface current against the two
+    contravariant components, so their combination along the field vanishes
+    exactly, r_u B^u + r_v B^v = 0: the residual has no component along B,
+    which is F . B = 0 read on the reconstruction. And where the poloidal
+    component vanishes and B^v does not, the surface current vanishes and the
+    toroidal component with it, which is what lets a collocation of the
+    residual carry r_u alone. Both are stated on the combinators of
+    Physics.v first, so they hold whatever the three arguments are. *)
+Theorem force_along_field :
+  forall env js bu bv j u v,
+  xeval env js = Xreal j -> xeval env bu = Xreal u -> xeval env bv = Xreal v ->
+  xeval env (Eadd (Emul (r_u_e js bv) bu) (Emul (r_v_e js bu) bv)) = Xreal 0%R.
+Proof.
+  intros env js bu bv j u v Hj Hu Hv. unfold r_u_e, r_v_e. cbn [xeval].
+  rewrite Hj, Hu, Hv. cbn. apply f_equal. ring.
+Qed.
+
+Theorem r_v_from_r_u :
+  forall env js bu bv j u v,
+  xeval env js = Xreal j -> xeval env bu = Xreal u -> xeval env bv = Xreal v ->
+  v <> 0%R ->
+  xeval env (r_u_e js bv) = Xreal 0%R -> xeval env (r_v_e js bu) = Xreal 0%R.
+Proof.
+  intros env js bu bv j u v Hj Hu Hv Hv0 Hru.
+  unfold r_u_e, r_v_e in *. cbn [xeval] in *. rewrite Hj, Hv in Hru. rewrite Hj, Hu.
+  cbn in Hru. injection Hru as Hru. cbn. apply f_equal.
+  assert (j = 0%R) by (apply (Rmult_eq_reg_r v); lra). subst j. ring.
+Qed.
+
+(** The residual itself allocates its two angular components as those
+    combinators, of the surface current and the two contravariant components
+    of the outer half point. *)
+Lemma residual_components :
+  forall exps lasym prof modes,
+  exists nu nv js bu bv,
+    r_u (residual exps (PConfig lasym prof RResidual) modes) = Evar nu /\
+    r_v (residual exps (PConfig lasym prof RResidual) modes) = Evar nv /\
+    In (nu, r_u_e js bv) (r_binds (residual exps (PConfig lasym prof RResidual) modes)) /\
+    In (nv, r_v_e js bu) (r_binds (residual exps (PConfig lasym prof RResidual) modes)).
+Proof.
+  intros exps lasym prof modes.
+  unfold residual.
+  cbv beta iota zeta delta [pc_lasym pc_prof pc_out is_radial].
+  match goal with
+  | |- context [half_coefs_b ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
+      destruct (half_coefs_b a b c d e f g h i j) as [b1 hcm]
+  end.
+  cbv beta iota zeta.
+  match goal with
+  | |- context [half_coefs_b ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
+      destruct (half_coefs_b a b c d e f g h i j) as [b2 hcp]
+  end.
+  cbv beta iota zeta.
+  match goal with
+  | |- context [kernels_b ?a ?b] => destruct (kernels_b a b) as [b3 kers]
+  end.
+  cbv beta iota zeta.
+  match goal with
+  | |- context [half_point_b ?a ?b ?c ?d ?e] =>
+      destruct (half_point_b a b c d e) as [b4 qm]
+  end.
+  cbv beta iota zeta.
+  match goal with
+  | |- context [half_point_b ?a ?b ?c ?d ?e] =>
+      destruct (half_point_b a b c d e) as [b5 qp]
+  end.
+  cbv beta iota zeta delta [alloc r_u r_v r_binds].
+  do 5 eexists. split. reflexivity. split. reflexivity. split.
+  - unfold bindings_of. apply in_rev. rewrite rev_involutive. simpl. tauto.
+  - unfold bindings_of. apply in_rev. rewrite rev_involutive. simpl. tauto.
+Qed.
+
+(** Read at the residual's own slots: with its bindings well formed, which a
+    cell or collocation verdict checks, after them the poloidal slot holds
+    -(mu0 sqrt(g) J^s) B^v and the toroidal one (mu0 sqrt(g) J^s) B^u. So at
+    any point where the three are real the two components are orthogonal to
+    the field, and where B^v is not zero the toroidal component vanishes with
+    the poloidal one. *)
+Theorem residual_along_field :
+  forall exps lasym prof modes m,
+  well_formed m (r_binds (residual exps (PConfig lasym prof RResidual) modes)) = true ->
+  exists js bu bv,
+    forall (env : env ExtendedR) j u v,
+    let r3 := residual exps (PConfig lasym prof RResidual) modes in
+    let E := xextend env (r_binds r3) in
+    xeval E js = Xreal j -> xeval E bu = Xreal u -> xeval E bv = Xreal v ->
+    xeval E (Eadd (Emul (r_u r3) bu) (Emul (r_v r3) bv)) = Xreal 0%R /\
+    (v <> 0%R -> xeval E (r_u r3) = Xreal 0%R -> xeval E (r_v r3) = Xreal 0%R).
+Proof.
+  intros exps lasym prof modes m Hwf.
+  destruct (residual_components exps lasym prof modes)
+    as [nu [nv [js [bu [bv [Hru [Hrv [Hin_u Hin_v]]]]]]]].
+  exists js, bu, bv. intros env j u v r3 E Hj Hu Hv.
+  assert (Eu : xeval E (r_u r3) = xeval E (r_u_e js bv)).
+  { unfold r3. rewrite Hru. cbn [xeval]. unfold E, r3.
+    apply (binding_holds _ _ m nu _ Hwf Hin_u). }
+  assert (Ev : xeval E (r_v r3) = xeval E (r_v_e js bu)).
+  { unfold r3. rewrite Hrv. cbn [xeval]. unfold E, r3.
+    apply (binding_holds _ _ m nv _ Hwf Hin_v). }
+  split.
+  - cbn [xeval]. rewrite Eu, Ev.
+    change (Xadd (xeval E (r_u_e js bv) * xeval E bu)%XR
+                 (xeval E (r_v_e js bu) * xeval E bv)%XR)
+      with (xeval E (Eadd (Emul (r_u_e js bv) bu) (Emul (r_v_e js bu) bv))).
+    exact (force_along_field E js bu bv j u v Hj Hu Hv).
+  - intros Hv0 H0. rewrite Ev. rewrite Eu in H0.
+    exact (r_v_from_r_u E js bu bv j u v Hj Hu Hv Hv0 H0).
 Qed.
