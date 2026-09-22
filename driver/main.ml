@@ -994,6 +994,15 @@ let () =
      harmonics of each component over the angles of each node, at every mode
      the certificate names: theories/Project.v, harm_encloses. *)
   let project = has "--project" in
+  (* "--spectrum" prints, beside the largest, every harmonic the projection
+     computed: each mode of the MODES line, cosine and sine, per node. *)
+  let spectrum = has "--spectrum" in
+  (* "--band" projects onto every harmonic the angle grid resolves, m up to
+     half the poloidal count and n within half the toroidal count, instead of
+     the modes of the MODES line. harm_encloses holds for any m and n, so the
+     residual's whole spectrum on the grid is certified, beyond the band the
+     solver retains. *)
+  let band = has "--band" in
   (* "--mercier FILE" assembles the criterion from the enclosures a covering
      produced, inside the extracted code. *)
   (if has "--mercier" then begin
@@ -1716,6 +1725,44 @@ let () =
   let project_report () =
     let prec_ = Checker.prec_of (cert_of (env_of (node_at 0) angles.(0))) in
     let count = Expr.I.fromZ prec_ (z_of_int64 (Int64.of_int na)) in
+    (* the angle list runs v fastest, so the leading run of entries sharing
+       the first u counts the toroidal planes *)
+    let nplanes =
+      let (u0, _, _, _) = angles.(0) in
+      let c = ref 1 in
+      (try
+         while !c < na do
+           let (u, _, _, _) = angles.(!c) in
+           if u.m <> u0.m || u.e <> u0.e then raise Exit;
+           incr c
+         done
+       with Exit -> ());
+      !c in
+    let modes =
+      if not band then modes
+      else begin
+        let nu = na / nplanes and nv = nplanes in
+        let ms = Stdlib.List.init (nu / 2 + 1) (fun m -> Int64.of_int m) in
+        (* the toroidal step of the grid: a grid over one field period
+           resolves the multiples of nfp alone *)
+        let per =
+          if nv = 1 then 1
+          else begin
+            let (_, v0, _, _) = angles.(0) and (_, v1, _, _) = angles.(1) in
+            let dv = f_of v1 -. f_of v0 in
+            int_of_float
+              (Stdlib.Float.round
+                 (2.0 *. Stdlib.Float.pi /. (float_of_int nv *. dv)))
+          end in
+        let ns_ =
+          if nv = 1 then [0L]
+          else Stdlib.List.init nv
+                 (fun i -> Int64.of_int (per * (i - (nv / 2) + 1))) in
+        Array.of_list
+          (Stdlib.List.concat_map
+             (fun m -> Stdlib.List.map (fun n -> (m, n)) ns_) ms)
+      end in
+    let nk = Array.length modes in
     let part i = Printf.sprintf "%s.proj%d" src i in
     let pids =
       Stdlib.List.init nb (fun node ->
@@ -1740,6 +1787,8 @@ let () =
                     (z_of_int64 u.m, z_of_int64 u.e,
                      z_of_int64 v.m, z_of_int64 v.e)) angles in
               let best = Array.make 3 (0.0, 0L, 0L, false) in
+              (* every harmonic, newest first, for the spectrum *)
+              let spec = ref [] in
               Array.iter (fun (m, n) ->
                   Stdlib.List.iter (fun sine ->
                       let zm = z_of_int64 m and zn = z_of_int64 n in
@@ -1759,7 +1808,9 @@ let () =
                           Expr.I.div prec_ (Cell.isum prec_ terms) count in
                         let v = mag mean in
                         let (b, _, _, _) = best.(comp) in
-                        if v > b then best.(comp) <- (v, m, n, sine)
+                        if v > b then best.(comp) <- (v, m, n, sine);
+                        if spectrum then
+                          spec := (m, n, sine, ilo mean, ihi mean) :: !spec
                       done)
                     [false; true])
                 modes;
@@ -1767,6 +1818,11 @@ let () =
               Array.iter (fun (v, m, n, sine) ->
                   Printf.fprintf oc "%h %Ld %Ld %d\n" v m n
                     (if sine then 1 else 0)) best;
+              (* the endpoints in hexadecimal, which round-trips exactly *)
+              Stdlib.List.iter (fun (m, n, sine, lo, hi) ->
+                  Printf.fprintf oc "%Ld %Ld %d %h %h\n" m n
+                    (if sine then 1 else 0) lo hi)
+                (Stdlib.List.rev !spec);
               close_out oc; exit 0
           | pid -> pid) in
     Stdlib.List.iter (fun pid ->
@@ -1788,6 +1844,26 @@ let () =
                 (if sine = 1 then "sin" else "cos") m n))
         [ "r_s"; "r_u"; "r_v" ];
       print_newline ();
+      (* the three components of one kernel were written consecutively *)
+      if spectrum then begin
+        Printf.printf "    every harmonic of node %d, the mean over %d \
+                       angles:\n%!" node na;
+        let rd l =
+          Scanf.sscanf l "%Ld %Ld %d %h %h"
+            (fun m n sine lo hi -> (m, n, sine, lo, hi)) in
+        (try
+           while true do
+             let (m, n, sine, lo_s, hi_s) = rd (input_line ic) in
+             let (_, _, _, lo_u, hi_u) = rd (input_line ic) in
+             let (_, _, _, lo_v, hi_v) = rd (input_line ic) in
+             Printf.printf
+               "    (%Ld,%Ld) %s  r_s [%+.6e, %+.6e]  r_u [%+.6e, %+.6e]  \
+                r_v [%+.6e, %+.6e]\n%!"
+               m n (if sine = 1 then "sin" else "cos")
+               lo_s hi_s lo_u hi_u lo_v hi_v
+           done
+         with End_of_file -> ())
+      end;
       close_in ic; Sys.remove (part node)
     done;
     Printf.printf "largest over the nodes:  r_s %.6e  r_u %.6e  r_v %.6e\n%!"

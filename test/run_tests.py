@@ -1357,8 +1357,32 @@ def check_project(name, wout, main, python, tmp):
     for g, w_ in zip(got, want):
         if not w_ * (1 - 1e-6) <= g <= w_ * 1.01:
             return "fail", f"certified {g:.6e} against a float sum of {w_:.6e}"
+    # The spectrum over the band the grid resolves: every harmonic up to half
+    # the poloidal count is listed, the largest of them is the one the summary
+    # names, and the solver's own (2,0) reads the same off either mode set.
+    rc, out = run(f'"{main}" --project --spectrum --band "{cert}"')
+    if rc != 0:
+        return "fail", "no spectrum reported"
+    lines = re.findall(r"^\s+\((\d+),(-?\d+)\) (cos|sin)  r_s \[(\S+), (\S+)\]",
+                       out, re.M)
+    if not lines:
+        return "fail", "the spectrum printed no harmonic"
+    ms = {int(m) for m, _, _, _, _ in lines}
+    if max(ms) != 16 or {int(n) for _, n, _, _, _ in lines} != {0}:
+        return "fail", f"the band ran to m = {max(ms)} and n other than zero"
+    big = max(max(abs(float(lo)), abs(float(hi))) for _, _, _, lo, hi in lines)
+    m2 = re.search(r"largest over the nodes:\s+r_s (\S+)", out)
+    if abs(float(m2.group(1)) - big) > 1e-6 * big:
+        return "fail", (f"the largest harmonic {float(m2.group(1)):.6e} is not "
+                        f"the largest of the spectrum {big:.6e}")
+    rc, narrow = run(f'"{main}" --project --spectrum "{cert}"')
+    pick = lambda txt: re.search(r"^\s+\(2,0\) cos  r_s \[(\S+), (\S+)\]",  # noqa: E731
+                                 txt, re.M).groups()
+    if pick(out) != pick(narrow):
+        return "fail", "the (2,0) harmonic differs between the two mode sets"
     return "ok", (f"r_s {got[0]:.3e}, r_u {got[1]:.3e}, r_v {got[2]:.3e}, "
-                  "each within one per cent above the float sum")
+                  f"each within one per cent above the float sum; the band "
+                  f"spectrum lists {len(lines)} harmonics")
 
 
 def main():
