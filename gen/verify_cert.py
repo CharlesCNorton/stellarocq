@@ -60,7 +60,8 @@ OUTPUT_WITH_MODE = ("harmonic", "covariant", "covariant-sin", "boozer")
 # inside the node's interval rather than the node itself. The other outputs
 # read off the free-radius reconstruction hold the radius at the node and vary
 # the angles, so their S line is a grid value.
-OUTPUT_OFF_GRID = ("radial", "radial-axis", "radial-terms")
+OUTPUT_OFF_GRID = ("radial", "radial-axis", "radial-terms",
+                   "radial-current-terms")
 
 
 def tokens(path):

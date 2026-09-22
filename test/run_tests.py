@@ -363,6 +363,10 @@ CORRESPOND = [
      "--cells --node 22 --nu 32 --terms", True),
     ("correspond/terms_radial", "wout_solovev.nc", "wout_solovev.nc",
      "--radial --node 22 --nu 32 --nrad 4 --terms", True),
+    ("correspond/current", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --current", True),
+    ("correspond/current_radial", "wout_solovev.nc", "wout_solovev.nc",
+     "--radial --node 22 --nu 32 --nrad 4 --current", True),
     # the piecewise pressures, whose cubic is the one block a wout constrains
     # only through presf: once per node under a radial covering, and once for
     # the file when a single surface resolves it
