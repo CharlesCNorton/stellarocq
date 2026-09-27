@@ -14,5 +14,16 @@ theories/Energy.v
 theories/Quad.v
 theories/Mercier.v
 theories/Kantorovich.v
+theories/Wide.v
 theories/Newton.v
 theories/Colloc.v
+theories/Box.v
+theories/Integral.v
+theories/TrigPoly.v
+theories/TrigExpr.v
+theories/Harmonic.v
+theories/HalfGrid.v
+theories/BoxCell.v
+theories/Newcomb.v
+theories/QSFloor.v
+theories/Coil.v

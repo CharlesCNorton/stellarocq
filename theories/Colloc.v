@@ -316,7 +316,8 @@ Proof.
   assert (Hbs : sy_binds s = fst (assemble (length centre) pts)) by reflexivity.
   assert (Hos : sy_out s = snd (assemble (length centre) pts)) by reflexivity.
   assert (Hnb : (n <= length centre)%nat).
-  { assert (H := c_nb s Hnew). unfold sbase in H. rewrite Hcn, Hnn in H. exact H. }
+  { assert (H := c_nb s (proj1 (andb_prop _ _ Hnew))). unfold sbase in H.
+    rewrite Hcn, Hnn in H. exact H. }
   (* the output of the system at a point is the residual at that point *)
   assert (Hbridge : forall (z : list R) i p,
             length z = n -> nth_error pts i = Some p ->
@@ -356,6 +357,107 @@ Proof.
     destruct (nth_error pts k) as [p|] eqn:Hp.
     + rewrite (Hbridge y k p Hy' Hp). apply Hall. eapply nth_error_In. exact Hp.
     + exfalso. apply nth_error_None in Hp. lia.
+Qed.
+
+(* ---------------------------------------------------------------- *)
+(* Stability of the collocated system                                *)
+
+(** Output i of the assembled system at z is the collocated component of
+    point i. *)
+Lemma colloc_bridge :
+  forall prec n centre r A B KN Kq MN Mq pts s,
+  s = colloc_system prec n centre r A B KN Kq MN Mq pts ->
+  (forall p, In p pts -> point_ok (length centre) p = true) ->
+  (n <= length centre)%nat ->
+  forall (z : list R) i p, length z = n -> nth_error pts i = Some p ->
+  Fx s (E (sy_centre s) (sy_n s) z) i
+  = xeval (xextend (local_env n centre z p) (r_binds (local_res p))) (local_out p).
+Proof.
+  intros prec n centre r A B KN Kq MN Mq pts s Hs Hok Hnb z i p Hz Hp. subst s.
+  assert (Hq := Hok p (nth_error_In _ _ Hp)). unfold point_ok in Hq.
+  rewrite !andb_true_iff in Hq. destruct Hq as [_ Hslot].
+  destruct (slot_of (local_out p)) as [o|] eqn:Ho. 2: discriminate.
+  assert (Heo : local_out p = Evar o).
+  { destruct (local_out p); simpl in Ho; try discriminate. now injection Ho as ->. }
+  rewrite Heo. unfold Fx, oslot, colloc_system. cbv zeta.
+  cbn [sy_centre sy_n sy_binds sy_out xeval].
+  assert (Hspec := E_spec centre n z Hz Hnb).
+  destruct Hspec as [Hu [Hpar Hz']].
+  assert (HG1 : forall g, (g < length centre)%nat ->
+            eget g (E centre n z) Xnan = gval n centre z g).
+  { intros g Hg. unfold gval. destruct (Nat.ltb g n) eqn:Hgn.
+    - apply Nat.ltb_lt in Hgn. now apply Hu.
+    - apply Nat.ltb_ge in Hgn. apply Hpar; lia. }
+  assert (HG2 : forall g, (length centre <= g)%nat ->
+            eget g (E centre n z) Xnan = Xnan).
+  { intros g Hg. now apply Hz'. }
+  rewrite (assemble_bridge pts (length centre) (length centre) n centre z
+             (E centre n z) eq_refl (Nat.le_refl _) Hok HG1 HG2 i p Hp).
+  unfold out_slot. rewrite Ho. reflexivity.
+Qed.
+
+(** The Jacobian half of the test on the assembled system, with the bound on
+    the rows of |A|. *)
+Definition colloc_core (prec : Z) (n : nat) (centre : list Z) (r : Z)
+    (A B : list (list (Z * Z))) (KN Kq MN Mq : Z) (pts : list cpt) (aN aq : Z)
+    : bool :=
+  Nat.eqb (length pts) n &&
+  Nat.eqb (length gexps) (length centre) &&
+  forallb (point_ok (length centre)) pts &&
+  check_core (colloc_system prec n centre r A B KN Kq MN Mq pts) &&
+  check_anorm (colloc_system prec n centre r A B KN Kq MN Mq pts) aN aq.
+
+(** Stability of the collocated residual on the box. When at every point
+    the collocated components at x and at y differ by at most D, the two
+    states differ by at most ||A|| D / (1 - K). With lambda among the
+    parameters rather than the unknowns this is stability on the quotient
+    by the poloidal gauge, since lambda is what fixes the angle. For a forced
+    system, whose components vanish at its discrete solution, D bounds the
+    components at any other state, the manufactured solution among them,
+    and the conclusion is the bound on the discretization error that the
+    Lax argument of HalfGrid.v takes as its stability premise. *)
+Theorem colloc_stability :
+  forall prec n centre r A B KN Kq MN Mq pts aN aq,
+  colloc_core prec n centre r A B KN Kq MN Mq pts aN aq = true ->
+  forall (x y : list R) (D : R), (0 <= D)%R ->
+  in_box (colloc_system prec n centre r A B KN Kq MN Mq pts) x ->
+  in_box (colloc_system prec n centre r A B KN Kq MN Mq pts) y ->
+  (forall p, In p pts -> exists a b,
+     xeval (xextend (local_env n centre x p) (r_binds (local_res p))) (local_out p)
+       = Xreal a /\
+     xeval (xextend (local_env n centre y p) (r_binds (local_res p))) (local_out p)
+       = Xreal b /\
+     (Rabs (a - b) <= D)%R) ->
+  ((1 - KR (colloc_system prec n centre r A B KN Kq MN Mq pts)) * vmax (vsub x y)
+    <= dyadR (aN, aq) * D)%R.
+Proof.
+  intros prec n centre r A B KN Kq MN Mq pts aN aq Hchk x y D HD Hx Hy Hall.
+  unfold colloc_core in Hchk. rewrite !andb_true_iff in Hchk.
+  destruct Hchk as [[[[Hlen _] Hok] Hcore] Han].
+  apply Nat.eqb_eq in Hlen. rewrite forallb_forall in Hok.
+  remember (colloc_system prec n centre r A B KN Kq MN Mq pts) as s eqn:Hs.
+  assert (Hnn : sy_n s = n) by (rewrite Hs; reflexivity).
+  assert (Hnb : (n <= length centre)%nat).
+  { assert (H := c_nb s Hcore). unfold sbase in H. rewrite Hs in H. exact H. }
+  assert (HlF : forall p, length (Fvec s p) = n)
+    by (intros p; unfold Fvec; rewrite length_map, length_seq; exact Hnn).
+  assert (Hlx : length x = n) by (rewrite <- Hnn; apply Hx).
+  assert (Hly : length y = n) by (rewrite <- Hnn; apply Hy).
+  assert (HF : (vmax (vsub (Fvec s x) (Fvec s y)) <= D)%R).
+  { apply vmax_le. exact HD.
+    intros k Hk. rewrite length_vsub in Hk by (rewrite !HlF; reflexivity).
+    rewrite HlF in Hk.
+    rewrite nth_vsub by (rewrite ?HlF; lia).
+    unfold Fvec. rewrite !nth_map_seq by lia.
+    destruct (nth_error pts k) as [p|] eqn:Hp.
+    2: { exfalso. apply nth_error_None in Hp. lia. }
+    unfold Freal.
+    rewrite (colloc_bridge prec n centre r A B KN Kq MN Mq pts s Hs Hok Hnb x k p Hlx Hp).
+    rewrite (colloc_bridge prec n centre r A B KN Kq MN Mq pts s Hs Hok Hnb y k p Hly Hp).
+    destruct (Hall p (nth_error_In _ _ Hp)) as [a [b [Ha [Hb Hab]]]].
+    rewrite Ha, Hb. simpl. exact Hab. }
+  eapply Rle_trans. apply (stability s Hcore aN aq Han x y Hx Hy).
+  apply Rmult_le_compat_l. apply (anorm_nonneg s aN aq Han). exact HF.
 Qed.
 
 End Assembly.

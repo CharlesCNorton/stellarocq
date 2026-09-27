@@ -327,6 +327,57 @@ Definition pprime (prof : pprofile) : expr :=
                              (Esub e1 (lorentz_edge (slot_am 5) r t)))))
   end.
 
+(** The pressure itself at a radius x, in Pascal, for the outputs that read
+    it at the half points rather than its derivative at the node. Each case
+    is the profile whose derivative [pprime] is. *)
+Definition poly_at (off n : nat) (x : expr) : expr :=
+  esum (map (fun j => Emul (slot_am (off + j)) (ppow x j)) (seq 0 n)).
+
+Definition gs_bump_at (j : nat) (x : expr) : expr :=
+  let y := Ediv (Esub x (slot_am (4 + 3*j))) (slot_am (5 + 3*j)) in
+  Emul (slot_am (3 + 3*j)) (Eexp (Eneg (esq y))).
+
+Fixpoint gs_val_at (g : nat) (x : expr) : expr :=
+  match g with O => e1 | S g' => Eadd (gs_val_at g' x) (gs_bump_at g' x) end.
+
+Definition lorentz_at (a : expr) (p q : nat) (x : expr) : expr :=
+  Ediv e1 (ppow (Eadd e1 (ppow (Ediv x (esq a)) p)) q).
+
+Definition pvalue (prof : pprofile) (x : expr) : expr :=
+  match prof with
+  | PPower => poly_at 0 n_am x
+  | PTwoPower p q => Emul (slot_am 0) (ppow (Esub e1 (ppow x p)) q)
+  | PCubic =>
+      let t := Esub x (slot_am 4) in
+      esum [slot_am 0; Emul (slot_am 1) t; Emul (slot_am 2) (esq t);
+            Emul (slot_am 3) (Emul t (esq t))]
+  | PRational nn nd => Ediv (poly_at 0 nn x) (poly_at 10 nd x)
+  | PGaussTrunc =>
+      let inv1 := Ediv e1 (slot_am 1) in
+      let ee := Eexp (Eneg (esq inv1)) in
+      Emul (slot_am 0)
+           (Ediv (Esub (Eexp (Eneg (esq (Emul x inv1)))) ee) (Esub e1 ee))
+  | PTwoPowerGs p q g =>
+      Emul (Emul (slot_am 0) (ppow (Esub e1 (ppow x p)) q)) (gs_val_at g x)
+  | PPedestal =>
+      let w := slot_am 19 in
+      let c := slot_am 18 in
+      let arg y := Ediv (Emul e2 (Esub c y)) w in
+      let t1 := etanh (arg (Esqrt x)) in
+      let te := etanh (arg e1) in
+      let t0 := etanh (Ediv (Emul e2 c) w) in
+      Eadd (poly_at 0 16 x) (Emul (slot_am 17) (Ediv (Esub t1 te) (Esub t0 te)))
+  | PTwoLorentz p q r t =>
+      let a1 := slot_am 1 in
+      let A := lorentz_at (slot_am 2) p q x in
+      let A1 := lorentz_edge (slot_am 2) p q in
+      let B := lorentz_at (slot_am 5) r t x in
+      let B1 := lorentz_edge (slot_am 5) r t in
+      Emul (slot_am 0)
+           (Eadd (Emul a1 (Ediv (Esub A A1) (Esub e1 A1)))
+                 (Emul (Esub e1 a1) (Ediv (Esub B B1) (Esub e1 B1))))
+  end.
+
 (** What a certificate fixes about the equilibrium besides its coefficients:
     whether the reconstruction carries the antisymmetric half, and which
     closed form the pressure takes. *)
@@ -358,7 +409,81 @@ Inductive rout : Type :=
   | RJsTerms
   | RRadialJsTerms
   | RQuasiSym
-  | RQuasiTwo.
+  | RQuasiTwo
+  | RWeighted (m n : Z)
+  | RJump (vm : list (Z * Z))
+  | RNewcomb (m n : Z)
+  | RIota (m n : Z)
+  | RForced
+  | REnergy
+  | RCoil (P : nat).
+
+(** [REnergy] is the energy density on a straight line of states x + t xi,
+    at the free radius of slot 0. The certificate carries, after the state, a
+    block of its own: the parameter t, the sign of the Jacobian, and the node
+    rows of the direction xi in the layout of the state's (R, Z and lambda,
+    then the antisymmetric ones). The first bindings are the coefficients of
+    the line, each state slot plus t times the matching slot of xi, and
+    everything after them reads those and never the state directly. With
+    gamma = 0 the mu0-scaled energy density of the Hermite reconstruction is
+
+      w = |sqrt(g)| (B^2 / 2 - mu0 p),
+
+    the first component; |sqrt(g)| and B^2 sqrt(g) are the other two. Its
+    derivatives in t are those of Deriv.v along the slot of t, so the second
+    one at t = 0 is the density of the second variation of the energy along
+    xi. *)
+
+(** [RCoil P] is a coil field against a torus. The first node row of the R
+    and Z blocks is the torus,
+
+      R(u, v) = sum R_mn cos(m u - n v),   Z(u, v) = sum Z_mn sin(m u - n v),
+
+    read at the angles of slots 1 and 2, v the geometric toroidal angle. The
+    block after the state holds P source points of the coils, six slots each
+    in Cartesian coordinates: the point, then its weighted tangent, which is
+    mu0 I dt / (4 pi) times the tangent of the coil there. The field at x is
+    the sum over the points of the weighted tangent crossed with (x - point),
+    over |x - point|^3: the trapezoidal rule of the Biot-Savart law, which is
+    how the coil set is given. With n = x_u x x_v the components are
+    B.n / sqrt(|B|^2 |n|^2), the sine of the angle between the field and the
+    torus, then B.n and |B|^2. A torus on which the first vanishes is
+    invariant under the field-line flow. *)
+
+(** [RForced] is the node residual of [RResidual] less a source the
+    certificate carries, one input slot per component: r_s - f_s, r_u - f_u
+    and r_v - f_v. A zero of it at every collocation point is a discrete
+    solution of the problem whose right-hand side is the source, which is
+    what a manufactured solution poses: the source is the continuum residual
+    of a chosen mapping, and the discrete solution's distance from that
+    mapping is the discretization error. *)
+
+(** [RNewcomb m n] reads a state in straight-field-line angles, whose lambda
+    is zero, at the free radius of slot 0 between the node's two half points:
+    the Jacobian sqrt(g) = R (R_u Z_s - R_s Z_u) of the Hermite
+    reconstruction against cos(m u - n v) and against sin(m u - n v), whose
+    integrals over the angles are the harmonic of sqrt(g) resonant on a
+    surface where iota = n/m, and mu0 dp/ds there. [RIota m n] carries
+    m iota - n at the free radius, with iota linear between the half points as
+    [full_point_b] reads it, then iota and its radial derivative. *)
+
+(** [RJump vm] is free-boundary balance: the jump of the total pressure
+    p + B^2/2 across the plasma boundary against a vacuum pressure B_vac^2/2
+    the certificate carries. The plasma side is the total pressure of the two
+    half points extrapolated linearly to s = 1, which at the last interior
+    node of VMEC's grid is its own 3/2, -1/2 rule for the edge pressure. The
+    vacuum side is a trigonometric series over the modes vm,
+
+      P_vac = sum_k (a_k cos(m_k u - n_k v) + b_k sin(m_k u - n_k v))
+            + t sum_k (c_k cos(m_k u - n_k v) + d_k sin(m_k u - n_k v)),
+
+    so that one scalar t sweeps the segment between two vacuum answers: with
+    a and b the mean of their series and c and d half their difference, t = 1
+    is the one and t = -1 the other. Each kernel is assembled from cos(m u),
+    sin(m u), cos(n v) and sin(n v) by the angle-difference identities, which
+    is the same function. The three components are the jump, the
+    extrapolated plasma-side pressure and the vacuum pressure; [jump_b]
+    builds them. *)
 
 (** True when the output is read from the reconstruction at a free radius. *)
 Definition is_radial (o : rout) : bool :=
@@ -450,6 +575,10 @@ Definition n_extra_slots (o : rout) (K : nat) : nat :=
   match o with
   | RStreamDefect | RBoozer _ _ => K + 2
   | RQuasiTwo => 1
+  | RJump vm => 4 * length vm + 1
+  | RForced => 3
+  | REnergy => 16 * K + 2
+  | RCoil P => 6 * P
   | _ => 0
   end.
 
@@ -459,6 +588,14 @@ Definition base_scratch_of (lasym : bool) (o : rout) (K : nat) : nat :=
 
 (** The flux function a two-term certificate carries. *)
 Definition slot_F0 (lasym : bool) (K : nat) := evar (base_W lasym K).
+
+(** Slot i of a jump certificate's vacuum block: the cosine and sine
+    coefficients of the mean series mode by mode, then those of the half
+    difference, then t. *)
+Definition slot_vac (lasym : bool) (K i : nat) := evar (base_W lasym K + i).
+
+(** Component i of a forced certificate's source. *)
+Definition slot_src (lasym : bool) (K i : nat) := evar (base_W lasym K + i).
 
 Record pconfig := PConfig {
   pc_lasym : bool ;
@@ -477,6 +614,26 @@ Definition kern_arg (m n : Z) : expr :=
 Record mode_kernels := MKer {
   mk_m : Z ; mk_n : Z ;
   mk_cos : expr ; mk_sin : expr }.
+
+(** The cosine and sine of m a for each integer m of a list, allocated once
+    each, and the lookup of one of them. A lookup that misses builds the pair
+    in place, so what it returns is cos(m a) and sin(m a) either way. *)
+Fixpoint zkernels_b (b : builder) (a : expr) (ms : list Z)
+    : builder * list (Z * (expr * expr)) :=
+  match ms with
+  | [] => (b, [])
+  | m :: tl =>
+      let (b, c) := alloc b (Ecos (Emul (EfromZ m) a)) in
+      let (b, s) := alloc b (Esin (Emul (EfromZ m) a)) in
+      let (b, rest) := zkernels_b b a tl in
+      (b, (m, (c, s)) :: rest)
+  end.
+
+Fixpoint zlook (m : Z) (a : expr) (l : list (Z * (expr * expr))) : expr * expr :=
+  match l with
+  | [] => (Ecos (Emul (EfromZ m) a), Esin (Emul (EfromZ m) a))
+  | (k, cs) :: tl => if Z.eqb k m then cs else zlook m a tl
+  end.
 
 (** Allocate the kernels of every mode. *)
 Fixpoint kernels_b (b : builder) (modes : list (Z * Z))
@@ -1951,6 +2108,570 @@ Definition full_point_b (b : builder) (lasym : bool)
 (** The innermost interval reads the same three components as any other radial
     covering; what differs is only where its coefficients came from. *)
 
+(* ---------------------------------------------------------------- *)
+(* The radial residual cleared of the Jacobian                       *)
+
+(** The residual divides by the Jacobian at both half points: the
+    contravariant field is phip times a numerator over sqrt(g), the covariant
+    components carry the same denominator, and their angular derivatives its
+    square. With G the Jacobian of a half point, bu = iota - lambda_v and
+    bv = 1 + lambda_u,
+
+      B_u   = phip Cu / G,     Cu  = g_uu bu + g_uv bv
+      B_v   = phip Cv / G,     Cv  = g_uv bu + g_vv bv
+      d_u B_s = phip Dsu / G^2,  d_v B_s = phip Dsv / G^2,
+
+    and the radial residual at the node, built from averages and differences
+    of those across the two half points, is
+
+      r_s = phip^2 (N1 Av - N2 Au) / (4 Delta Gm^3 Gp^3) - mu0 p'
+
+    with Delta = s_h+ - s_h- and
+
+      N1 = Delta (Dsv- Gp^2 + Dsv+ Gm^2) - 2 Gm Gp (Cv+ Gm - Cv- Gp)
+      Av = bv- Gp + bv+ Gm
+      N2 = 2 Gm Gp (Cu+ Gm - Cu- Gp) - Delta (Dsu- Gp^2 + Dsu+ Gm^2)
+      Au = bu- Gp + bu+ Gm.
+
+    So (Gm Gp)^3 r_s has no division by anything that depends on the angles:
+    it is a polynomial in the finite Fourier series of R, Z and lambda, which
+    TrigExpr.v recognises and Harmonic.v integrates exactly. The weight is
+    positive wherever the two Jacobians share a sign, which is where the
+    reconstruction is a valid coordinate system, so the weighted residual
+    vanishes exactly where the residual does. *)
+Record hnum := HNum {
+  hn_G : expr ; hn_bu : expr ; hn_bv : expr ;
+  hn_cu : expr ; hn_cv : expr ; hn_dsu : expr ; hn_dsv : expr }.
+
+Definition hnum_b (b : builder) (q : halfq) : builder * hnum :=
+  let R_s := q_Rs q in let R_u := q_Ru q in let R_v := q_Rv q in
+  let Z_s := q_Zs q in let Z_u := q_Zu q in let Z_v := q_Zv q in
+  let R_su := q_Rsu q in let R_sv := q_Rsv q in
+  let R_uu := q_Ruu q in let R_uv := q_Ruv q in let R_vv := q_Rvv q in
+  let Z_su := q_Zsu q in let Z_sv := q_Zsv q in
+  let Z_uu := q_Zuu q in let Z_uv := q_Zuv q in let Z_vv := q_Zvv q in
+  let G := q_sqrtg q in let bu := q_bu_num q in let bv := q_bv_num q in
+  (* the metric elements against the radius and their angular derivatives,
+     as half_point_b writes them *)
+  let (b, gsu) := alloc b (Eadd (Emul R_s R_u) (Emul Z_s Z_u)) in
+  let (b, gsv) := alloc b (Eadd (Emul R_s R_v) (Emul Z_s Z_v)) in
+  let (b, gsu_u) := alloc b (Eadd (Eadd (Emul R_su R_u) (Emul R_s R_uu))
+                                  (Eadd (Emul Z_su Z_u) (Emul Z_s Z_uu))) in
+  let (b, gsu_v) := alloc b (Eadd (Eadd (Emul R_sv R_u) (Emul R_s R_uv))
+                                  (Eadd (Emul Z_sv Z_u) (Emul Z_s Z_uv))) in
+  let (b, gsv_u) := alloc b (Eadd (Eadd (Emul R_su R_v) (Emul R_s R_uv))
+                                  (Eadd (Emul Z_su Z_v) (Emul Z_s Z_uv))) in
+  let (b, gsv_v) := alloc b (Eadd (Eadd (Emul R_sv R_v) (Emul R_s R_vv))
+                                  (Eadd (Emul Z_sv Z_v) (Emul Z_s Z_vv))) in
+  let (b, cu) := alloc b (Eadd (Emul (q_guu q) bu) (Emul (q_guv q) bv)) in
+  let (b, cv) := alloc b (Eadd (Emul (q_guv q) bu) (Emul (q_gvv q) bv)) in
+  let (b, dsu) :=
+    alloc b (Eadd (Emul (Eadd (Emul gsu_u bu) (Emul gsv_u bv)) G)
+                  (Eadd (Emul gsu (Esub (Emul (Eneg (q_Luv q)) G) (Emul bu (q_g_u q))))
+                        (Emul gsv (Esub (Emul (q_Luu q) G) (Emul bv (q_g_u q)))))) in
+  let (b, dsv) :=
+    alloc b (Eadd (Emul (Eadd (Emul gsu_v bu) (Emul gsv_v bv)) G)
+                  (Eadd (Emul gsu (Esub (Emul (Eneg (q_Lvv q)) G) (Emul bu (q_g_v q))))
+                        (Emul gsv (Esub (Emul (q_Luv q) G) (Emul bv (q_g_v q)))))) in
+  (b, HNum G bu bv cu cv dsu dsv).
+
+(** (Gm Gp)^3 r_s and the weight (Gm Gp)^3, from the two half points. *)
+Definition weighted_b (b : builder) (qm qp : halfq) (inv_h mu0pp : expr)
+    : builder * (expr * expr) :=
+  let (b, m) := hnum_b b qm in
+  let (b, p) := hnum_b b qp in
+  let Gm := hn_G m in let Gp := hn_G p in
+  let (b, delta) := alloc b (Esub slot_s_hp slot_s_hm) in
+  let (b, gmgp) := alloc b (Emul Gm Gp) in
+  let (b, gm2) := alloc b (esq Gm) in
+  let (b, gp2) := alloc b (esq Gp) in
+  let (b, n1) :=
+    alloc b (Esub (Emul delta (Eadd (Emul (hn_dsv m) gp2) (Emul (hn_dsv p) gm2)))
+                  (Emul (zmul 2 gmgp) (Esub (Emul (hn_cv p) Gm) (Emul (hn_cv m) Gp)))) in
+  let (b, av) := alloc b (Eadd (Emul (hn_bv m) Gp) (Emul (hn_bv p) Gm)) in
+  let (b, n2) :=
+    alloc b (Esub (Emul (zmul 2 gmgp) (Esub (Emul (hn_cu p) Gm) (Emul (hn_cu m) Gp)))
+                  (Emul delta (Eadd (Emul (hn_dsu m) gp2) (Emul (hn_dsu p) gm2)))) in
+  let (b, au) := alloc b (Eadd (Emul (hn_bu m) Gp) (Emul (hn_bu p) Gm)) in
+  let (b, w) := alloc b (Emul gmgp (Emul gmgp gmgp)) in
+  let (b, pw) :=
+    alloc b (Esub (Emul (Emul (esq vPhip) (Esub (Emul n1 av) (Emul n2 au)))
+                        (Ediv inv_h e4))
+                  (Emul w mu0pp)) in
+  (b, (pw, w)).
+
+(* ---------------------------------------------------------------- *)
+(* The free-boundary jump                                            *)
+
+(** The jump reads the field strength and nothing of the residual, so it has
+    a path of its own. Every binding on it is a few operations on slots: a
+    sum is a chain of two-term additions and a power a chain of products,
+    since the derivative families of Deriv.v differentiate each binding's
+    expression as written, and the derivative of one long expression is far
+    longer than the derivatives of the short ones it is a chain of. *)
+
+(** A sum as a chain of two-term additions, one binding each; the slot of the
+    total. *)
+Fixpoint chain_b (b : builder) (acc : expr) (l : list expr) : builder * expr :=
+  match l with
+  | [] => (b, acc)
+  | x :: tl => let (b, s) := alloc b (Eadd acc x) in chain_b b s tl
+  end.
+
+Definition sum_b (b : builder) (l : list expr) : builder * expr :=
+  match l with
+  | [] => (b, e0)
+  | x :: tl => let (b, s) := alloc b x in chain_b b s tl
+  end.
+
+(** acc x^j, one binding per factor. *)
+Fixpoint pow_b (b : builder) (x acc : expr) (j : nat) : builder * expr :=
+  match j with
+  | O => (b, acc)
+  | S j' => let (b, y) := alloc b (Emul acc x) in pow_b b x y j'
+  end.
+
+(** x, x^2, ..., x^n. *)
+Fixpoint powers_b (b : builder) (x prev : expr) (n : nat) : builder * list expr :=
+  match n with
+  | O => (b, [])
+  | S n' =>
+      let (b, y) := alloc b (Emul prev x) in
+      let (b, rest) := powers_b b x y n' in
+      (b, y :: rest)
+  end.
+
+(** The pressure at a radius, as [pvalue] gives it, with the power series and
+    the two-power profile built from chained bindings. *)
+Definition pvalue_b (b : builder) (prof : pprofile) (x : expr) : builder * expr :=
+  match prof with
+  | PTwoPower p q =>
+      let (b, xp) := pow_b b x e1 p in
+      let (b, w) := alloc b (Esub e1 xp) in
+      let (b, wq) := pow_b b w e1 q in
+      alloc b (Emul (slot_am 0) wq)
+  | PPower =>
+      let (b, pw) := powers_b b x e1 (n_am - 1) in
+      sum_b b (slot_am 0 :: map (fun jp => Emul (slot_am (fst jp)) (snd jp))
+                               (combine (seq 1 (n_am - 1)) pw))
+  | _ => alloc b (pvalue prof x)
+  end.
+
+(** The kernel pair cos(m u - n v), sin(m u - n v) of every mode, from the
+    cosines and sines of m u and n v by the angle-difference identities. *)
+Fixpoint modek_b (b : builder) (ku kv : list (Z * (expr * expr)))
+    (l : list (Z * Z)) : builder * list (Z * Z * (expr * expr)) :=
+  match l with
+  | [] => (b, [])
+  | (m, n) :: tl =>
+      let (cm, sm) := zlook m vU ku in
+      let (cn, sn) := zlook n vV kv in
+      let (b, k) := alloc b (Eadd (Emul cm cn) (Emul sm sn)) in
+      let (b, s) := alloc b (Esub (Emul sm cn) (Emul cm sn)) in
+      let (b, rest) := modek_b b ku kv tl in
+      (b, ((m, n), (k, s)) :: rest)
+  end.
+
+(** What the field strength reads at a half point: R, R_u, R_v, R_s,
+    Z_u, Z_v, Z_s, lambda_u and lambda_v, each a chained sum over the modes of
+    the symmetric series and, when lasym, the antisymmetric one. With
+    K = cos(m u - n v) and S = sin(m u - n v) these are the sums of [assemble]
+    and [lambda_terms]. *)
+Record jpart := JPart {
+  jp_R : expr ; jp_Ru : expr ; jp_Rv : expr ; jp_Rs : expr ;
+  jp_Zu : expr ; jp_Zv : expr ; jp_Zs : expr ;
+  jp_Lu : expr ; jp_Lv : expr }.
+
+Definition jpart_b (b : builder) (lasym : bool) (mk : list (Z * Z * (expr * expr)))
+    (hc : half_coefs) : builder * jpart :=
+  let tz (z : Z) (c k : expr) := Emul (EfromZ z) (Emul c k) in
+  let mm (x : Z * Z * (expr * expr)) := fst (fst x) in
+  let nn (x : Z * Z * (expr * expr)) := snd (fst x) in
+  let KK (x : Z * Z * (expr * expr)) := fst (snd x) in
+  let SS (x : Z * Z * (expr * expr)) := snd (snd x) in
+  let over {A : Type} (l : list A) (f : Z * Z * (expr * expr) -> A -> expr) :=
+    map (fun p => f (fst p) (snd p)) (combine mk l) in
+  let asym {A : Type} (l : list A) (f : Z * Z * (expr * expr) -> A -> expr) :=
+    if lasym then over l f else [] in
+  let cR := hc_R hc in let cZ := hc_Z hc in let cL := hc_L hc in
+  let cRa := hc_Ra hc in let cZa := hc_Za hc in let cLa := hc_La hc in
+  let (b, R) := sum_b b (over cR (fun x c => Emul (c_val c) (KK x))
+                         ++ asym cRa (fun x c => Emul (c_val c) (SS x))) in
+  let (b, Ru) := sum_b b (over cR (fun x c => tz (Z.opp (mm x)) (c_val c) (SS x))
+                          ++ asym cRa (fun x c => tz (mm x) (c_val c) (KK x))) in
+  let (b, Rv) := sum_b b (over cR (fun x c => tz (nn x) (c_val c) (SS x))
+                          ++ asym cRa (fun x c => tz (Z.opp (nn x)) (c_val c) (KK x))) in
+  let (b, Rs) := sum_b b (over cR (fun x c => Emul (c_ds c) (KK x))
+                          ++ asym cRa (fun x c => Emul (c_ds c) (SS x))) in
+  let (b, Zu) := sum_b b (over cZ (fun x c => tz (mm x) (c_val c) (KK x))
+                          ++ asym cZa (fun x c => tz (Z.opp (mm x)) (c_val c) (SS x))) in
+  let (b, Zv) := sum_b b (over cZ (fun x c => tz (Z.opp (nn x)) (c_val c) (KK x))
+                          ++ asym cZa (fun x c => tz (nn x) (c_val c) (SS x))) in
+  let (b, Zs) := sum_b b (over cZ (fun x c => Emul (c_ds c) (SS x))
+                          ++ asym cZa (fun x c => Emul (c_ds c) (KK x))) in
+  let (b, Lu) := sum_b b (over cL (fun x l => tz (mm x) l (KK x))
+                          ++ asym cLa (fun x l => tz (Z.opp (mm x)) l (SS x))) in
+  let (b, Lv) := sum_b b (over cL (fun x l => tz (Z.opp (nn x)) l (KK x))
+                          ++ asym cLa (fun x l => tz (nn x) l (SS x))) in
+  (b, JPart R Ru Rv Rs Zu Zv Zs Lu Lv).
+
+(** The mu0-scaled total pressure p + B^2/2 at a half point, with
+    B^2 = phip^2 (bu (g_uu bu + g_uv bv) + bv (g_uv bu + g_vv bv)) / g,
+    which is B^u B_u + B^v B_v of [half_point_b]. *)
+Definition jhalf_b (b : builder) (jp : jpart) (iota p : expr) : builder * expr :=
+  let (b, tau) := alloc b (Esub (Emul (jp_Ru jp) (jp_Zs jp))
+                                (Emul (jp_Rs jp) (jp_Zu jp))) in
+  let (b, sg) := alloc b (Emul (jp_R jp) tau) in
+  let (b, guu) := alloc b (Eadd (esq (jp_Ru jp)) (esq (jp_Zu jp))) in
+  let (b, guv) := alloc b (Eadd (Emul (jp_Ru jp) (jp_Rv jp))
+                                (Emul (jp_Zu jp) (jp_Zv jp))) in
+  let (b, gvv) := alloc b (Eadd (Eadd (esq (jp_Rv jp)) (esq (jp_Zv jp)))
+                                (esq (jp_R jp))) in
+  let (b, bu) := alloc b (Esub iota (jp_Lv jp)) in
+  let (b, bv) := alloc b (Eadd e1 (jp_Lu jp)) in
+  let (b, cu) := alloc b (Eadd (Emul guu bu) (Emul guv bv)) in
+  let (b, cv) := alloc b (Eadd (Emul guv bu) (Emul gvv bv)) in
+  let (b, num) := alloc b (Eadd (Emul bu cu) (Emul bv cv)) in
+  let (b, g2) := alloc b (esq sg) in
+  let (b, b2) := alloc b (Ediv (Emul (esq vPhip) num) g2) in
+  alloc b (Eadd (Emul (Ediv e1 e2) b2) (Emul mu0 p)).
+
+(** The jump: the total pressure of the two half points extrapolated
+    linearly to s = 1, against the vacuum pressure of the block. With the node
+    the last interior one, the half points sit at 1 - 3h/2 and 1 - h/2 and the
+    extrapolation is 3/2 of the outer less 1/2 of the inner. *)
+Definition jump_b (b : builder) (lasym : bool) (modes : list (Z * Z)) (K : nat)
+    (prof : pprofile) (vm : list (Z * Z)) : residual3 :=
+  let (b, hcm) := half_coefs_b b lasym modes K 0 1 0 slot_s_a slot_s_j slot_s_hm in
+  let (b, hcp) := half_coefs_b b lasym modes K 1 2 1 slot_s_j slot_s_b slot_s_hp in
+  let (b, pm) := pvalue_b b prof slot_s_hm in
+  let (b, pp) := pvalue_b b prof slot_s_hp in
+  let (b, ku) := zkernels_b b vU (nodup Z.eq_dec (map fst modes ++ map fst vm)) in
+  let (b, kv) := zkernels_b b vV (nodup Z.eq_dec (map snd modes ++ map snd vm)) in
+  let (b, mk) := modek_b b ku kv modes in
+  let (b, vk) := modek_b b ku kv vm in
+  let (b, jm) := jpart_b b lasym mk hcm in
+  let (b, jp) := jpart_b b lasym mk hcp in
+  let (b, tm) := jhalf_b b jm slot_iota_m pm in
+  let (b, tp) := jhalf_b b jp slot_iota_p pp in
+  let (b, te) := alloc b (Eadd tp (Emul (Esub e1 slot_s_hp)
+                                        (Ediv (Esub tp tm)
+                                              (Esub slot_s_hp slot_s_hm)))) in
+  let V := length vm in
+  let vterms off :=
+    map (fun ik => Eadd (Emul (slot_vac lasym K (off + 2 * fst ik)) (fst (snd (snd ik))))
+                        (Emul (slot_vac lasym K (off + 2 * fst ik + 1)) (snd (snd (snd ik)))))
+        (combine (seq 0 V) vk) in
+  let (b, pmid) := sum_b b (vterms 0) in
+  let (b, pdif) := sum_b b (vterms (2 * V)) in
+  let (b, pv) := alloc b (Eadd pmid (Emul (slot_vac lasym K (4 * V)) pdif)) in
+  let (b, jmp) := alloc b (Esub te pv) in
+  Residual3 (bindings_of b) jmp te pv.
+
+(* ---------------------------------------------------------------- *)
+(* The resonant harmonic of the Jacobian                             *)
+
+(** The cosine and sine of m u and of n v in the shape [kern_arg] writes, so
+    that TrigExpr.tdeg reads them as kernels of degree m and n. *)
+Fixpoint ukernels_b (b : builder) (ms : list Z) : builder * list (Z * (expr * expr)) :=
+  match ms with
+  | [] => (b, [])
+  | m :: tl =>
+      let (b, c) := alloc b (Ecos (kern_arg m 0)) in
+      let (b, s) := alloc b (Esin (kern_arg m 0)) in
+      let (b, rest) := ukernels_b b tl in
+      (b, (m, (c, s)) :: rest)
+  end.
+
+Fixpoint vkernels_b (b : builder) (ns : list Z) : builder * list (Z * (expr * expr)) :=
+  match ns with
+  | [] => (b, [])
+  | n :: tl =>
+      let (b, c) := alloc b (Ecos (kern_arg 0 (Z.opp n))) in
+      let (b, s) := alloc b (Esin (kern_arg 0 (Z.opp n))) in
+      let (b, rest) := vkernels_b b tl in
+      (b, (n, (c, s)) :: rest)
+  end.
+
+(** The Jacobian of the Hermite reconstruction at the free radius, with R,
+    R_u, R_s, Z_u and Z_s chained sums over the modes. *)
+Definition fjacobian_b (b : builder) (lasym : bool) (mk : list (Z * Z * (expr * expr)))
+    (cR cZ cRa cZa : list coef3) : builder * expr :=
+  let tz (z : Z) (c k : expr) := Emul (EfromZ z) (Emul c k) in
+  let mm (x : Z * Z * (expr * expr)) := fst (fst x) in
+  let KK (x : Z * Z * (expr * expr)) := fst (snd x) in
+  let SS (x : Z * Z * (expr * expr)) := snd (snd x) in
+  let over (l : list coef3) (f : Z * Z * (expr * expr) -> coef3 -> expr) :=
+    map (fun p => f (fst p) (snd p)) (combine mk l) in
+  let asym (l : list coef3) (f : Z * Z * (expr * expr) -> coef3 -> expr) :=
+    if lasym then over l f else [] in
+  let (b, R) := sum_b b (over cR (fun x c => Emul (t_val c) (KK x))
+                         ++ asym cRa (fun x c => Emul (t_val c) (SS x))) in
+  let (b, Ru) := sum_b b (over cR (fun x c => tz (Z.opp (mm x)) (t_val c) (SS x))
+                          ++ asym cRa (fun x c => tz (mm x) (t_val c) (KK x))) in
+  let (b, Rs) := sum_b b (over cR (fun x c => Emul (t_ds c) (KK x))
+                          ++ asym cRa (fun x c => Emul (t_ds c) (SS x))) in
+  let (b, Zu) := sum_b b (over cZ (fun x c => tz (mm x) (t_val c) (KK x))
+                          ++ asym cZa (fun x c => tz (Z.opp (mm x)) (t_val c) (SS x))) in
+  let (b, Zs) := sum_b b (over cZ (fun x c => Emul (t_ds c) (SS x))
+                          ++ asym cZa (fun x c => Emul (t_ds c) (KK x))) in
+  let (b, tau) := alloc b (Esub (Emul Ru Zs) (Emul Rs Zu)) in
+  alloc b (Emul R tau).
+
+Definition newcomb_b (b : builder) (lasym : bool) (modes : list (Z * Z)) (K : nat)
+    (prof : pprofile) (hm hn : Z) : residual3 :=
+  (* the half-point coefficients and the pressure gradient read no angle *)
+  let (b, hsm) := half_scalars_b b slot_s_a slot_s_j slot_s_hm in
+  let (b, hsp) := half_scalars_b b slot_s_j slot_s_b slot_s_hp in
+  let (b, cRm) := halfcoefs_b b hsm (base_R K) K 0 1 modes 0 in
+  let (b, cRp) := halfcoefs_b b hsp (base_R K) K 1 2 modes 0 in
+  let (b, cZm) := halfcoefs_b b hsm (base_Z K) K 0 1 modes 0 in
+  let (b, cZp) := halfcoefs_b b hsp (base_Z K) K 1 2 modes 0 in
+  let (b, cRam) := if lasym then halfcoefs_b b hsm (base_Ra K) K 0 1 modes 0
+                   else (b, @nil coef2) in
+  let (b, cRap) := if lasym then halfcoefs_b b hsp (base_Ra K) K 1 2 modes 0
+                   else (b, @nil coef2) in
+  let (b, cZam) := if lasym then halfcoefs_b b hsm (base_Za K) K 0 1 modes 0
+                   else (b, @nil coef2) in
+  let (b, cZap) := if lasym then halfcoefs_b b hsp (base_Za K) K 1 2 modes 0
+                   else (b, @nil coef2) in
+  let (b, mu0pp) := alloc b (Emul mu0 (pprime prof)) in
+  let (b, hs) := herm_scalars_b b slot_s_hm slot_s_hp vS in
+  let (b, cR) := hermcoefs_b b hs cRm cRp in
+  let (b, cZ) := hermcoefs_b b hs cZm cZp in
+  let (b, cRa) := hermcoefs_b b hs cRam cRap in
+  let (b, cZa) := hermcoefs_b b hs cZam cZap in
+  let (b, ku) := ukernels_b b (nodup Z.eq_dec (map fst modes)) in
+  let (b, kv) := vkernels_b b (nodup Z.eq_dec (map snd modes)) in
+  let (b, mk) := modek_b b ku kv modes in
+  let (b, sg) := fjacobian_b b lasym mk cR cZ cRa cZa in
+  let (b, hc) := alloc b (Emul sg (Ecos (kern_arg hm hn))) in
+  let (b, hsn) := alloc b (Emul sg (Esin (kern_arg hm hn))) in
+  Residual3 (bindings_of b) hc hsn mu0pp.
+
+Definition iota_b (b : builder) (hm hn : Z) : residual3 :=
+  let (b, w) := alloc b (Ediv (Esub vS slot_s_hm) (Esub slot_s_hp slot_s_hm)) in
+  let (b, io) := alloc b (Eadd slot_iota_m (Emul w (Esub slot_iota_p slot_iota_m))) in
+  let (b, gap) := alloc b (Esub (Emul (EfromZ hm) io) (EfromZ hn)) in
+  let (b, dio) := alloc b (Ediv (Esub slot_iota_p slot_iota_m)
+                                (Esub slot_s_hp slot_s_hm)) in
+  Residual3 (bindings_of b) gap io dio.
+
+(* ---------------------------------------------------------------- *)
+(* The energy on a line of states                                    *)
+
+(** Row [row] of a node block along the line: the state slot of mode k plus
+    t times the slot of the direction's block, for modes k .. k + n - 1. *)
+Fixpoint line_b (b : builder) (t : expr) (base xbase K row k n : nat)
+    : builder * list expr :=
+  match n with
+  | O => (b, [])
+  | S n' =>
+      let (b, y) := alloc b (Eadd (slot_node base K row k)
+                                  (Emul t (slot_node xbase K row k))) in
+      let (b, rest) := line_b b t base xbase K row (S k) n' in
+      (b, y :: rest)
+  end.
+
+(** [halfcoefs_b] and [radcoefs_b] over rows given as expressions. *)
+Fixpoint halfcoefs_l_b (b : builder) (hs : half_scalars) (modes : list (Z * Z))
+    (ya yb : list expr) : builder * list coef2 :=
+  match modes, ya, yb with
+  | mn :: tl, a :: ta, c :: tc =>
+      let (b, h) := halfcoef_b b hs (fst mn) a c in
+      let (b, rest) := halfcoefs_l_b b hs tl ta tc in
+      (b, h :: rest)
+  | _, _, _ => (b, [])
+  end.
+
+Fixpoint radcoefs_l_b (b : builder) (rs : rad_scalars) (modes : list (Z * Z))
+    (ya yb : list expr) : builder * list coef3 :=
+  match modes, ya, yb with
+  | mn :: tl, a :: ta, c :: tc =>
+      let (b, h) := radcoef_b b rs (fst mn) a c in
+      let (b, rest) := radcoefs_l_b b rs tl ta tc in
+      (b, h :: rest)
+  | _, _, _ => (b, [])
+  end.
+
+(** What the energy density reads at the free radius, as [jpart_b] reads it at
+    a half point, from the coefficients of the reconstruction there. *)
+Definition fpart_b (b : builder) (lasym : bool) (mk : list (Z * Z * (expr * expr)))
+    (cR cZ cL cRa cZa cLa : list coef3) : builder * jpart :=
+  let tz (z : Z) (c k : expr) := Emul (EfromZ z) (Emul c k) in
+  let mm (x : Z * Z * (expr * expr)) := fst (fst x) in
+  let nn (x : Z * Z * (expr * expr)) := snd (fst x) in
+  let KK (x : Z * Z * (expr * expr)) := fst (snd x) in
+  let SS (x : Z * Z * (expr * expr)) := snd (snd x) in
+  let over (l : list coef3) (f : Z * Z * (expr * expr) -> coef3 -> expr) :=
+    map (fun p => f (fst p) (snd p)) (combine mk l) in
+  let asym (l : list coef3) (f : Z * Z * (expr * expr) -> coef3 -> expr) :=
+    if lasym then over l f else [] in
+  let (b, R) := sum_b b (over cR (fun x c => Emul (t_val c) (KK x))
+                         ++ asym cRa (fun x c => Emul (t_val c) (SS x))) in
+  let (b, Ru) := sum_b b (over cR (fun x c => tz (Z.opp (mm x)) (t_val c) (SS x))
+                          ++ asym cRa (fun x c => tz (mm x) (t_val c) (KK x))) in
+  let (b, Rv) := sum_b b (over cR (fun x c => tz (nn x) (t_val c) (SS x))
+                          ++ asym cRa (fun x c => tz (Z.opp (nn x)) (t_val c) (KK x))) in
+  let (b, Rs) := sum_b b (over cR (fun x c => Emul (t_ds c) (KK x))
+                          ++ asym cRa (fun x c => Emul (t_ds c) (SS x))) in
+  let (b, Zu) := sum_b b (over cZ (fun x c => tz (mm x) (t_val c) (KK x))
+                          ++ asym cZa (fun x c => tz (Z.opp (mm x)) (t_val c) (SS x))) in
+  let (b, Zv) := sum_b b (over cZ (fun x c => tz (Z.opp (nn x)) (t_val c) (KK x))
+                          ++ asym cZa (fun x c => tz (nn x) (t_val c) (SS x))) in
+  let (b, Zs) := sum_b b (over cZ (fun x c => Emul (t_ds c) (SS x))
+                          ++ asym cZa (fun x c => Emul (t_ds c) (KK x))) in
+  let (b, Lu) := sum_b b (over cL (fun x l => tz (mm x) (t_val l) (KK x))
+                          ++ asym cLa (fun x l => tz (Z.opp (mm x)) (t_val l) (SS x))) in
+  let (b, Lv) := sum_b b (over cL (fun x l => tz (Z.opp (nn x)) (t_val l) (KK x))
+                          ++ asym cLa (fun x l => tz (nn x) (t_val l) (SS x))) in
+  (b, JPart R Ru Rv Rs Zu Zv Zs Lu Lv).
+
+(** The energy density on the line. The block after the state holds t, the
+    sign of the Jacobian, then xi's rows at the offsets of the state's. *)
+Definition energy_b (b : builder) (lasym : bool) (modes : list (Z * Z)) (K : nat)
+    (prof : pprofile) : residual3 :=
+  let xb := base_W lasym K in
+  let t := evar xb in
+  let sgn := evar (S xb) in
+  let xR := xb + 2 in
+  let xZ := xR + 3 * K in
+  let xL := xZ + 3 * K in
+  let xRa := xL + 2 * K in
+  let xZa := xRa + 3 * K in
+  let xLa := xZa + 3 * K in
+  (* the coefficients of the line come first *)
+  let (b, R0) := line_b b t (base_R K) xR K 0 0 K in
+  let (b, R1) := line_b b t (base_R K) xR K 1 0 K in
+  let (b, R2) := line_b b t (base_R K) xR K 2 0 K in
+  let (b, Z0) := line_b b t (base_Z K) xZ K 0 0 K in
+  let (b, Z1) := line_b b t (base_Z K) xZ K 1 0 K in
+  let (b, Z2) := line_b b t (base_Z K) xZ K 2 0 K in
+  let (b, L0) := line_b b t (base_L K) xL K 0 0 K in
+  let (b, L1) := line_b b t (base_L K) xL K 1 0 K in
+  let (b, Ra0) := if lasym then line_b b t (base_Ra K) xRa K 0 0 K else (b, []) in
+  let (b, Ra1) := if lasym then line_b b t (base_Ra K) xRa K 1 0 K else (b, []) in
+  let (b, Ra2) := if lasym then line_b b t (base_Ra K) xRa K 2 0 K else (b, []) in
+  let (b, Za0) := if lasym then line_b b t (base_Za K) xZa K 0 0 K else (b, []) in
+  let (b, Za1) := if lasym then line_b b t (base_Za K) xZa K 1 0 K else (b, []) in
+  let (b, Za2) := if lasym then line_b b t (base_Za K) xZa K 2 0 K else (b, []) in
+  let (b, La0) := if lasym then line_b b t (base_La K) xLa K 0 0 K else (b, []) in
+  let (b, La1) := if lasym then line_b b t (base_La K) xLa K 1 0 K else (b, []) in
+  (* the two half points, then the reconstruction at the free radius *)
+  let (b, hsm) := half_scalars_b b slot_s_a slot_s_j slot_s_hm in
+  let (b, hsp) := half_scalars_b b slot_s_j slot_s_b slot_s_hp in
+  let (b, cRm) := halfcoefs_l_b b hsm modes R0 R1 in
+  let (b, cRp) := halfcoefs_l_b b hsp modes R1 R2 in
+  let (b, cZm) := halfcoefs_l_b b hsm modes Z0 Z1 in
+  let (b, cZp) := halfcoefs_l_b b hsp modes Z1 Z2 in
+  let (b, cRam) := halfcoefs_l_b b hsm modes Ra0 Ra1 in
+  let (b, cRap) := halfcoefs_l_b b hsp modes Ra1 Ra2 in
+  let (b, cZam) := halfcoefs_l_b b hsm modes Za0 Za1 in
+  let (b, cZap) := halfcoefs_l_b b hsp modes Za1 Za2 in
+  let (b, hs) := herm_scalars_b b slot_s_hm slot_s_hp vS in
+  let (b, rl) := rad_scalars_b b slot_s_hm slot_s_hp vS in
+  let (b, cR) := hermcoefs_b b hs cRm cRp in
+  let (b, cZ) := hermcoefs_b b hs cZm cZp in
+  let (b, cRa) := hermcoefs_b b hs cRam cRap in
+  let (b, cZa) := hermcoefs_b b hs cZam cZap in
+  let (b, cL) := radcoefs_l_b b rl modes L0 L1 in
+  let (b, cLa) := radcoefs_l_b b rl modes La0 La1 in
+  let (b, io) := alloc b (Eadd slot_iota_m (Emul (rs_w rl) (Esub slot_iota_p slot_iota_m))) in
+  let (b, p) := pvalue_b b prof vS in
+  let (b, ku) := zkernels_b b vU (nodup Z.eq_dec (map fst modes)) in
+  let (b, kv) := zkernels_b b vV (nodup Z.eq_dec (map snd modes)) in
+  let (b, mk) := modek_b b ku kv modes in
+  let (b, jp) := fpart_b b lasym mk cR cZ cL cRa cZa cLa in
+  (* the density *)
+  let (b, tau) := alloc b (Esub (Emul (jp_Ru jp) (jp_Zs jp)) (Emul (jp_Rs jp) (jp_Zu jp))) in
+  let (b, sg) := alloc b (Emul (jp_R jp) tau) in
+  let (b, guu) := alloc b (Eadd (esq (jp_Ru jp)) (esq (jp_Zu jp))) in
+  let (b, guv) := alloc b (Eadd (Emul (jp_Ru jp) (jp_Rv jp)) (Emul (jp_Zu jp) (jp_Zv jp))) in
+  let (b, gvv) := alloc b (Eadd (Eadd (esq (jp_Rv jp)) (esq (jp_Zv jp))) (esq (jp_R jp))) in
+  let (b, bu) := alloc b (Esub io (jp_Lv jp)) in
+  let (b, bv) := alloc b (Eadd e1 (jp_Lu jp)) in
+  let (b, num) := alloc b (Eadd (Emul bu (Eadd (Emul guu bu) (Emul guv bv)))
+                                (Emul bv (Eadd (Emul guv bu) (Emul gvv bv)))) in
+  let (b, b2g) := alloc b (Ediv (Emul (esq vPhip) num) sg) in
+  let (b, w) := alloc b (Emul sgn (Esub (Emul (Ediv e1 e2) b2g) (Emul (Emul mu0 p) sg))) in
+  let (b, vol) := alloc b (Emul sgn sg) in
+  Residual3 (bindings_of b) w vol b2g.
+
+(* ---------------------------------------------------------------- *)
+(* A coil field against a torus                                      *)
+
+(** The three components of a cross product. *)
+Definition cross3 (a1 a2 a3 b1 b2 b3 : expr) : expr * expr * expr :=
+  (Esub (Emul a2 b3) (Emul a3 b2),
+   Esub (Emul a3 b1) (Emul a1 b3),
+   Esub (Emul a1 b2) (Emul a2 b1)).
+
+(** The contribution of source points i .. i + P - 1 at the point (x, y, z),
+    each as three slots of the field it adds. *)
+Fixpoint coil_terms_b (b : builder) (lasym : bool) (K : nat) (x y z : expr)
+    (i P : nat) : builder * list (expr * expr * expr) :=
+  match P with
+  | O => (b, [])
+  | S P' =>
+      let px := slot_vac lasym K (6 * i) in
+      let py := slot_vac lasym K (6 * i + 1) in
+      let pz := slot_vac lasym K (6 * i + 2) in
+      let dx := slot_vac lasym K (6 * i + 3) in
+      let dy := slot_vac lasym K (6 * i + 4) in
+      let dz := slot_vac lasym K (6 * i + 5) in
+      let (b, rx) := alloc b (Esub x px) in
+      let (b, ry) := alloc b (Esub y py) in
+      let (b, rz) := alloc b (Esub z pz) in
+      let (b, r2) := alloc b (Eadd (Eadd (esq rx) (esq ry)) (esq rz)) in
+      let (b, r3) := alloc b (Emul r2 (Esqrt r2)) in
+      let '(c1, c2, c3) := cross3 dx dy dz rx ry rz in
+      let (b, t1) := alloc b (Ediv c1 r3) in
+      let (b, t2) := alloc b (Ediv c2 r3) in
+      let (b, t3) := alloc b (Ediv c3 r3) in
+      let (b, rest) := coil_terms_b b lasym K x y z (S i) P' in
+      (b, (t1, t2, t3) :: rest)
+  end.
+
+Definition coil_b (b : builder) (lasym : bool) (modes : list (Z * Z)) (K P : nat)
+    : residual3 :=
+  let tz (z : Z) (c k : expr) := Emul (EfromZ z) (Emul c k) in
+  let (b, ku) := zkernels_b b vU (nodup Z.eq_dec (map fst modes)) in
+  let (b, kv) := zkernels_b b vV (nodup Z.eq_dec (map snd modes)) in
+  let (b, mk) := modek_b b ku kv modes in
+  let rows (base : nat) := map (fun k => slot_node base K 0 k) (seq 0 K) in
+  let over (f : Z * Z * (expr * expr) -> expr -> expr) (base : nat) :=
+    map (fun p => f (fst p) (snd p)) (combine mk (rows base)) in
+  (* the torus and its two tangents, from the cosine series of R and the
+     sine series of Z *)
+  let (b, Rt) := sum_b b (over (fun x c => Emul c (fst (snd x))) (base_R K)) in
+  let (b, Ru) := sum_b b (over (fun x c => tz (Z.opp (fst (fst x))) c (snd (snd x))) (base_R K)) in
+  let (b, Rv) := sum_b b (over (fun x c => tz (snd (fst x)) c (snd (snd x))) (base_R K)) in
+  let (b, Zt) := sum_b b (over (fun x c => Emul c (snd (snd x))) (base_Z K)) in
+  let (b, Zu) := sum_b b (over (fun x c => tz (fst (fst x)) c (fst (snd x))) (base_Z K)) in
+  let (b, Zv) := sum_b b (over (fun x c => tz (Z.opp (snd (fst x))) c (fst (snd x))) (base_Z K)) in
+  let (b, cv) := alloc b (Ecos vV) in
+  let (b, sv) := alloc b (Esin vV) in
+  let (b, X) := alloc b (Emul Rt cv) in
+  let (b, Y) := alloc b (Emul Rt sv) in
+  let (b, Xu) := alloc b (Emul Ru cv) in
+  let (b, Yu) := alloc b (Emul Ru sv) in
+  let (b, Xv) := alloc b (Esub (Emul Rv cv) Y) in
+  let (b, Yv) := alloc b (Eadd (Emul Rv sv) X) in
+  let '(n1, n2, n3) := cross3 Xu Yu Zu Xv Yv Zv in
+  let (b, n1) := alloc b n1 in
+  let (b, n2) := alloc b n2 in
+  let (b, n3) := alloc b n3 in
+  (* the field, as the sum over the source points *)
+  let (b, ts) := coil_terms_b b lasym K X Y Zt 0 P in
+  let (b, B1) := sum_b b (map (fun t => fst (fst t)) ts) in
+  let (b, B2) := sum_b b (map (fun t => snd (fst t)) ts) in
+  let (b, B3) := sum_b b (map (fun t => snd t) ts) in
+  let (b, bn) := alloc b (Eadd (Eadd (Emul B1 n1) (Emul B2 n2)) (Emul B3 n3)) in
+  let (b, b2) := alloc b (Eadd (Eadd (esq B1) (esq B2)) (esq B3)) in
+  let (b, nn) := alloc b (Eadd (Eadd (esq n1) (esq n2)) (esq n3)) in
+  let (b, sn) := alloc b (Ediv bn (Esqrt (Emul b2 nn))) in
+  Residual3 (bindings_of b) sn bn b2.
+
 (** The mu0-scaled force residual: r_s at the node from the centered
     differences and averages of its two half points, r_u and r_v at the
     outer half point. *)
@@ -2012,13 +2733,15 @@ Definition residual_pre (cfg : pconfig) (modes : list (Z * Z)) : rstate :=
   let (b, rs) := alloc b (Esub (Esub (Emul (Esub B_s_v B_v_s) Bv)
                                      (Emul (Esub B_u_s B_s_u) Bu))
                                mu0pp) in
-  (* the two magnetic terms of that difference, as above *)
+  (* the two magnetic terms of that difference, as above; for a weighted
+     output, the residual cleared of the Jacobian and its weight *)
   let (b, tt) :=
     match pc_out cfg with
     | RTerms =>
         let (b, t1) := alloc b (Emul (Esub B_s_v B_v_s) Bv) in
         let (b, t2) := alloc b (Emul (Esub B_u_s B_s_u) Bu) in
         (b, (t1, t2))
+    | RWeighted _ _ => weighted_b b qm qp inv_h mu0pp
     | _ => (b, (e0, e0))
     end in
   RState b kers hcp qp mq mu0pp rs tt.
@@ -2153,6 +2876,26 @@ Definition residual_tail (cfg : pconfig) (modes : list (Z * Z)) (st : rstate)
       let (b, t) := qs2_b b qp (slot_F0 lasym K) in
       let '(qq, t1, t2) := t in
       Residual3 (bindings_of b) qq t1 t2
+  | RWeighted hm hn =>
+      (* the weighted radial residual against the kernel of one mode: its
+         integral over the surface is the resonant harmonic of (Gm Gp)^3 r_s,
+         which Harmonic.v computes exactly *)
+      let (b, k) := alloc b (Ecos (kern_arg hm hn)) in
+      let (b, ks) := alloc b (Esin (kern_arg hm hn)) in
+      let (b, hc) := alloc b (Emul (fst tt) k) in
+      let (b, hs) := alloc b (Emul (fst tt) ks) in
+      let (b, pw) := alloc b (fst tt) in
+      Residual3 (bindings_of b) hc hs pw
+  | RJump _ => Residual3 (bindings_of b) rs ru rv
+  | RNewcomb _ _ => Residual3 (bindings_of b) rs ru rv
+  | RIota _ _ => Residual3 (bindings_of b) rs ru rv
+  | REnergy => Residual3 (bindings_of b) rs ru rv
+  | RCoil _ => Residual3 (bindings_of b) rs ru rv
+  | RForced =>
+      let (b, fs) := alloc b (Esub rs (slot_src lasym K 0)) in
+      let (b, fu) := alloc b (Esub ru (slot_src lasym K 1)) in
+      let (b, fv) := alloc b (Esub rv (slot_src lasym K 2)) in
+      Residual3 (bindings_of b) fs fu fv
   | RRadial => Residual3 (bindings_of b) rs ru rv
   | RRadialGeom => Residual3 (bindings_of b) rs ru rv
   | RRadialShear => Residual3 (bindings_of b) rs ru rv
@@ -2171,6 +2914,13 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
          interval the node's two half points bracket. It allocates its own
          kernels, after the stage no angle or radius reaches. *)
       snd (full_point_b b lasym modes K (pc_prof cfg) (pc_out cfg))
-  else residual_tail cfg modes (residual_pre cfg modes).
+  else match pc_out cfg with
+       | RJump vm => jump_b b lasym modes K (pc_prof cfg) vm
+       | RNewcomb hm hn => newcomb_b b lasym modes K (pc_prof cfg) hm hn
+       | RIota hm hn => iota_b b hm hn
+       | REnergy => energy_b b lasym modes K (pc_prof cfg)
+       | RCoil P => coil_b b lasym modes K P
+       | _ => residual_tail cfg modes (residual_pre cfg modes)
+       end.
 
 End WithExponents.

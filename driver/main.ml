@@ -986,7 +986,9 @@ let run_mercier path =
      K m e                    the contraction constant
      M m e                    a bound on every Jacobian entry over the box
      A m e m e m e m e        n rows of n dyadic entries, row-major
-     B m e m e m e m e *)
+     B m e m e m e m e
+     ANORM m e                optional: a bound on the row sums of |A|,
+                              which "--stability" reads *)
 (* The pressure's closed form, as a certificate names it. *)
 let parse_profile tok int64 =
   match tok () with
@@ -1019,18 +1021,31 @@ let parse_profile tok int64 =
      ...
      LASYM 0
      PROFILE POWER
+     OUTPUT forced            optional: the node residual less a source the
+                              points carry (Physics.RForced); the node
+                              residual itself when absent
      MODES K then K pairs
      NPOINTS P
      POINT out s0 s1 ...      out is 0 for r_s, 1 for r_u, 2 for r_v, then the
                               global slot of each of the point's local input
-                              slots, 32 + 8K of them (16K under LASYM 1)
+                              slots, 32 + 8K of them (16K under LASYM 1), and
+                              three more for the source of a forced system
 
    The unknowns are slots 0 .. N-1 and the parameters follow them.
    "--newton-eval" prints, instead of a verdict, the enclosures of the
    outputs at the centre and of every Jacobian entry over the box, and the
    row sums the test compares with K, so that a generator can place the
-   centre by Newton's method and choose K and R. *)
-let run_newton path eval_only =
+   centre by Newton's method and choose K and R; "--newton-centre" prints the
+   outputs at the centre alone. With PREC above 53 the outputs at the centre
+   are read through Wide.v at that precision (Newton.centre_tab), which is
+   what lets a generator refine the centre past binary64 and what keeps
+   |A F(c)|, and so R, from being set by binary64 rounding. "--stability" runs the
+   Jacobian half of the test with the ANORM bound (Newton.stability,
+   Colloc.colloc_stability): no zero is asked for, and a passing verdict
+   bounds how far apart two states of the box are by ANORM / (1 - K) times
+   how far apart their outputs are. *)
+let run_newton path mode =
+  let eval_only = (mode = `Eval) in
   let t = tokens_of_file path in
   let p = ref 0 in
   let tok () = let x = t.(!p) in incr p; x in
@@ -1059,10 +1074,18 @@ let run_newton path eval_only =
         Stdlib.List.init n (fun _ -> let m = z () in let e = z () in (m, e))) in
   expect "A"; let a = matrix () in
   expect "B"; let b = matrix () in
+  let anorm =
+    if !p < Array.length t && t.(!p) = "ANORM" then begin
+      incr p; let m = z () in let e = z () in Some (m, e)
+    end else None in
   let gexps = exps @ Stdlib.List.map snd params in
   let gcentre = centre @ Stdlib.List.map fst params in
   let zprec = z_of_int64 prec in
-  let (sys, check) =
+  let an_of () =
+    match anorm with
+    | Some me -> me
+    | None -> prerr_endline "--stability needs an ANORM line"; exit 2 in
+  let (sys, check, stab) =
     match name with
     | "circle" ->
         if n <> 2 then (prerr_endline "the circle has two unknowns"; exit 2);
@@ -1074,16 +1097,27 @@ let run_newton path eval_only =
             Newton.sy_A = a; Newton.sy_B = b;
             Newton.sy_KN = kn; Newton.sy_Kq = kq;
             Newton.sy_MN = mn; Newton.sy_Mq = mq } in
-        (sys, (fun () -> Newton.check_newton sys))
+        (sys, (fun () -> Newton.check_newton sys),
+         (fun () ->
+            let (an, aq) = an_of () in
+            Newton.check_core sys && Newton.check_anorm sys an aq))
     | "colloc" ->
         expect "LASYM"; let lasym = (tok () = "1") in
         expect "PROFILE"; let prof = parse_profile tok i64 in
+        let out =
+          if t.(!p) = "OUTPUT" then begin
+            incr p;
+            match tok () with
+            | "residual" -> Physics.RResidual
+            | "forced" -> Physics.RForced
+            | s -> Printf.eprintf "a collocation carries no OUTPUT %s\n" s; exit 2
+          end else Physics.RResidual in
         expect "MODES"; let nk = Int64.to_int (i64 ()) in
         let modes =
           Stdlib.List.init nk (fun _ -> let m = z () in let nn = z () in (m, nn)) in
         let cfg = { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
-                    Physics.pc_out = Physics.RResidual } in
-        let base_local = Physics.base_scratch_of lasym Physics.RResidual nk in
+                    Physics.pc_out = out } in
+        let base_local = Physics.base_scratch_of lasym out nk in
         expect "NPOINTS"; let np = Int64.to_int (i64 ()) in
         let pts =
           Stdlib.List.init np (fun _ ->
@@ -1098,17 +1132,24 @@ let run_newton path eval_only =
         let sys =
           Colloc.colloc_system base_local gexps cfg modes zprec n gcentre r a b
             kn kq mn mq pts in
+        let refused () =
+          (* name the point a failing assembly check refuses, since the
+             verdict alone does not *)
+          Stdlib.List.iteri (fun i pt ->
+              if not (Colloc.point_ok base_local gexps cfg modes
+                        (Stdlib.List.length gcentre) pt) then
+                Printf.printf "  point %d fails the assembly check\n%!" i)
+            pts in
         (sys,
          (fun () ->
-            (* name the point a failing assembly check refuses, since the
-               verdict alone does not *)
-            Stdlib.List.iteri (fun i pt ->
-                if not (Colloc.point_ok base_local gexps cfg modes
-                          (Stdlib.List.length gcentre) pt) then
-                  Printf.printf "  point %d fails the assembly check\n%!" i)
-              pts;
+            refused ();
             Colloc.colloc_check base_local gexps cfg modes zprec n gcentre r a b
-              kn kq mn mq pts))
+              kn kq mn mq pts),
+         (fun () ->
+            refused ();
+            let (an, aq) = an_of () in
+            Colloc.colloc_core base_local gexps cfg modes zprec n gcentre r a b
+              kn kq mn mq pts an aq))
     | s -> Printf.eprintf "unknown SYSTEM %s\n" s; exit 2 in
   Printf.printf
     "interval Newton test on %s: %d unknowns, radius %s mantissa units, \
@@ -1123,10 +1164,22 @@ let run_newton path eval_only =
         Printf.printf "  unknown %d: %.17g, within %.3e\n%!" i v w)
       (Stdlib.List.combine centre exps);
   let t0 = Unix.gettimeofday () in
-  if eval_only then begin
+  if mode = `Centre then begin
+    (* the outputs at the centre alone, as the check reads them: through
+       Wide.v when PREC exceeds 53 *)
+    let ft = Newton.centre_tab sys in
+    let nth_i l k = match nth_list l k with Some v -> v | None -> Expr.I.nai in
+    Printf.printf "NEWTON-CENTRE %d\n" n;
+    for k = 0 to n - 1 do
+      let v = nth_i ft k in
+      Printf.printf "F %d %h %h\n" k (ilo v) (ihi v)
+    done;
+    Printf.printf "centre outputs at precision %Ld (%.1f s)\n%!" prec
+      (Unix.gettimeofday () -. t0)
+  end else if eval_only then begin
     (* the outputs at the centre and the Jacobian over the box, in the same
        tabulation the check reads, with the row sums the test compares *)
-    let ft = Newton.coq_Fctab sys in
+    let ft = Newton.centre_tab sys in
     let jt = Newton.coq_Jtab sys in
     let nth_i l k = match nth_list l k with Some v -> v | None -> Expr.I.nai in
     let entry k j = nth_i (match nth_list jt j with Some c -> c | None -> []) k in
@@ -1159,6 +1212,21 @@ let run_newton path eval_only =
       "row sums of |I - A J| at most %.3e and of |I - B A| at most %.3e, \
        |A F(c)| at most %.3e, entries at most %.3e (%.1f s)\n%!"
       !rowg !rowh !vmax !jmax (t1 -. t0)
+  end else if mode = `Stability then begin
+    let ok = stab () in
+    let t1 = Unix.gettimeofday () in
+    let (an, aq) = an_of () in
+    let na = float_of_z an *. (2.0 ** float_of_z aq) in
+    let k = float_of_z kn *. (2.0 ** float_of_z kq) in
+    if ok then
+      Printf.printf
+        "verdict: STABLE   any two states of the box differ by at most \
+         %.6e times the largest difference of their outputs, in mantissa \
+         units (ANORM %.6e, K %.6e) (%.1f s)\n%!"
+        (na /. (1.0 -. k)) na k (t1 -. t0)
+    else
+      Printf.printf "verdict: OPEN   the Jacobian test does not pass (%.1f s)\n%!"
+        (t1 -. t0)
   end else begin
     let ok = check () in
     let t1 = Unix.gettimeofday () in
@@ -1168,6 +1236,911 @@ let run_newton path eval_only =
        else "the test does not establish a zero")
       (t1 -. t0)
   end
+
+(* ---- integral certificates (theories/Integral.v) ------------------------- *)
+
+(* What the three components carry, as a certificate names it. *)
+let parse_output tok int64 =
+  let pair f = let hm = int64 () in let hn = int64 () in
+    f (z_of_int64 hm, z_of_int64 hn) in
+  match tok () with
+  | "residual" -> Physics.RResidual
+  | "geometry" -> Physics.RGeometry
+  | "mercier-a" -> Physics.RMercierA
+  | "mercier-b" -> Physics.RMercierB
+  | "radial" -> Physics.RRadial
+  | "radial-geometry" -> Physics.RRadialGeom
+  | "radial-shear" -> Physics.RRadialShear
+  | "radial-axis" -> Physics.RRadialAxis
+  | "terms" -> Physics.RTerms
+  | "radial-terms" -> Physics.RRadialTerms
+  | "current-terms" -> Physics.RJsTerms
+  | "radial-current-terms" -> Physics.RRadialJsTerms
+  | "quasisym" -> Physics.RQuasiSym
+  | "quasisym-two" -> Physics.RQuasiTwo
+  | "stream-defect" -> Physics.RStreamDefect
+  | "covariant" -> pair (fun (a, b) -> Physics.RCovHarm (a, b))
+  | "covariant-sin" -> pair (fun (a, b) -> Physics.RCovHarmS (a, b))
+  | "boozer" -> pair (fun (a, b) -> Physics.RBoozer (a, b))
+  | "harmonic" -> pair (fun (a, b) -> Physics.RHarmonic (a, b))
+  | "weighted" -> pair (fun (a, b) -> Physics.RWeighted (a, b))
+  | "jump" ->
+      let nv = Int64.to_int (int64 ()) in
+      Physics.RJump (Stdlib.List.init nv (fun _ ->
+          let m = int64 () in let n = int64 () in (z_of_int64 m, z_of_int64 n)))
+  | "newcomb" -> pair (fun (a, b) -> Physics.RNewcomb (a, b))
+  | "iota" -> pair (fun (a, b) -> Physics.RIota (a, b))
+  | "coil" -> Physics.RCoil (Int64.to_int (int64 ()))
+  | s -> prerr_endline ("unknown OUTPUT " ^ s); exit 2
+
+(* STELLAROCQ-HCERT
+     PREC 53
+     LASYM 0
+     PROFILE POWER
+     OUTPUT weighted 2 1
+     MODES K                  then K pairs m n
+     NSLOTS n
+     STATE                    n triples: mantissa, exponent, half-width
+     SLOTS su sv              the two angle slots
+     COMP k                   0, 1 or 2
+     GRID Nu Nv               equispaced points along each angle
+
+   Harmonic.check_harm establishes it: the degree analysis of TrigExpr.v puts
+   the component below the grid, so the grid sum is the integral over the
+   torus, and Harmonic.harm_total encloses that integral at every state of
+   the box. Rows are shared over forked shards; each computes Harmonic.hrow
+   for its rows, and the parent sums them with Cell.isum in their order and
+   multiplies by the weight, which is harm_total's own arithmetic. *)
+let read_hcert path =
+  let t = tokens_of_file path in
+  let p = ref 0 in
+  let tok () = let x = t.(!p) in incr p; x in
+  let expect w =
+    let x = tok () in
+    if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
+  let i64 () = Int64.of_string (tok ()) in
+  let z () = z_of_int64 (i64 ()) in
+  expect "STELLAROCQ-HCERT";
+  expect "PREC"; let prec = i64 () in
+  expect "LASYM"; let lasym = (tok () = "1") in
+  expect "PROFILE"; let prof = parse_profile tok i64 in
+  expect "OUTPUT"; let out = parse_output tok i64 in
+  expect "MODES"; let nk = Int64.to_int (i64 ()) in
+  let modes = Stdlib.List.init nk (fun _ -> let m = z () in let n = z () in (m, n)) in
+  expect "NSLOTS"; let nslots = Int64.to_int (i64 ()) in
+  expect "STATE";
+  let st = Array.init nslots (fun _ ->
+      let m = z () in let e = z () in let d = z () in (m, e, d)) in
+  expect "SLOTS"; let su = Int64.to_int (i64 ()) in let sv = Int64.to_int (i64 ()) in
+  expect "COMP"; let comp = Int64.to_int (i64 ()) in
+  expect "GRID"; let nu = Int64.to_int (i64 ()) in let nv = Int64.to_int (i64 ()) in
+  let cfg = { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
+              Physics.pc_out = out } in
+  let lst f = Array.to_list (Array.map f st) in
+  { Harmonic.hc_prec = z_of_int64 prec; Harmonic.hc_cfg = cfg;
+    Harmonic.hc_modes = modes;
+    Harmonic.hc_es = lst (fun (_, e, _) -> e);
+    Harmonic.hc_ms = lst (fun (m, _, _) -> m);
+    Harmonic.hc_ds = lst (fun (_, _, d) -> d);
+    Harmonic.hc_su = su; Harmonic.hc_sv = sv; Harmonic.hc_comp = comp;
+    Harmonic.hc_Nu = nu; Harmonic.hc_Nv = nv }
+
+(* "--harm FILE": the verdict and the enclosure of the integral. "--dharm
+   FILE" reads the same file and establishes it with Harmonic.check_dharm
+   instead: no degree bound is asked for, and what the enclosure holds is the
+   equispaced rule's discrete harmonic, Harmonic.dharm_correct. *)
+let run_harm ?(discrete = false) src =
+  let c = read_hcert src in
+  let prec = Harmonic.hprec_of c in
+  let r3 = Harmonic.hres c in
+  let binds = r3.Physics.r_binds in
+  let base = Harmonic.hbase c in
+  let su = c.Harmonic.hc_su and sv = c.Harmonic.hc_sv in
+  let es = c.Harmonic.hc_es in
+  let eu = nth_z es su and ev = nth_z es sv in
+  let nu = c.Harmonic.hc_Nu and nv = c.Harmonic.hc_Nv in
+  let n =
+    match Cell.slot_of (Harmonic.hcomp r3 c.Harmonic.hc_comp) with
+    | Some n -> n
+    | None -> prerr_endline "the component is not a slot reference"; exit 2 in
+  let deg =
+    Expr.eget n (TrigExpr.tdeg_binds su sv base eu ev Expr.eempty binds) None in
+  (match deg with
+   | Some (du, dv) ->
+       Printf.printf "degree of the component: %d in the first angle, %d in the \
+                      second; grid %d by %d\n%!" du dv nu nv
+   | None -> Printf.printf "the component is outside the polynomial class\n%!");
+  Printf.printf "%d input slots, %d bindings\n%!" base (Stdlib.List.length binds);
+  let t0 = Unix.gettimeofday () in
+  let structural = Harmonic.harm_struct c in
+  let first = Harmonic.bounded (Harmonic.harm_first c) in
+  let w = Box.wide_ienv prec c.Harmonic.hc_ms c.Harmonic.hc_ds in
+  let jobs_n = max 1 (min (jobs ()) nv) in
+  let tmp = Filename.temp_file "stellarocq" ".harm" in
+  let bounds k = (k * nv / jobs_n, (k + 1) * nv / jobs_n) in
+  let pids =
+    Stdlib.List.init jobs_n (fun k ->
+        match Unix.fork () with
+        | 0 ->
+            let (lo, hi) = bounds k in
+            let oc = open_out (Printf.sprintf "%s%d" tmp k) in
+            for l = lo to hi - 1 do
+              let x = Harmonic.hrow prec w su sv eu ev nu nv binds n l in
+              Printf.fprintf oc "%h %h\n" (ilo x) (ihi x)
+            done;
+            close_out oc; exit 0
+        | pid -> pid) in
+  Stdlib.List.iter (fun pid ->
+      match snd (Unix.waitpid [] pid) with
+      | Unix.WEXITED 0 -> ()
+      | _ -> prerr_endline "a harmonic shard failed"; exit 3) pids;
+  let rows = ref [] in
+  for k = 0 to jobs_n - 1 do
+    let (lo, hi) = bounds k in
+    let ic = open_in (Printf.sprintf "%s%d" tmp k) in
+    for _ = lo to hi - 1 do
+      Scanf.sscanf (input_line ic) "%h %h" (fun a b -> rows := Float.Ibnd (a, b) :: !rows)
+    done;
+    close_in ic; Sys.remove (Printf.sprintf "%s%d" tmp k)
+  done;
+  let weight = Expr.ieval prec Expr.eempty (Harmonic.hweight_e nu nv) in
+  let total = Expr.I.mul prec (Cell.isum prec (Stdlib.List.rev !rows)) weight in
+  let ok =
+    if discrete then Harmonic.check_dharm c
+    else structural && nu > 0 && nv > 0 && first in
+  let t1 = Unix.gettimeofday () in
+  Printf.printf "verdict: %s (%.1f s)\n%!" (if ok then "VALID" else "INVALID") (t1 -. t0);
+  if ok then begin
+    Printf.printf "%s: [%.17e, %.17e]\n"
+      (if discrete then "discrete harmonic" else "integral over the torus")
+      (ilo total) (ihi total);
+    if ilo total > 0.0 then Printf.printf "floor: the integral is at least %.6e\n" (ilo total)
+    else if ihi total < 0.0 then Printf.printf "floor: the integral is at most %.6e\n" (ihi total)
+    else Printf.printf "floor: none, the enclosure contains zero\n"
+  end;
+  exit (if ok then 0 else 1)
+
+(* STELLAROCQ-ICERT
+     PREC 53
+     LASYM 0
+     PROFILE POWER
+     OUTPUT harmonic 2 1
+     MODES K                  then K pairs m n
+     NSLOTS n                 the number of input slots
+     STATE                    n triples: mantissa, exponent, half-width
+     SLOTS su sv              the two slots integrated over
+     COMP k                   0 for r_s, 1 for r_u, 2 for r_v
+     U au du NU               cell i of the first slot centred at au + (2i+1) du
+     V av dv NV
+     CELLS                    NU * NV lines of six integers, the rows of the
+                              second slot outer and the columns inner:
+                              Nuu quu Nvv qvv Ndv qdv
+
+   Integral.check_int establishes a file, and Integral.int_total is the
+   enclosure of the integral over the rectangle it tiles, at every state whose
+   slots lie within their half-widths of the stated mantissas. *)
+let read_icert path =
+  let t = tokens_of_file path in
+  let p = ref 0 in
+  let tok () = let x = t.(!p) in incr p; x in
+  let expect w =
+    let x = tok () in
+    if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
+  let i64 () = Int64.of_string (tok ()) in
+  let z () = z_of_int64 (i64 ()) in
+  expect "STELLAROCQ-ICERT";
+  expect "PREC"; let prec = i64 () in
+  expect "LASYM"; let lasym = (tok () = "1") in
+  expect "PROFILE"; let prof = parse_profile tok i64 in
+  expect "OUTPUT"; let out = parse_output tok i64 in
+  expect "MODES"; let nk = Int64.to_int (i64 ()) in
+  let modes = Stdlib.List.init nk (fun _ -> let m = z () in let n = z () in (m, n)) in
+  expect "NSLOTS"; let nslots = Int64.to_int (i64 ()) in
+  expect "STATE";
+  let st = Array.init nslots (fun _ ->
+      let m = z () in let e = z () in let d = z () in (m, e, d)) in
+  expect "SLOTS"; let su = Int64.to_int (i64 ()) in let sv = Int64.to_int (i64 ()) in
+  expect "COMP"; let comp = Int64.to_int (i64 ()) in
+  expect "U"; let au = z () in let du = z () in let nu = Int64.to_int (i64 ()) in
+  expect "V"; let av = z () in let dv = z () in let nv = Int64.to_int (i64 ()) in
+  expect "CELLS";
+  let rows =
+    Stdlib.List.init nv (fun _ ->
+        Stdlib.List.init nu (fun _ ->
+            let a = z () in let b = z () in let c = z () in
+            let d = z () in let e = z () in let f = z () in
+            { Integral.ib_Nuu = a; Integral.ib_quu = b;
+              Integral.ib_Nvv = c; Integral.ib_qvv = d;
+              Integral.ib_Ndv = e; Integral.ib_qdv = f })) in
+  let cfg = { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
+              Physics.pc_out = out } in
+  let lst f = Array.to_list (Array.map f st) in
+  let c =
+    { Integral.ic_prec = z_of_int64 prec; Integral.ic_cfg = cfg;
+      Integral.ic_modes = modes;
+      Integral.ic_es = lst (fun (_, e, _) -> e);
+      Integral.ic_ms = lst (fun (m, _, _) -> m);
+      Integral.ic_ds = lst (fun (_, _, d) -> d);
+      Integral.ic_su = su; Integral.ic_sv = sv; Integral.ic_comp = comp;
+      Integral.ic_au = au; Integral.ic_du = du;
+      Integral.ic_av = av; Integral.ic_dv = dv;
+      Integral.ic_rows = rows } in
+  let (_, esu, _) = st.(su) and (_, esv, _) = st.(sv) in
+  (c, t, nu, nv, esu, esv)
+
+(* The pieces check_int builds once, for a driver that shards its rows. *)
+let int_parts (c : Integral.icert) =
+  let prec = Integral.iprec_of c in
+  let r3 = Integral.ires c in
+  let binds = r3.Physics.r_binds in
+  let base = Integral.ibase c in
+  let len = Stdlib.List.length binds in
+  let su = c.Integral.ic_su and sv = c.Integral.ic_sv in
+  let w = Box.wide_ienv prec c.Integral.ic_ms c.Integral.ic_ds in
+  let n =
+    match Cell.slot_of (Integral.icomp r3 c.Integral.ic_comp) with
+    | Some n -> n
+    | None -> prerr_endline "the component is not a slot reference"; exit 2 in
+  let wu = Deriv.with_derivs2 su base len binds in
+  let wv = Deriv.with_derivs2 sv base len binds in
+  (prec, binds, base, len, su, sv, w, n, wu, wv)
+
+(* "--int-tighten IN OUT": write the three bounds of every cell as the
+   enclosures the extracted code computes over the cell's box, each grown until
+   check1 accepts it. The result is an ordinary file, established by "--int". *)
+let run_int_tighten src dst =
+  let (c, _, nu, nv, _, _) = read_icert src in
+  let (prec, _, base, len, su, sv, w, n, wu, wv) = int_parts c in
+  Printf.printf "%d input slots, %d bindings, %d by %d cells\n%!" base len nu nv;
+  let au = c.Integral.ic_au and du = c.Integral.ic_du in
+  let av = c.Integral.ic_av and dv = c.Integral.ic_dv in
+  let ncell = nu * nv in
+  let jobs_n = max 1 (min (jobs ()) nv) in
+  let row_bounds j =
+    let mv = Integral.icentre av dv j in
+    Stdlib.List.init nu (fun i ->
+        let mu = Integral.icentre au du i in
+        let ib = Integral.icell_box prec w su sv mu mv du dv in
+        let envu = Expr.iextend prec ib wu in
+        let envv = Expr.iextend prec ib wv in
+        let (a, b) = bound_for prec envu (Expr.Evar (n + 2 * len)) in
+        let (cc, d) = bound_for prec envv (Expr.Evar (n + 2 * len)) in
+        let (e, f) = bound_for prec envv (Expr.Evar (n + len)) in
+        Printf.sprintf "%Ld %Ld %Ld %Ld %Ld %Ld" a b cc d e f) in
+  let tmp = dst ^ ".part" in
+  let pids =
+    Stdlib.List.init jobs_n (fun k ->
+        match Unix.fork () with
+        | 0 ->
+            let oc = open_out (Printf.sprintf "%s%d" tmp k) in
+            let j = ref k in
+            while !j < nv do
+              Stdlib.List.iter (fun s -> output_string oc (s ^ "\n")) (row_bounds !j);
+              j := !j + jobs_n
+            done;
+            close_out oc; exit 0
+        | pid -> pid) in
+  Stdlib.List.iter (fun pid ->
+      match snd (Unix.waitpid [] pid) with
+      | Unix.WEXITED 0 -> ()
+      | _ -> prerr_endline "a tightening shard failed"; exit 3) pids;
+  let lines = Array.make ncell "" in
+  for k = 0 to jobs_n - 1 do
+    let ic = open_in (Printf.sprintf "%s%d" tmp k) in
+    let j = ref k in
+    while !j < nv do
+      for i = 0 to nu - 1 do lines.(!j * nu + i) <- input_line ic done;
+      j := !j + jobs_n
+    done;
+    close_in ic; Sys.remove (Printf.sprintf "%s%d" tmp k)
+  done;
+  (* everything before CELLS is copied as it was *)
+  let src_text = let ic = open_in_bin src in
+    let s = really_input_string ic (in_channel_length ic) in close_in ic; s in
+  let head =
+    let w = "\nCELLS" in
+    let n = String.length src_text and m = String.length w in
+    let rec go i =
+      if i + m > n then (prerr_endline "no CELLS line"; exit 2)
+      else if String.sub src_text i m = w then String.sub src_text 0 (i + 1)
+      else go (i + 1) in
+    go 0 in
+  let oc = open_out dst in
+  output_string oc head;
+  output_string oc "CELLS\n";
+  Array.iter (fun l -> output_string oc (l ^ "\n")) lines;
+  close_out oc;
+  Printf.printf "wrote %s\n%!" dst
+
+(* "--int FILE": establish the file and print the enclosure of the integral.
+   Rows are split over forked shards: check_int is the conjunction of its
+   structural conditions and rows_check over the rows, rows_check over a list is
+   the conjunction over any split of it with the row index carried along, and
+   int_total is Cell.isum over rows_contribs, whose entries each shard computes
+   for its own rows. The parent runs the structural half of check_int itself
+   and sums the row totals with Cell.isum in their order, so the list it sums
+   is the list int_total sums. *)
+let run_int src =
+  let (c, _, nu, nv, esu, esv) = read_icert src in
+  let (prec, binds, base, len, su, sv, w, n, wu, wv) = int_parts c in
+  Printf.printf "integral over %d by %d cells, %d input slots, %d bindings\n%!"
+    nu nv base len;
+  let t0 = Unix.gettimeofday () in
+  let structural = Integral.check_int { c with Integral.ic_rows = [] } in
+  let au = c.Integral.ic_au and du = c.Integral.ic_du in
+  let av = c.Integral.ic_av and dv = c.Integral.ic_dv in
+  let nu_c = Integral.inu c in
+  let rows = Array.of_list c.Integral.ic_rows in
+  let jobs_n = max 1 (min (jobs ()) nv) in
+  let tmp = Filename.temp_file "stellarocq" ".int" in
+  (* shard k takes a contiguous run of rows, so its rows_check carries the row
+     index of its first row *)
+  let bounds k = (k * nv / jobs_n, (k + 1) * nv / jobs_n) in
+  let pids =
+    Stdlib.List.init jobs_n (fun k ->
+        match Unix.fork () with
+        | 0 ->
+            let (lo, hi) = bounds k in
+            let sub = Array.to_list (Array.sub rows lo (hi - lo)) in
+            let ok = Integral.rows_check prec w su sv len n wu wv au du av dv nu_c lo sub in
+            let tot = Integral.rows_contribs prec w su sv n binds au du av dv lo sub in
+            let oc = open_out (Printf.sprintf "%s%d" tmp k) in
+            Printf.fprintf oc "%d\n" (if ok then 1 else 0);
+            Stdlib.List.iter (fun x -> Printf.fprintf oc "%h %h\n" (ilo x) (ihi x)) tot;
+            close_out oc; exit 0
+        | pid -> pid) in
+  Stdlib.List.iter (fun pid ->
+      match snd (Unix.waitpid [] pid) with
+      | Unix.WEXITED 0 -> ()
+      | _ -> prerr_endline "an integration shard failed"; exit 3) pids;
+  let ok = ref structural in
+  let parts = ref [] in
+  for k = 0 to jobs_n - 1 do
+    let (lo, hi) = bounds k in
+    let ic = open_in (Printf.sprintf "%s%d" tmp k) in
+    if int_of_string (input_line ic) <> 1 then ok := false;
+    for _ = lo to hi - 1 do
+      Scanf.sscanf (input_line ic) "%h %h" (fun a b -> parts := Float.Ibnd (a, b) :: !parts)
+    done;
+    close_in ic; Sys.remove (Printf.sprintf "%s%d" tmp k)
+  done;
+  let total = Cell.isum prec (Stdlib.List.rev !parts) in
+  let t1 = Unix.gettimeofday () in
+  (* the integral is in mantissa units of the two slots; one unit of each is
+     2^e, so the product of the two powers scales it, in the same arithmetic *)
+  let scl = Expr.ieval prec Expr.eempty (Expr.Epow2 (BinInt.Z.add esu esv)) in
+  let scaled = Expr.I.mul prec total scl in
+  Printf.printf "verdict: %s (%.1f s)\n%!"
+    (if !ok then "VALID" else "INVALID") (t1 -. t0);
+  if !ok then begin
+    Printf.printf "integral, mantissa units: [%.17e, %.17e]\n" (ilo total) (ihi total);
+    Printf.printf "integral: [%.17e, %.17e]\n" (ilo scaled) (ihi scaled);
+    if ilo scaled > 0.0 then Printf.printf "floor: the integral is at least %.6e\n" (ilo scaled)
+    else if ihi scaled < 0.0 then Printf.printf "floor: the integral is at most %.6e\n" (ihi scaled)
+    else Printf.printf "floor: none, the enclosure contains zero\n"
+  end;
+  exit (if !ok then 0 else 1)
+
+(* ---- Taylor cells over a box of states (theories/BoxCell.v) ------------- *)
+
+(* STELLAROCQ-BTCERT
+     PREC 53
+     LASYM 0
+     PROFILE TWOPOWER 5 10
+     OUTPUT jump V            then V pairs m n, the vacuum modes
+     MODES K                  then K pairs m n
+     NSLOTS n
+     STATE                    n triples: mantissa, exponent, half-width
+     SLOTS su sv              the two angle slots
+     COMP k                   0, 1 or 2
+     HALF du dv               the half-widths of every cell, mantissa units
+     GRID au av NU NV NFP     the cells are this grid, rows of sv outer
+     CELLS N                  then N lines of twelve integers:
+                              mu mv NDu qDu NDuu qDuu NDv qDv NDvv qDvv Nc qc
+
+   BoxCell.check_btcert establishes the cells, bt_tiles that they are the grid
+   and bt_period that the grid spans a field period, and bt_surface turns the
+   three into the bound at every point of the surface. *)
+let read_btcert path =
+  let t = tokens_of_file path in
+  let p = ref 0 in
+  let tok () = let x = t.(!p) in incr p; x in
+  let expect w =
+    let x = tok () in
+    if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
+  let i64 () = Int64.of_string (tok ()) in
+  let z () = z_of_int64 (i64 ()) in
+  expect "STELLAROCQ-BTCERT";
+  expect "PREC"; let prec = i64 () in
+  expect "LASYM"; let lasym = (tok () = "1") in
+  expect "PROFILE"; let prof = parse_profile tok i64 in
+  expect "OUTPUT"; let out = parse_output tok i64 in
+  expect "MODES"; let nk = Int64.to_int (i64 ()) in
+  let modes = Stdlib.List.init nk (fun _ -> let m = z () in let n = z () in (m, n)) in
+  expect "NSLOTS"; let nslots = Int64.to_int (i64 ()) in
+  expect "STATE";
+  let st = Array.init nslots (fun _ ->
+      let m = z () in let e = z () in let d = z () in (m, e, d)) in
+  expect "SLOTS"; let su = Int64.to_int (i64 ()) in let sv = Int64.to_int (i64 ()) in
+  expect "COMP"; let comp = Int64.to_int (i64 ()) in
+  expect "HALF"; let du = z () in let dv = z () in
+  expect "GRID";
+  let au = z () in let av = z () in
+  let nu = Int64.to_int (i64 ()) in let nv = Int64.to_int (i64 ()) in
+  let nfp = z () in
+  expect "CELLS"; let ncell = Int64.to_int (i64 ()) in
+  let cells = Stdlib.List.init ncell (fun _ ->
+      let mu = z () in let mv = z () in
+      let a = z () in let b = z () in let c = z () in let d = z () in
+      let e = z () in let f = z () in let g = z () in let h = z () in
+      let i = z () in let j = z () in
+      { BoxCell.bt_mu = mu; BoxCell.bt_mv = mv;
+        BoxCell.bt_NDu = a; BoxCell.bt_qDu = b;
+        BoxCell.bt_NDuu = c; BoxCell.bt_qDuu = d;
+        BoxCell.bt_NDv = e; BoxCell.bt_qDv = f;
+        BoxCell.bt_NDvv = g; BoxCell.bt_qDvv = h;
+        BoxCell.bt_Nc = i; BoxCell.bt_qc = j }) in
+  let cfg = { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
+              Physics.pc_out = out } in
+  let lst f = Array.to_list (Array.map f st) in
+  let c =
+    { BoxCell.btc_prec = z_of_int64 prec; BoxCell.btc_cfg = cfg;
+      BoxCell.btc_modes = modes;
+      BoxCell.btc_es = lst (fun (_, e, _) -> e);
+      BoxCell.btc_ms = lst (fun (m, _, _) -> m);
+      BoxCell.btc_ds = lst (fun (_, _, d) -> d);
+      BoxCell.btc_su = su; BoxCell.btc_sv = sv;
+      BoxCell.btc_du = du; BoxCell.btc_dv = dv;
+      BoxCell.btc_comp = comp; BoxCell.btc_cells = cells } in
+  (c, au, av, nu, nv, nfp)
+
+(* The pieces check_btcert builds once, named as it names them. *)
+let bt_parts (c : BoxCell.btcert) =
+  let prec = BoxCell.btprec_of c in
+  let r3 = BoxCell.btres c in
+  let binds = r3.Physics.r_binds in
+  let base = BoxCell.btbase c in
+  let len = Stdlib.List.length binds in
+  let su = c.BoxCell.btc_su and sv = c.BoxCell.btc_sv in
+  let w = Box.wide_ienv prec c.BoxCell.btc_ms c.BoxCell.btc_ds in
+  let n =
+    match Cell.slot_of (Integral.icomp r3 c.BoxCell.btc_comp) with
+    | Some n -> n
+    | None -> prerr_endline "the component is not a slot reference"; exit 2 in
+  let wu = Deriv.with_derivs2 su base len binds in
+  let wv = Deriv.with_derivs2 sv base len binds in
+  (prec, binds, base, len, su, sv, w, n, wu, wv)
+
+let float_of_dyadic (m : coq_Z) (q : coq_Z) = Stdlib.ldexp (float_of_z m) (int_of_float (float_of_z q))
+
+(* Run f over the cells in forked shards, each writing one line per cell;
+   return the lines in cell order. *)
+let bt_shards (cells : 'a array) (f : 'a -> string) =
+  let ncell = Array.length cells in
+  let jobs_n = max 1 (min (jobs ()) ncell) in
+  let tmp = Filename.temp_file "stellarocq" ".bt" in
+  let bounds k = (k * ncell / jobs_n, (k + 1) * ncell / jobs_n) in
+  let pids =
+    Stdlib.List.init jobs_n (fun k ->
+        match Unix.fork () with
+        | 0 ->
+            let (lo, hi) = bounds k in
+            let oc = open_out (Printf.sprintf "%s%d" tmp k) in
+            for i = lo to hi - 1 do output_string oc (f cells.(i) ^ "\n") done;
+            close_out oc; exit 0
+        | pid -> pid) in
+  Stdlib.List.iter (fun pid ->
+      match snd (Unix.waitpid [] pid) with
+      | Unix.WEXITED 0 -> ()
+      | _ -> prerr_endline "a cell shard failed"; exit 3) pids;
+  let out = Array.make ncell "" in
+  for k = 0 to jobs_n - 1 do
+    let (lo, hi) = bounds k in
+    let ic = open_in (Printf.sprintf "%s%d" tmp k) in
+    for i = lo to hi - 1 do out.(i) <- input_line ic done;
+    close_in ic; Sys.remove (Printf.sprintf "%s%d" tmp k)
+  done;
+  out
+
+(* "--bt-tighten IN OUT": the four derivative bounds of every cell of IN, read
+   back from the enclosures the extracted code computes, and the cell claim
+   grown until both of check_btcell's combinations pass. Only the centres of
+   IN's cells are read. The result is an ordinary file, established by
+   "--bt". *)
+let run_bt_tighten src dst =
+  let (c, _, _, _, _, _) = read_btcert src in
+  let (prec, _, base, len, su, sv, w, n, wu, wv) = bt_parts c in
+  let du = c.BoxCell.btc_du and dv = c.BoxCell.btc_dv in
+  let fdu = float_of_z du and fdv = float_of_z dv in
+  let cells = Array.of_list c.BoxCell.btc_cells in
+  Printf.printf "%d input slots, %d bindings, %d cells\n%!" base len (Array.length cells);
+  let t0 = Unix.gettimeofday () in
+  let one (b : BoxCell.btcell) =
+    let mu = b.BoxCell.bt_mu and mv = b.BoxCell.bt_mv in
+    let envc = Expr.iextend prec (Integral.icell_centre prec w su sv mu mv) wu in
+    let il = Integral.icell_box prec w su sv mu mv du Z0 in
+    let ib = Integral.icell_box prec w su sv mu mv du dv in
+    let envlu = Expr.iextend prec il wu in
+    let envlv = Expr.iextend prec il wv in
+    let envv = Expr.iextend prec ib wv in
+    let (a, qa) = bound_for prec envc (Expr.Evar (n + len)) in
+    let (bb, qb) = bound_for prec envlu (Expr.Evar (n + 2 * len)) in
+    let (cc, qc) = bound_for prec envlv (Expr.Evar (n + len)) in
+    let (dd, qd) = bound_for prec envv (Expr.Evar (n + 2 * len)) in
+    let v = Expr.ieval prec envc (Expr.Evar n) in
+    let ev = Expr.eset 0 Expr.eempty v in
+    let fl m q = Stdlib.ldexp (Int64.to_float m) (Int64.to_int q) in
+    let est = mag v +. fdu *. fl a qa +. fdu *. fdu *. fl bb qb
+              +. fdv *. fl cc qc +. fdv *. fdv *. fl dd qd in
+    let cell m q =
+      { b with BoxCell.bt_NDu = z_of_int64 a; BoxCell.bt_qDu = z_of_int64 qa;
+               BoxCell.bt_NDuu = z_of_int64 bb; BoxCell.bt_qDuu = z_of_int64 qb;
+               BoxCell.bt_NDv = z_of_int64 cc; BoxCell.bt_qDv = z_of_int64 qc;
+               BoxCell.bt_NDvv = z_of_int64 dd; BoxCell.bt_qDvv = z_of_int64 qd;
+               BoxCell.bt_Nc = z_of_int64 m; BoxCell.bt_qc = z_of_int64 q } in
+    let passes m q =
+      let cl = cell m q in
+      Checker.nonneg (Expr.ieval prec ev (BoxCell.btcell_comb_e du dv cl false (Expr.Evar 0)))
+      && Checker.nonneg (Expr.ieval prec ev (BoxCell.btcell_comb_e du dv cl true (Expr.Evar 0))) in
+    let rec go m q k =
+      if k > 200 then (prerr_endline "no cell claim accepted"; exit 2)
+      else if passes m q then (m, q)
+      else
+        let (m, q) = renorm (Int64.add m (Int64.add 1L (Int64.div m 4096L)), q) in
+        go m q (k + 1) in
+    let (m0, q0) = renorm (dyadic_ge est) in
+    let (m, q) = go m0 q0 0 in
+    Printf.sprintf "%s %s %Ld %Ld %Ld %Ld %Ld %Ld %Ld %Ld %Ld %Ld"
+      (Int64.to_string (Int64.of_float (float_of_z mu)))
+      (Int64.to_string (Int64.of_float (float_of_z mv)))
+      a qa bb qb cc qc dd qd m q in
+  let lines = bt_shards cells one in
+  let src_text = let ic = open_in_bin src in
+    let s = really_input_string ic (in_channel_length ic) in close_in ic; s in
+  let head =
+    let w = "\nCELLS" in
+    let n = String.length src_text and m = String.length w in
+    let rec go i =
+      if i + m > n then (prerr_endline "no CELLS line"; exit 2)
+      else if String.sub src_text i m = w then String.sub src_text 0 (i + 1)
+      else go (i + 1) in
+    go 0 in
+  let oc = open_out dst in
+  output_string oc head;
+  Printf.fprintf oc "CELLS %d\n" (Array.length lines);
+  Array.iter (fun l -> output_string oc (l ^ "\n")) lines;
+  close_out oc;
+  Printf.printf "wrote %s (%.1f s)\n%!" dst (Unix.gettimeofday () -. t0)
+
+(* STELLAROCQ-BPCERT
+     the lines of a BTCERT up to COMP, then
+     POINTS N                 then N lines: mu mv N q mode
+   where at the angle mantissas (mu, mv), at every state of the box, mode 0
+   claims |component| <= N 2^q, mode 1 N 2^q <= |component|, mode 2
+   N 2^q <= component and mode 3 component <= -N 2^q. BoxCell.check_bpcert
+   establishes it. *)
+let read_bpcert path =
+  let t = tokens_of_file path in
+  let p = ref 0 in
+  let tok () = let x = t.(!p) in incr p; x in
+  let expect w =
+    let x = tok () in
+    if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
+  let i64 () = Int64.of_string (tok ()) in
+  let z () = z_of_int64 (i64 ()) in
+  expect "STELLAROCQ-BPCERT";
+  expect "PREC"; let prec = i64 () in
+  expect "LASYM"; let lasym = (tok () = "1") in
+  expect "PROFILE"; let prof = parse_profile tok i64 in
+  expect "OUTPUT"; let out = parse_output tok i64 in
+  expect "MODES"; let nk = Int64.to_int (i64 ()) in
+  let modes = Stdlib.List.init nk (fun _ -> let m = z () in let n = z () in (m, n)) in
+  expect "NSLOTS"; let nslots = Int64.to_int (i64 ()) in
+  expect "STATE";
+  let st = Array.init nslots (fun _ ->
+      let m = z () in let e = z () in let d = z () in (m, e, d)) in
+  expect "SLOTS"; let su = Int64.to_int (i64 ()) in let sv = Int64.to_int (i64 ()) in
+  expect "COMP"; let comp = Int64.to_int (i64 ()) in
+  expect "POINTS"; let np = Int64.to_int (i64 ()) in
+  let pts = Stdlib.List.init np (fun _ ->
+      let mu = z () in let mv = z () in let n = z () in let q = z () in
+      let md = z () in
+      { BoxCell.bp_mu = mu; BoxCell.bp_mv = mv; BoxCell.bp_N = n; BoxCell.bp_q = q;
+        BoxCell.bp_mode = md }) in
+  let cfg = { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
+              Physics.pc_out = out } in
+  let lst f = Array.to_list (Array.map f st) in
+  { BoxCell.bpc_prec = z_of_int64 prec; BoxCell.bpc_cfg = cfg;
+    BoxCell.bpc_modes = modes;
+    BoxCell.bpc_es = lst (fun (_, e, _) -> e);
+    BoxCell.bpc_ms = lst (fun (m, _, _) -> m);
+    BoxCell.bpc_ds = lst (fun (_, _, d) -> d);
+    BoxCell.bpc_su = su; BoxCell.bpc_sv = sv; BoxCell.bpc_comp = comp;
+    BoxCell.bpc_pts = pts }
+
+(* "--bp-tighten IN OUT": each point's claim read back from the enclosure the
+   extracted code computes there, a ceiling or a floor as the point asks. *)
+let run_bp_tighten src dst =
+  let c = read_bpcert src in
+  let prec = BoxCell.bpprec_of c in
+  let r3 = BoxCell.bpres c in
+  let binds = r3.Physics.r_binds in
+  let r = Integral.icomp r3 c.BoxCell.bpc_comp in
+  let w = Box.wide_ienv prec c.BoxCell.bpc_ms c.BoxCell.bpc_ds in
+  let su = c.BoxCell.bpc_su and sv = c.BoxCell.bpc_sv in
+  let pts = Array.of_list c.BoxCell.bpc_pts in
+  let one (p : BoxCell.bpt) =
+    let env = Expr.iextend prec
+        (Integral.icell_centre prec w su sv p.BoxCell.bp_mu p.BoxCell.bp_mv) binds in
+    let mode = int_of_float (float_of_z p.BoxCell.bp_mode) in
+    (* a signed claim: the largest dyadic below the enclosure's near end that
+       the verified subtraction accepts, or zero *)
+    let signed neg =
+      let x = Expr.ieval prec env r in
+      let near = if neg then -. ihi x else ilo x in
+      let (m0, q0) = dyadic_le near in
+      let ok m q =
+        let e = Expr.Esub ((if neg then Expr.Eneg r else r),
+                           Checker.eps_e (z_of_int64 m) (z_of_int64 q)) in
+        Checker.nonneg (Expr.ieval prec env e) in
+      let rec go m q k =
+        if k > 200 || Int64.compare m 1L < 0 then (0L, 0L)
+        else if ok m q then (m, q)
+        else go (Int64.sub m (Int64.add 1L (Int64.div m 4096L))) q (k + 1) in
+      if Int64.compare m0 1L < 0 then (0L, 0L) else go m0 q0 0 in
+    let (m, q) =
+      match mode with
+      | 0 -> bound_for prec env r
+      | 1 -> floor_for prec env r
+      | 2 -> signed false
+      | _ -> signed true in
+    Printf.sprintf "%.0f %.0f %Ld %Ld %d" (float_of_z p.BoxCell.bp_mu)
+      (float_of_z p.BoxCell.bp_mv) m q mode in
+  let lines = bt_shards pts one in
+  let src_text = let ic = open_in_bin src in
+    let s = really_input_string ic (in_channel_length ic) in close_in ic; s in
+  let head =
+    let w = "\nPOINTS" in
+    let n = String.length src_text and m = String.length w in
+    let rec go i =
+      if i + m > n then (prerr_endline "no POINTS line"; exit 2)
+      else if String.sub src_text i m = w then String.sub src_text 0 (i + 1)
+      else go (i + 1) in
+    go 0 in
+  let oc = open_out dst in
+  output_string oc head;
+  Printf.fprintf oc "POINTS %d\n" (Array.length lines);
+  Array.iter (fun l -> output_string oc (l ^ "\n")) lines;
+  close_out oc;
+  Printf.printf "wrote %s\n%!" dst
+
+(* "--bp FILE": BoxCell.check_bpcert over the file; the largest ceiling and
+   every floor. *)
+let run_bp src =
+  let c = read_bpcert src in
+  let t0 = Unix.gettimeofday () in
+  let ok = BoxCell.check_bpcert c in
+  Printf.printf "%d points; verdict: %s (%.1f s)\n%!" (Stdlib.List.length c.BoxCell.bpc_pts)
+    (if ok then "VALID" else "INVALID") (Unix.gettimeofday () -. t0);
+  if ok then begin
+    let best = ref 0.0 in
+    Stdlib.List.iter (fun p ->
+        let x = float_of_dyadic p.BoxCell.bp_N p.BoxCell.bp_q in
+        let at = Printf.sprintf "at mantissas %.0f %.0f"
+            (float_of_z p.BoxCell.bp_mu) (float_of_z p.BoxCell.bp_mv) in
+        match int_of_float (float_of_z p.BoxCell.bp_mode) with
+        | 0 -> if x > !best then best := x
+        | 1 -> Printf.printf "floor %s: |component| >= %.17e\n" at x
+        | 2 -> Printf.printf "sign %s: component >= %.17e\n" at x
+        | _ -> Printf.printf "sign %s: component <= %.17e\n" at (-. x)) c.BoxCell.bpc_pts;
+    if !best > 0.0 then Printf.printf "largest ceiling: %.17e\n" !best
+  end;
+  exit (if ok then 0 else 1)
+
+(* ---- the two-term quasisymmetry defect over a box (theories/QSFloor.v) --- *)
+
+(* STELLAROCQ-QCERT
+     PREC 53
+     LASYM 0
+     PROFILE POWER
+     MODES K                  then K pairs m n
+     NSLOTS n
+     STATE                    n triples: mantissa, exponent, half-width
+     SLOTS su sv              the two angle slots
+     KERNELS k                then k triples s m n, s 1 for sine, 0 for cosine
+     NPOINTS P                then P pairs of angle mantissas
+
+   The output is always the two-term residual (Physics.RQuasiTwo), whose
+   second and third components are t1 and t2. "--qs" reads a bound on each
+   term off the enclosures at the points, runs QSFloor.check_qcert with those
+   bounds, and prints the enclosure of the harmonic of t1 and of t2 at every
+   kernel, endpoints in hexadecimal, which are the bounds QSFloor.qs_floor
+   takes for any two of them. The harmonics are QSFloor.qharm_vals of the
+   per-point enclosures, which QSFloor.qharm_vals_eq makes qharm_i. *)
+let run_qs path =
+  let t = tokens_of_file path in
+  let p = ref 0 in
+  let tok () = let x = t.(!p) in incr p; x in
+  let expect w =
+    let x = tok () in
+    if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
+  let i64 () = Int64.of_string (tok ()) in
+  let z () = z_of_int64 (i64 ()) in
+  expect "STELLAROCQ-QCERT";
+  expect "PREC"; let prec = i64 () in
+  expect "LASYM"; let lasym = (tok () = "1") in
+  expect "PROFILE"; let prof = parse_profile tok i64 in
+  expect "MODES"; let nk = Int64.to_int (i64 ()) in
+  let modes = Stdlib.List.init nk (fun _ -> let m = z () in let n = z () in (m, n)) in
+  expect "NSLOTS"; let nslots = Int64.to_int (i64 ()) in
+  expect "STATE";
+  let st = Array.init nslots (fun _ ->
+      let m = z () in let e = z () in let d = z () in (m, e, d)) in
+  expect "SLOTS"; let su = Int64.to_int (i64 ()) in let sv = Int64.to_int (i64 ()) in
+  expect "KERNELS"; let nker = Int64.to_int (i64 ()) in
+  let kern () = let s = (tok () = "1") in let m = z () in let n = z () in (s, m, n) in
+  let kernels = Stdlib.List.init nker (fun _ -> kern ()) in
+  expect "NPOINTS"; let np = Int64.to_int (i64 ()) in
+  let pts = Stdlib.List.init np (fun _ -> let mu = z () in let mv = z () in (mu, mv)) in
+  let cfg = { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
+              Physics.pc_out = Physics.RQuasiTwo } in
+  let lst f = Array.to_list (Array.map f st) in
+  let mk n1 q1 n2 q2 =
+    { QSFloor.qc_prec = z_of_int64 prec; QSFloor.qc_cfg = cfg; QSFloor.qc_modes = modes;
+      QSFloor.qc_es = lst (fun (_, e, _) -> e); QSFloor.qc_ms = lst (fun (m, _, _) -> m);
+      QSFloor.qc_ds = lst (fun (_, _, d) -> d); QSFloor.qc_su = su; QSFloor.qc_sv = sv;
+      QSFloor.qc_N1 = n1; QSFloor.qc_q1 = q1; QSFloor.qc_N2 = n2; QSFloor.qc_q2 = q2;
+      QSFloor.qc_pts = pts } in
+  let t0 = Unix.gettimeofday () in
+  (* the bounds: twice the largest magnitude of each term's enclosure *)
+  let c0 = mk (z_of_int64 1L) (z_of_int64 0L) (z_of_int64 1L) (z_of_int64 0L) in
+  let r3 = QSFloor.qres c0 in
+  (* each point's enclosure of both terms, from one evaluation of the
+     bindings there: what QSFloor.qcomp_i computes, which does not read the
+     bounds *)
+  let vals = Stdlib.List.map (fun pt ->
+      let env = QSFloor.qenv_i c0 pt in
+      let v k = Expr.ieval (QSFloor.qprec c0) env (Integral.icomp r3 k) in
+      (v 1, v 2)) pts in
+  let vals1 = Stdlib.List.map fst vals and vals2 = Stdlib.List.map snd vals in
+  let big1 = Stdlib.List.fold_left (fun a v -> max a (mag v)) 0.0 vals1 in
+  let big2 = Stdlib.List.fold_left (fun a v -> max a (mag v)) 0.0 vals2 in
+  let bound x =
+    let (m, q) = dyadic_le (2.0 *. x +. 1e-300) in (z_of_int64 m, z_of_int64 q) in
+  let (n1, q1) = bound big1 and (n2, q2) = bound big2 in
+  let c = mk n1 q1 n2 q2 in
+  let ok = QSFloor.check_qcert c in
+  Printf.printf "%d points, %d modes; |t1| <= %.3e, |t2| <= %.3e; verdict: %s (%.1f s)\n%!"
+    np nk (2.0 *. big1) (2.0 *. big2) (if ok then "VALID" else "INVALID")
+    (Unix.gettimeofday () -. t0);
+  if ok then begin
+    Stdlib.List.iteri (fun i (s, m, n) ->
+        let h1 = QSFloor.qharm_vals c vals1 s m n in
+        let h2 = QSFloor.qharm_vals c vals2 s m n in
+        Printf.printf "H %d %d %s %s %h %h %h %h\n%!" i (if s then 1 else 0)
+          (Int64.to_string (Int64.of_float (float_of_z m)))
+          (Int64.to_string (Int64.of_float (float_of_z n)))
+          (ilo h1) (ihi h1) (ilo h2) (ihi h2)) kernels;
+    Printf.printf "done (%.1f s)\n%!" (Unix.gettimeofday () -. t0)
+  end;
+  exit (if ok then 0 else 1)
+
+(* "--bt-profile FILE": the size of each binding family and the time one
+   evaluation of it takes at the first cell. *)
+let rec expr_size (e : Expr.expr) =
+  match e with
+  | Expr.Evar _ | Expr.EfromZ _ | Expr.Epi | Expr.Epow2 _ -> 1
+  | Expr.Eneg a | Expr.Esqrt a | Expr.Esin a | Expr.Ecos a | Expr.Eexp a
+  | Expr.Eatan a -> 1 + expr_size a
+  | Expr.Eadd (a, b) | Expr.Esub (a, b) | Expr.Emul (a, b) | Expr.Ediv (a, b) ->
+      1 + expr_size a + expr_size b
+
+let rec trig_count (e : Expr.expr) =
+  match e with
+  | Expr.Evar _ | Expr.EfromZ _ | Expr.Epi | Expr.Epow2 _ -> 0
+  | Expr.Esin a | Expr.Ecos a -> 1 + trig_count a
+  | Expr.Eneg a | Expr.Esqrt a | Expr.Eexp a | Expr.Eatan a -> trig_count a
+  | Expr.Eadd (a, b) | Expr.Esub (a, b) | Expr.Emul (a, b) | Expr.Ediv (a, b) ->
+      trig_count a + trig_count b
+
+let run_bt_profile src =
+  let (c, _, _, _, _, _) = read_btcert src in
+  let (prec, binds, _, len, su, sv, w, _, wu, wv) = bt_parts c in
+  let du = c.BoxCell.btc_du and dv = c.BoxCell.btc_dv in
+  let b = Stdlib.List.hd c.BoxCell.btc_cells in
+  let mu = b.BoxCell.bt_mu and mv = b.BoxCell.bt_mv in
+  let stats name l =
+    let sz = Stdlib.List.fold_left (fun a (_, e) -> a + expr_size e) 0 l in
+    let tr = Stdlib.List.fold_left (fun a (_, e) -> a + trig_count e) 0 l in
+    let big = Stdlib.List.fold_left (fun a (_, e) -> max a (expr_size e)) 0 l in
+    Printf.printf "%-10s %6d bindings, %9d nodes, %6d trig, largest %d\n%!"
+      name (Stdlib.List.length l) sz tr big in
+  stats "plain" binds; stats "d/du" wu; stats "d/dv" wv;
+  (* the plain bindings whose value, first and second derivative are largest *)
+  let arr = Array.of_list wu in
+  let per = Array.init (Array.length arr / 3) (fun i ->
+      let (k, e0) = arr.(3 * i) and (_, e1) = arr.(3 * i + 1) and (_, e2) = arr.(3 * i + 2) in
+      (expr_size e0 + expr_size e1 + expr_size e2, k, expr_size e0, expr_size e1,
+       expr_size e2, trig_count e0)) in
+  Array.sort (fun a b -> compare b a) per;
+  Array.iteri (fun i (tot, k, s0, s1, s2, tr) ->
+      if i < 25 then Printf.printf "slot %5d: %7d nodes (value %5d, d %6d, dd %6d), trig %d\n"
+          k tot s0 s1 s2 tr) per;
+  let cum = ref 0 in
+  Array.iteri (fun i (tot, _, _, _, _, _) ->
+      cum := !cum + tot;
+      if i = 9 || i = 49 || i = 199 then
+        Printf.printf "largest %d bindings: %d nodes\n" (i + 1) !cum) per;
+  let time name f =
+    let t0 = Unix.gettimeofday () in
+    for _ = 1 to 5 do ignore (f ()) done;
+    Printf.printf "%-28s %8.1f ms\n%!" name ((Unix.gettimeofday () -. t0) /. 5.0 *. 1e3) in
+  let centre = Integral.icell_centre prec w su sv mu mv in
+  let box = Integral.icell_box prec w su sv mu mv du dv in
+  time "plain at the centre" (fun () -> Expr.iextend prec centre binds);
+  time "d/du at the centre" (fun () -> Expr.iextend prec centre wu);
+  time "d/du over the cell" (fun () -> Expr.iextend prec box wu);
+  time "d/dv over the cell" (fun () -> Expr.iextend prec box wv);
+  ignore len;
+  exit 0
+
+(* "--bp-profile FILE": the time to build the bindings of a point certificate
+   and to evaluate them once, and their size. *)
+let run_bp_profile src =
+  let c = read_bpcert src in
+  let t0 = Unix.gettimeofday () in
+  let r3 = BoxCell.bpres c in
+  let binds = r3.Physics.r_binds in
+  let n = Stdlib.List.length binds in
+  let t1 = Unix.gettimeofday () in
+  let sz = Stdlib.List.fold_left (fun a (_, e) -> a + expr_size e) 0 binds in
+  let tr = Stdlib.List.fold_left (fun a (_, e) -> a + trig_count e) 0 binds in
+  let prec = BoxCell.bpprec_of c in
+  let w = Box.wide_ienv prec c.BoxCell.bpc_ms c.BoxCell.bpc_ds in
+  let t2 = Unix.gettimeofday () in
+  let p = Stdlib.List.hd c.BoxCell.bpc_pts in
+  ignore (Expr.iextend prec
+            (Integral.icell_centre prec w c.BoxCell.bpc_su c.BoxCell.bpc_sv
+               p.BoxCell.bp_mu p.BoxCell.bp_mv) binds);
+  let t3 = Unix.gettimeofday () in
+  Printf.printf "%d bindings, %d nodes, %d trig; build %.2f s, box %.2f s, evaluate %.2f s\n"
+    n sz tr (t1 -. t0) (t2 -. t1) (t3 -. t2);
+  exit 0
+
+(* "--bt FILE": establish the file. check_btcert is its structural conditions
+   and forallb of check_btcell over the cells, which is the conjunction over
+   any split of them, so the parent runs the structural half and the shards
+   run check_btcell on contiguous runs. The tiling and the period are checked
+   in the parent. What is printed is btsup, the largest cell bound, which
+   bt_surface makes the bound over the whole surface. *)
+let run_bt src =
+  let (c, au, av, nu, nv, nfp) = read_btcert src in
+  let (prec, _, base, len, su, sv, w, n, wu, wv) = bt_parts c in
+  let du = c.BoxCell.btc_du and dv = c.BoxCell.btc_dv in
+  let cells = Array.of_list c.BoxCell.btc_cells in
+  Printf.printf "%d cells, %d input slots, %d bindings\n%!" (Array.length cells) base len;
+  let t0 = Unix.gettimeofday () in
+  let structural = BoxCell.check_btcert { c with BoxCell.btc_cells = [] } in
+  let tiles = BoxCell.bt_tiles c au av nu nv in
+  let period = BoxCell.bt_period c au av nu nv nfp in
+  let lines = bt_shards cells (fun b ->
+      if BoxCell.check_btcell prec w su sv len n wu wv du dv b then "1" else "0") in
+  let cells_ok = Array.for_all (fun l -> l = "1") lines in
+  let ok = structural && cells_ok && tiles && period in
+  let t1 = Unix.gettimeofday () in
+  Printf.printf "structure %b, cells %b, tiling %b, period %b\n" structural cells_ok tiles period;
+  Printf.printf "verdict: %s (%.1f s)\n%!" (if ok then "VALID" else "INVALID") (t1 -. t0);
+  if ok then begin
+    let best = ref 0.0 and at = ref (-1) in
+    Array.iteri (fun i b ->
+        let x = float_of_dyadic b.BoxCell.bt_Nc b.BoxCell.bt_qc in
+        if x > !best then (best := x; at := i)) cells;
+    let b = cells.(!at) in
+    Printf.printf "bound over the surface: %.17e\n" !best;
+    Printf.printf "attained at the cell centred at mantissas %.0f %.0f\n"
+      (float_of_z b.BoxCell.bt_mu) (float_of_z b.BoxCell.bt_mv)
+  end;
+  exit (if ok then 0 else 1)
 
 (* ---- certificate parsing ------------------------------------------------ *)
 
@@ -1215,13 +2188,20 @@ let () =
   let band = has "--band" in
   (* "--newton FILE" runs the interval Newton test of theories/Newton.v on
      the system and the box the file names. *)
-  (if has "--newton" || has "--newton-eval" then begin
-     let flag = if has "--newton" then "--newton" else "--newton-eval" in
+  (if has "--newton" || has "--newton-eval" || has "--newton-centre"
+      || has "--stability" then begin
+     let flag =
+       if has "--newton" then "--newton"
+       else if has "--newton-eval" then "--newton-eval"
+       else if has "--newton-centre" then "--newton-centre" else "--stability" in
      let rec find = function
        | f' :: f :: _ when f' = flag -> f
        | _ :: tl -> find tl
        | [] -> prerr_endline (flag ^ " needs a file"); exit 2 in
-     run_newton (find args) (flag = "--newton-eval");
+     run_newton (find args)
+       (if flag = "--newton" then `Check
+        else if flag = "--newton-eval" then `Eval
+        else if flag = "--newton-centre" then `Centre else `Stability);
      exit 0
    end);
   (* "--mercier FILE" assembles the criterion from the enclosures a covering
@@ -1233,6 +2213,115 @@ let () =
        | [] -> prerr_endline "--mercier needs a file"; exit 2 in
      run_mercier (find args);
      exit 0
+   end);
+  (* "--int FILE" establishes an integral certificate and prints the enclosure
+     of its integral; "--int-tighten IN OUT" writes the cell bounds of one. *)
+  (if has "--int-tighten" then begin
+     let rec find = function
+       | "--int-tighten" :: a :: b :: _ -> (a, b)
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--int-tighten needs two files"; exit 2 in
+     let (a, b) = find args in
+     run_int_tighten a b;
+     exit 0
+   end);
+  (* "--bench-ops" times the interval operations the checker spends its time
+     in, on thin and on cell-wide arguments. *)
+  (if has "--bench-ops" then begin
+     let prec = BoxCell.btprec_of { BoxCell.btc_prec = z_of_int64 53L;
+       BoxCell.btc_cfg = { Physics.pc_lasym = false; Physics.pc_prof = Physics.PPower;
+                           Physics.pc_out = Physics.RResidual };
+       BoxCell.btc_modes = []; BoxCell.btc_es = []; BoxCell.btc_ms = [];
+       BoxCell.btc_ds = []; BoxCell.btc_su = 0; BoxCell.btc_sv = 0;
+       BoxCell.btc_du = Z0; BoxCell.btc_dv = Z0; BoxCell.btc_comp = 0;
+       BoxCell.btc_cells = [] } in
+     let time name n f =
+       let t0 = Unix.gettimeofday () in
+       for _ = 1 to n do ignore (f ()) done;
+       Printf.printf "%-28s %8.3f us\n%!" name
+         ((Unix.gettimeofday () -. t0) /. float_of_int n *. 1e6) in
+     let thin = Float.Ibnd (0.7, 0.7) and wide = Float.Ibnd (0.69, 0.71) in
+     let e = Expr.eset 0 (Expr.eset 1 Expr.eempty thin) wide in
+     let ev x = Expr.ieval prec e x in
+     time "mul thin" 200000 (fun () -> ev (Expr.Emul (Expr.Evar 0, Expr.Evar 0)));
+     time "add thin" 200000 (fun () -> ev (Expr.Eadd (Expr.Evar 0, Expr.Evar 0)));
+     time "div thin" 200000 (fun () -> ev (Expr.Ediv (Expr.Evar 0, Expr.Evar 0)));
+     time "cos thin" 20000 (fun () -> ev (Expr.Ecos (Expr.Evar 0)));
+     time "sin thin" 20000 (fun () -> ev (Expr.Esin (Expr.Evar 0)));
+     time "cos wide" 20000 (fun () -> ev (Expr.Ecos (Expr.Evar 1)));
+     time "sqrt thin" 20000 (fun () -> ev (Expr.Esqrt (Expr.Evar 0)));
+     time "var read" 200000 (fun () -> ev (Expr.Evar 0));
+     exit 0
+   end);
+  (* "--bt FILE" establishes a Taylor box certificate and prints the bound over
+     the surface; "--bt-tighten IN OUT" writes the cell bounds of one. *)
+  (if has "--bp-profile" then begin
+     let rec find = function
+       | "--bp-profile" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--bp-profile needs a file"; exit 2 in
+     run_bp_profile (find args)
+   end);
+  (if has "--bp-tighten" then begin
+     let rec find = function
+       | "--bp-tighten" :: a :: b :: _ -> (a, b)
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--bp-tighten needs two files"; exit 2 in
+     let (a, b) = find args in
+     run_bp_tighten a b;
+     exit 0
+   end);
+  (if has "--bp" then begin
+     let rec find = function
+       | "--bp" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--bp needs a file"; exit 2 in
+     run_bp (find args)
+   end);
+  (if has "--qs" then begin
+     let rec find = function
+       | "--qs" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--qs needs a file"; exit 2 in
+     run_qs (find args)
+   end);
+  (if has "--bt-profile" then begin
+     let rec find = function
+       | "--bt-profile" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--bt-profile needs a file"; exit 2 in
+     run_bt_profile (find args)
+   end);
+  (if has "--bt-tighten" then begin
+     let rec find = function
+       | "--bt-tighten" :: a :: b :: _ -> (a, b)
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--bt-tighten needs two files"; exit 2 in
+     let (a, b) = find args in
+     run_bt_tighten a b;
+     exit 0
+   end);
+  (if has "--bt" then begin
+     let rec find = function
+       | "--bt" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--bt needs a file"; exit 2 in
+     run_bt (find args)
+   end);
+  (if has "--harm" || has "--dharm" then begin
+     let flag = if has "--harm" then "--harm" else "--dharm" in
+     let rec find = function
+       | f' :: f :: _ when f' = flag -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline (flag ^ " needs a file"); exit 2 in
+     run_harm ~discrete:(flag = "--dharm") (find args)
+   end);
+  (if has "--int" then begin
+     let rec find = function
+       | "--int" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--int needs a file"; exit 2 in
+     run_int (find args)
    end);
   (* "--slot3 W DW" widens a tightened cell certificate to a third coordinate.
      For each cell the third derivative is bounded over a box wide in all

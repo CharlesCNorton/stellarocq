@@ -100,8 +100,9 @@ per node on an `AMLOCAL` line.
 
 ### OUTPUT names
 
-The name is followed by two plain integers for the four that carry a mode
-pair, and by none otherwise.
+The name is followed by two plain integers for those that carry a mode pair,
+by a count and that many pairs for `jump`, by the number of source points for
+`coil`, and by nothing otherwise.
 
 | name | mode pair | components |
 |---|---|---|
@@ -124,9 +125,22 @@ pair, and by none otherwise.
 | `covariant` | `m n` | `B_u`, `B_v`, `mu0 sqrt(g) J^s` against `cos(mu - nv)` |
 | `covariant-sin` | `m n` | the same three against `sin(mu - nv)` |
 | `boozer` | `m n` | `|B| cos`, `|B| sin`, and the angle map's Jacobian |
+| `weighted` | `m n` | `(Gm Gp)^3 r_s` against `cos(mu - nv)` and `sin(mu - nv)`, and `(Gm Gp)^3 r_s` |
+| `jump` | `V`, then `V` pairs | the jump of `p + B^2/2` against the vacuum pressure, the plasma side extrapolated to `s = 1`, the vacuum pressure |
+| `newcomb` | `m n` | `sqrt(g)` against `cos(mu - nv)` and `sin(mu - nv)` at a free radius, and `mu0 p'` |
+| `iota` | `m n` | `m iota - n`, `iota` and `iota'` at a free radius |
+| `forced` | no | `r_s - f_s`, `r_u - f_u`, `r_v - f_v` |
+| `coil` | `P` | `B.n / (|B| |n|)`, `B.n` and `|B|^2` of a coil field on a torus |
 
 `stream-defect` and `boozer` require a `WCOEF` block in every node.
-`quasisym-two` requires an `FZERO` line in every node.
+`quasisym-two` requires an `FZERO` line in every node. `weighted` is the radial
+residual multiplied by the cube of the two half-point Jacobians, which leaves
+no division by anything that reads an angle. `newcomb` reads a state in
+straight-field-line angles, whose lambda is zero. `jump`, `forced` and `coil`
+read slots after the state, laid out under **Environment layout** below.
+`forced` is the output of a collocation system of the interval Newton
+certificate, and the other six are outputs of the certificates over a box of
+states.
 
 ## Angles
 
@@ -295,8 +309,16 @@ The checker builds one environment per evaluation point, in the slot order
 The first slot after those is `base_W`, which is `32 + 8K` under stellarator
 symmetry and `32 + 16K` otherwise. A `stream-defect` or `boozer` output places
 its `K` stream coefficients there followed by `I` and `G`, and a
-`quasisym-two` output places its one flux function there. Everything above
-that is scratch, filled by the bindings the residual allocates.
+`quasisym-two` output places its one flux function there. A `jump` output over
+`V` vacuum modes places `4V + 1` slots there: the cosine and sine coefficients
+of the mean of the two vacuum series mode by mode, those of half their
+difference, and the sweep `t`, so that `t = 1` is the one series and `t = -1`
+the other. A `forced` output places the three source components there. A
+`coil` output over `P` source points places six slots per point, the point and
+its weighted tangent `mu0 I dt / (4 pi)` times the coil's tangent, in Cartesian
+coordinates, and reads its torus from the first node row of the R and Z
+blocks. Everything above that is scratch, filled by the bindings the residual
+allocates.
 
 Each entry contributes its mantissa to the mantissa list and its exponent to
 the exponent list, in this order, which is what `env_of` of
@@ -334,12 +356,23 @@ K <m> <e>                  the claimed contraction constant
 M <m> <e>                  a claimed bound on every Jacobian entry over the box
 A <m> <e> x n*n            an approximate inverse of the Jacobian, row-major
 B <m> <e> x n*n            an approximate inverse of A
+ANORM <m> <e>              optional: a bound on the row sums of |A|
 ```
 
 A VALID verdict is `newton_correct`: the system has exactly one zero in the
 box. The unknowns are the mantissas, so the Jacobian and both matrices are in
 mantissa units, and [gen/newton_circle.py](gen/newton_circle.py) writes the
 file for the circle.
+
+A `PREC` above 53 reads the system's outputs at the centre of the box through
+[theories/Wide.v](theories/Wide.v) at that precision (`Newton.centre_tab`),
+and the rest of the test in binary64. `main --newton-centre FILE` prints those
+outputs, and `main --newton-eval FILE` the enclosures a generator places the
+centre and chooses `K` and `R` from. `main --stability FILE` runs the Jacobian
+half of the test with the `ANORM` bound and asks for no zero: a STABLE verdict
+is `Newton.stability`, or `Colloc.colloc_stability` for a collocation, which
+bounds how far apart any two states of the box are by `ANORM / (1 - K)` times
+how far apart their outputs are.
 
 A `colloc` system ([theories/Colloc.v](theories/Colloc.v)) is the force
 residual of Physics.v collocated at points. It carries its parameters after
@@ -358,7 +391,7 @@ POINT <out> <g> x L        one line per point
 
 `out` is 0 for `r_s`, 1 for `r_u` and 2 for `r_v`, and the `L` integers that
 follow name the global slot each of the point's local input slots reads, in
-the environment layout below, `L` being `32 + 8K` under `LASYM 0` and
+the environment layout above, `L` being `32 + 8K` under `LASYM 0` and
 `32 + 16K` under `LASYM 1`. A global slot below `n` is an unknown and one at
 or above it a parameter. A VALID verdict is `colloc_correct`: with the
 parameters fixed, exactly one choice of the unknowns in the box makes the
@@ -367,3 +400,78 @@ collocated component of every point zero.
 surfaces of a wout, with the R and Z coefficients of those surfaces as the
 unknowns and the stream function, the rotational transform, the pressure and
 the surfaces beside the band as parameters.
+
+An `OUTPUT forced` line after `PROFILE` collocates the node residual less a
+source (`Physics.RForced`) instead of the node residual, and every `POINT`
+line then names three more global slots, the source of the three components.
+A zero of that system is the discrete solution of a problem whose right-hand
+side is the source, and [gen/mms_colloc.py](gen/mms_colloc.py) writes it for a
+manufactured solution, with the continuum residual of the mapping as the
+source.
+
+## Certificates over a box of states
+
+Five more kinds read a state whose every input slot carries a half-width, so
+that a verdict holds for every state in the box ([theories/Box.v](theories/Box.v)).
+They share a header:
+
+```
+PREC <bits>
+LASYM <0|1>
+PROFILE <name> <ints...>
+OUTPUT <name> <ints...>    absent from STELLAROCQ-QCERT
+MODES <K>                  followed by K pairs of plain integers, m and n
+NSLOTS <n>
+STATE                      n triples: mantissa, exponent, half-width
+SLOTS <su> <sv>            the two angle slots
+```
+
+Slot `k` of the state spans the mantissas `m_k - d_k` to `m_k + d_k` at the
+exponent `e_k`, in the layout of **Environment layout** above. The grid, the
+cells or the points set the two angle slots, of which only the exponents are
+read. What follows `SLOTS` depends on the kind.
+
+```
+STELLAROCQ-HCERT           COMP <k>, GRID <Nu> <Nv>
+STELLAROCQ-ICERT           COMP <k>, U <au> <du> <NU>, V <av> <dv> <NV>,
+                           CELLS, then NU * NV lines of six integers
+                           Nuu quu Nvv qvv Ndv qdv
+STELLAROCQ-BTCERT          COMP <k>, HALF <du> <dv>, GRID <au> <av> <NU> <NV> <NFP>,
+                           CELLS <N>, then N lines of twelve integers
+                           mu mv NDu qDu NDuu qDuu NDv qDv NDvv qDvv Nc qc
+STELLAROCQ-BPCERT          COMP <k>, POINTS <N>, then N lines mu mv N q mode
+STELLAROCQ-QCERT           KERNELS <k>, then k triples s m n (s 1 for sine),
+                           NPOINTS <P>, then P pairs of angle mantissas
+```
+
+`main --harm` establishes an HCERT by `Harmonic.check_harm`: the degree
+analysis of [theories/TrigExpr.v](theories/TrigExpr.v) puts the component
+below the grid, so the equispaced sum is its integral over the angular torus,
+enclosed at every state of the box (`harm_correct`). `main --dharm` reads the
+same file without the degree bound, and what it encloses is the equispaced
+rule's discrete harmonic (`dharm_correct`).
+
+`main --int` establishes an ICERT by `Integral.check_int`: every cell carries
+bounds on the component's second derivative along each slot and its first
+derivative along the second over the cell and the box, and the enclosure of
+the integral over the tiled rectangle is `int_total` (`check_int_correct`).
+`main --int-tighten IN OUT` fills in the bounds.
+
+`main --bt` establishes a BTCERT by `BoxCell.check_btcert`, `bt_tiles` and
+`bt_period`: every cell is bounded by two Taylor steps from its centre, the
+cells are the grid the file names, and the grid spans `2 pi` in the first
+angle and `2 pi / NFP` in the second, so the largest cell bound holds at every
+point of a field period of the surface (`bt_surface`). `main --bt-tighten IN
+OUT` fills in the bounds from the cell centres.
+
+`main --bp` establishes a BPCERT by `BoxCell.check_bpcert`, a claim at each
+pair of angle mantissas: mode 0 bounds the component's magnitude above by
+`N 2^q`, mode 1 bounds it below, mode 2 claims the component at least `N 2^q`
+and mode 3 at most `-N 2^q` (`check_bpcert_correct`). `main --bp-tighten IN
+OUT` sets each claim from the enclosure.
+
+`main --qs` establishes a QCERT, whose output is always the two-term
+quasisymmetry residual, by `QSFloor.check_qcert`, and prints the enclosures
+of the harmonics of its two terms at every kernel, which `QSFloor.qs_floor`
+turns into a floor on the defect. [gen/qs_floor.py](gen/qs_floor.py) writes the
+file and reads the floor off the harmonics.

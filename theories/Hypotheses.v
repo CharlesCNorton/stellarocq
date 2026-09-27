@@ -230,3 +230,83 @@ Definition free_boundary_balanced (p B2 Bvac2 : expr) : Prop :=
     once, since the condition names none. *)
 Definition quasisymmetric_at (T : expr) (e : env ExtendedR) : Prop :=
   xeval e T = Xreal 0.
+
+(** Vectors of three reals, for fields and surfaces in Cartesian space. *)
+Definition vec3 : Type := (R * R * R)%type.
+
+Definition dot3 (a b : vec3) : R :=
+  let '(a1, a2, a3) := a in let '(b1, b2, b3) := b in a1 * b1 + a2 * b2 + a3 * b3.
+
+Definition cross3r (a b : vec3) : vec3 :=
+  let '(a1, a2, a3) := a in let '(b1, b2, b3) := b in
+  (a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1).
+
+Definition dist3 (a b : vec3) : R :=
+  let '(a1, a2, a3) := a in let '(b1, b2, b3) := b in
+  sqrt ((a1 - b1) ^ 2 + (a2 - b2) ^ 2 + (a3 - b3) ^ 2).
+
+(** The partial derivatives of a map of two angles into space, coordinate by
+    coordinate. *)
+Definition coord1 (a : vec3) : R := let '(x, _, _) := a in x.
+Definition coord2 (a : vec3) : R := let '(_, y, _) := a in y.
+Definition coord3 (a : vec3) : R := let '(_, _, z) := a in z.
+
+Definition partials (T : R -> R -> vec3) (u v : R) (Tu Tv : vec3) : Prop :=
+  is_derive (fun u' => coord1 (T u' v)) u (coord1 Tu) /\
+  is_derive (fun u' => coord2 (T u' v)) u (coord2 Tu) /\
+  is_derive (fun u' => coord3 (T u' v)) u (coord3 Tu) /\
+  is_derive (fun v' => coord1 (T u v')) v (coord1 Tv) /\
+  is_derive (fun v' => coord2 (T u v')) v (coord2 Tv) /\
+  is_derive (fun v' => coord3 (T u v')) v (coord3 Tv).
+
+(** Invariant tori. A torus T, a map of two angles, is invariant under the
+    field-line flow of B when it has partial derivatives everywhere and B is
+    tangent to it: B . (T_u x T_v) = 0 at every point, so a field line that
+    starts on it stays on it. A family of them is a family of flux surfaces. *)
+Definition invariant_torus (B : vec3 -> vec3) (T : R -> R -> vec3) : Prop :=
+  forall u v, exists Tu Tv, partials T u v Tu Tv /\
+    dot3 (B (T u v)) (cross3r Tu Tv) = 0.
+
+(** From a nearly invariant torus to an invariant one (KAM). A certificate of
+    Physics.RCoil bounds the sine of the angle between a coil field and a
+    torus given by a finite Fourier series, at every point of it. No finite
+    Fourier series is exactly invariant for a generic field, and a small
+    bound is not invariance. What makes the step is an a posteriori KAM
+    theorem for the field-line flow, a Hamiltonian system of one and a half
+    degrees of freedom with the toroidal angle as time (de la Llave,
+    Gonzalez, Jorba and Villanueva 2005; Figueras, Haro and Luque 2017): an
+    approximately invariant torus whose rotational transform is Diophantine,
+    whose twist is non-degenerate and whose invariance error lies below a
+    threshold computed from those constants and from bounds on the torus and
+    the field in a complex neighbourhood is within a computable distance of a
+    true invariant torus with that transform. [kam_nearby] is that statement
+    for one field, one torus, the sine a certificate bounds, the bound and
+    the distance, as numbers; the constants that fix them are not certified
+    here. That [sine] is the sine of the angle between B and T is a claim
+    about the encoding, as it is for every expression Physics.v writes.
+
+    Contradicted by: field-line tracing from the torus leaving the distance
+    delta, or a Poincare section showing an island chain or a chaotic layer
+    where the torus lies. *)
+Definition kam_nearby (B : vec3 -> vec3) (T : R -> R -> vec3) (sine : R -> R -> R)
+    (eps delta : R) : Prop :=
+  (forall u v, 0 <= u <= 2 * PI -> 0 <= v <= 2 * PI -> Rabs (sine u v) <= eps) ->
+  exists T', invariant_torus B T' /\ forall u v, dist3 (T' u v) (T u v) <= delta.
+
+(** The same step from the values at the points of a grid. The torus and the
+    coil field are analytic, so the angle between them is fixed, to within an
+    amount that falls exponentially with the number of points, by its values
+    at the points of a grid fine enough to resolve both. [kam_from_points]
+    carries that interpolation along with the KAM step: a bound at every
+    listed point, every point of the torus within h of a listed one in each
+    angle, and the conclusion of [kam_nearby].
+
+    Contradicted by: the angle between the field and the torus exceeding eps
+    somewhere between the points by more than the interpolation allows, or
+    anything that contradicts [kam_nearby]. *)
+Definition kam_from_points (B : vec3 -> vec3) (T : R -> R -> vec3) (sine : R -> R -> R)
+    (pts : list (R * R)) (h eps delta : R) : Prop :=
+  (forall u v, 0 <= u <= 2 * PI -> 0 <= v <= 2 * PI ->
+     exists p, In p pts /\ Rabs (u - fst p) <= h /\ Rabs (v - snd p) <= h) ->
+  (forall p, In p pts -> Rabs (sine (fst p) (snd p)) <= eps) ->
+  exists T', invariant_torus B T' /\ forall u v, dist3 (T' u v) (T u v) <= delta.

@@ -21,7 +21,7 @@
 
 From Coq Require Import ZArith Reals List Bool Lia Lra Eqdep_dec.
 From Interval Require Import Real.Xreal Real.Xreal_derive Interval.Interval.
-From Stellarocq Require Import Expr Physics Checker Deriv Cell Kantorovich.
+From Stellarocq Require Import Expr Physics Checker Deriv Cell Kantorovich Wide.
 
 Import ListNotations.
 Local Open Scope R_scope.
@@ -659,6 +659,19 @@ Definition Fctab (s : system) : list I.type :=
   map (fun k => ieval (sprec s) env (Evar (oslot s k))) (seq 0 (sy_n s)).
 Definition Ft (ft : list I.type) (k : nat) : I.type := nth k ft I.nai.
 
+(** The same outputs read through Wide.v at the precision the certificate
+    names, when that exceeds binary64's. An output that cancels terms far
+    larger than itself is then enclosed to that precision rather than to the
+    binary64 rounding of the terms, which is what bounds |A F(c)| and so the
+    radius the test needs. *)
+Definition wprec_of (s : system) : WF.precision := WF.PtoP (Z.to_pos (sy_prec s)).
+Definition Fwtab (s : system) : list I.type :=
+  let wp := wprec_of s in
+  let env := wextend wp (wenv_of wp (sy_centre s)) (sy_binds s) in
+  map (fun k => narrow (sprec s) (weval wp env (Evar (oslot s k)))) (seq 0 (sy_n s)).
+Definition centre_tab (s : system) : list I.type :=
+  if Z.ltb 53%Z (sy_prec s) then Fwtab s else Fctab s.
+
 Definition Viv (ft : list I.type) (s : system) (i : nat) : I.type :=
   isum (sprec s) (map (fun k => I.mul (sprec s) (Aiv s i k) (Ft ft k))
                       (seq 0 (sy_n s))).
@@ -668,13 +681,15 @@ Definition Viv (ft : list I.type) (s : system) (i : nat) : I.type :=
 Definition entry_ok (s : system) (xi : I.type) : bool :=
   nonneg (I.sub (sprec s) (Miv s) (I.abs xi)).
 
-Definition check_newton (s : system) : bool :=
+(** The part of the test that bounds the Jacobian over the box: the layout,
+    K below one, every entry a real number below M, and every row of I - A J
+    summing below K. It is all [stability] asks for. *)
+Definition check_core (s : system) : bool :=
   let prec := sprec s in
   let n := sy_n s in
   let base := sbase s in
   let len := slen s in
   let jt := Jtab s in
-  let ft := Fctab s in
   Nat.leb n base && Nat.ltb 0 len && well_formed base (sy_binds s) &&
   Nat.eqb (length (sy_out s)) n &&
   forallb (fun o => Nat.leb base o && Nat.ltb o (base + len)) (sy_out s) &&
@@ -683,13 +698,29 @@ Definition check_newton (s : system) : bool :=
   nonneg (ieval prec eempty
             (Esub (Esub e1 (eps_e (sy_KN s) (sy_Kq s))) (epow2 (-20)))) &&
   forallb (fun j => forallb (fun k => entry_ok s (Jt jt k j)) (seq 0 n)) (seq 0 n) &&
-  forallb (fun i => nonneg (I.sub prec (Kiv s) (rowsum s (Giv jt s i)))) (seq 0 n) &&
+  forallb (fun i => nonneg (I.sub prec (Kiv s) (rowsum s (Giv jt s i)))) (seq 0 n).
+
+(** What existence adds to it: the rows of I - B A summing below K, and the
+    first step from the centre short enough for the box to hold the fixed
+    point. *)
+Definition check_extra (s : system) : bool :=
+  let prec := sprec s in
+  let n := sy_n s in
+  let ft := centre_tab s in
   forallb (fun i => nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i)))) (seq 0 n) &&
   forallb (fun i =>
              nonneg (I.sub prec (Riv s)
                        (I.add prec (I.abs (Viv ft s i))
                               (I.mul prec (Kiv s) (Riv s)))))
           (seq 0 n).
+
+Definition check_newton (s : system) : bool := check_core s && check_extra s.
+
+(** The rows of |A| sum below the dyadic aN 2^aq, which is not negative. *)
+Definition check_anorm (s : system) (aN aq : Z) : bool :=
+  nonneg (dyad (sprec s) (aN, aq)) &&
+  forallb (fun i => nonneg (I.sub (sprec s) (dyad (sprec s) (aN, aq)) (rowsum s (Aiv s i))))
+          (seq 0 (sy_n s)).
 
 Lemma Jtab_spec :
   forall s k j, (k < sy_n s)%nat -> (j < sy_n s)%nat -> Jt (Jtab s) k j = J s k j.
@@ -705,6 +736,18 @@ Lemma Fctab_spec :
   forall s k, (k < sy_n s)%nat -> Ft (Fctab s) k = Fc s k.
 Proof.
   intros s k Hk. unfold Ft, Fctab, Fc. cbv zeta.
+  rewrite (nth_map_in _ _ _ _ _ 0%nat) by (rewrite length_seq; lia).
+  rewrite seq_nth by lia. reflexivity.
+Qed.
+
+Lemma Fwtab_spec :
+  forall s k, (k < sy_n s)%nat ->
+  Ft (Fwtab s) k =
+  narrow (sprec s) (weval (wprec_of s)
+    (wextend (wprec_of s) (wenv_of (wprec_of s) (sy_centre s)) (sy_binds s))
+    (Evar (oslot s k))).
+Proof.
+  intros s k Hk. unfold Ft, Fwtab. cbv zeta.
   rewrite (nth_map_in _ _ _ _ _ 0%nat) by (rewrite length_seq; lia).
   rewrite seq_nth by lia. reflexivity.
 Qed.
@@ -767,10 +810,13 @@ Proof. reflexivity. Qed.
 (* ---------------------------------------------------------------- *)
 (* Reading the check                                                 *)
 
+(** The outputs at a point, as a vector. *)
+Definition Fvec (s : system) (p : list R) : list R := map (Freal s p) (seq 0 (sy_n s)).
+
 Section Check.
 
 Variable s : system.
-Hypothesis Hchk : check_newton s = true.
+Hypothesis Hchk : check_core s = true.
 
 Notation prec := (sprec s).
 Notation n := (sy_n s).
@@ -791,20 +837,15 @@ Lemma chk_all :
   (forall j k, (j < n)%nat -> (k < n)%nat ->
      entry_ok s (Jt (Jtab s) k j) = true) /\
   (forall i, (i < n)%nat ->
-     nonneg (I.sub prec (Kiv s) (rowsum s (Giv (Jtab s) s i))) = true) /\
-  (forall i, (i < n)%nat ->
-     nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i))) = true) /\
-  (forall i, (i < n)%nat ->
-     nonneg (I.sub prec (Riv s)
-               (I.add prec (I.abs (Viv (Fctab s) s i)) (I.mul prec (Kiv s) (Riv s)))) = true).
+     nonneg (I.sub prec (Kiv s) (rowsum s (Giv (Jtab s) s i))) = true).
 Proof.
-  unfold check_newton in Hchk. cbv zeta in Hchk.
+  unfold check_core in Hchk. cbv zeta in Hchk.
   rewrite !andb_true_iff in Hchk.
-  destruct Hchk as [[[[[[[[[[[H1 H2] H3] H4] H5] H6] H7] H8] H9] H10] H11] H12].
+  destruct Hchk as [[[[[[[[[H1 H2] H3] H4] H5] H6] H7] H8] H9] H10].
   apply Nat.leb_le in H1. apply Nat.ltb_lt in H2. apply Nat.eqb_eq in H4.
-  rewrite forallb_forall in H5, H9, H10, H11, H12. apply Z.leb_le in H6.
+  rewrite forallb_forall in H5, H9, H10. apply Z.leb_le in H6.
   refine (conj H1 (conj H2 (conj H3 (conj H4 (conj _ (conj H6 (conj H7 (conj H8
-            (conj _ (conj _ (conj _ _))))))))))).
+            (conj _ _))))))))).
   - intros k Hk.
     specialize (H5 (oslot s k) ltac:(unfold oslot; apply nth_In; lia)).
     apply andb_true_iff in H5. destruct H5 as [Ha Hb].
@@ -812,8 +853,6 @@ Proof.
   - intros j k Hj Hk. specialize (H9 j (in_seq_lt _ _ Hj)).
     rewrite forallb_forall in H9. apply H9. now apply in_seq_lt.
   - intros i Hi. apply H10. now apply in_seq_lt.
-  - intros i Hi. apply H11. now apply in_seq_lt.
-  - intros i Hi. apply H12. now apply in_seq_lt.
 Qed.
 
 Lemma c_nb : (n <= base)%nat.
@@ -832,14 +871,7 @@ Lemma c_jac : forall j k, (j < n)%nat -> (k < n)%nat ->
 Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & H & _). exact H. Qed.
 Lemma c_rowG : forall i, (i < n)%nat ->
   nonneg (I.sub prec (Kiv s) (rowsum s (Giv (Jtab s) s i))) = true.
-Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & _ & H & _). exact H. Qed.
-Lemma c_rowH : forall i, (i < n)%nat ->
-  nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i))) = true.
-Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & H & _). exact H. Qed.
-Lemma c_first : forall i, (i < n)%nat ->
-  nonneg (I.sub prec (Riv s)
-            (I.add prec (I.abs (Viv (Fctab s) s i)) (I.mul prec (Kiv s) (Riv s)))) = true.
-Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & _ & _ & _ & H). exact H. Qed.
+Proof. destruct chk_all as (_ & _ & _ & _ & _ & _ & _ & _ & _ & H). exact H. Qed.
 
 Lemma K_nonneg : 0 <= KR s.
 Proof.
@@ -1267,6 +1299,92 @@ Proof.
 Qed.
 
 (* ---------------------------------------------------------------- *)
+(* Stability                                                         *)
+
+(** The rows of |A| that passed [check_anorm] sum below its bound. *)
+Lemma anorm_nonneg :
+  forall aN aq, check_anorm s aN aq = true -> 0 <= dyadR (aN, aq).
+Proof.
+  intros aN aq Ha. unfold check_anorm in Ha. apply andb_true_iff in Ha.
+  destruct Ha as [Ha _].
+  destruct (nonneg_correct _ _ (dyad_correct prec (aN, aq)) Ha) as [d [Hd Hge]].
+  injection Hd as <-. exact Hge.
+Qed.
+
+Lemma anorm_row :
+  forall aN aq, check_anorm s aN aq = true ->
+  forall i, (i < n)%nat -> sumn (fun k => Rabs (AR s i k)) n <= dyadR (aN, aq).
+Proof.
+  intros aN aq Ha i Hi. unfold check_anorm in Ha. apply andb_true_iff in Ha.
+  destruct Ha as [_ Ha]. rewrite forallb_forall in Ha.
+  specialize (Ha i (in_seq_lt _ _ Hi)).
+  assert (Hrow : contains (I.convert (rowsum s (Aiv s i)))
+                   (Xreal (sumn (fun k => Rabs (AR s i k)) n))).
+  { unfold rowsum. apply isum_seq_correct. intros k Hk.
+    rewrite <- Xabs_real. apply I.abs_correct. apply dyad_correct. }
+  assert (Hc := I.sub_correct prec _ _ _ _ (dyad_correct prec (aN, aq)) Hrow).
+  destruct (nonneg_correct _ _ Hc Ha) as [d [Hd Hge]].
+  cbn in Hd. injection Hd as Hd. lra.
+Qed.
+
+(** Stability on the box: two states differ by at most ||A|| / (1 - K)
+    times the difference of their outputs. The contraction of x - A F(x)
+    bounds the part of x - y that A F does not see by K |x - y|, and what
+    is left is A (F(x) - F(y)). No zero of F is asked for, so this holds
+    of any box the Jacobian test passes on, whether or not it holds a
+    solution, and it is the inverse bound a convergence argument needs:
+    a state whose outputs are within e of a solution's is within
+    ||A|| e / (1 - K) of it. *)
+Theorem stability :
+  forall aN aq, check_anorm s aN aq = true ->
+  forall x y, in_box s x -> in_box s y ->
+  (1 - KR s) * vmax (vsub x y) <= dyadR (aN, aq) * vmax (vsub (Fvec s x) (Fvec s y)).
+Proof.
+  intros aN aq Ha x y Hx Hy.
+  assert (Hlx : length x = n) by apply Hx.
+  assert (Hly : length y = n) by apply Hy.
+  assert (HK := K_nonneg).
+  assert (HlF : forall p, length (Fvec s p) = n)
+    by (intros p; unfold Fvec; rewrite length_map, length_seq; reflexivity).
+  set (MF := vmax (vsub (Fvec s x) (Fvec s y))).
+  assert (HMF0 : 0 <= MF) by apply vmax_nonneg.
+  assert (HMF : forall k, (k < n)%nat -> Rabs (Freal s x k - Freal s y k) <= MF).
+  { intros k Hk. unfold MF.
+    replace (Freal s x k - Freal s y k) with (nth k (vsub (Fvec s x) (Fvec s y)) 0).
+    - apply vmax_nth.
+    - rewrite nth_vsub by (rewrite ?HlF; lia).
+      unfold Fvec. rewrite !nth_map_seq by exact Hk. reflexivity. }
+  assert (HNA := anorm_nonneg aN aq Ha).
+  assert (Hc := contraction x y Hx Hy).
+  set (M := vmax (vsub x y)) in *.
+  assert (HM0 : 0 <= M) by apply vmax_nonneg.
+  assert (HM : M <= KR s * M + dyadR (aN, aq) * MF).
+  { unfold M at 1. apply vmax_le.
+    { assert (0 <= KR s * M) by (apply Rmult_le_pos; assumption).
+      assert (0 <= dyadR (aN, aq) * MF) by (apply Rmult_le_pos; assumption).
+      lra. }
+    intros i Hi. rewrite length_vsub in Hi by lia. rewrite Hlx in Hi.
+    rewrite nth_vsub by lia.
+    assert (Hg : nth i x 0 - nth i y 0
+                 = nth i (vsub (Gmap s x) (Gmap s y)) 0
+                   + sumn (fun k => AR s i k * (Freal s x k - Freal s y k)) n).
+    { rewrite nth_vsub by (rewrite !length_Gmap; lia).
+      rewrite !nth_Gmap by lia.
+      rewrite (sumn_ext (fun k => AR s i k * (Freal s x k - Freal s y k))
+                        (fun k => AR s i k * Freal s x k - AR s i k * Freal s y k))
+        by (intros; ring).
+      rewrite sumn_minus. ring. }
+    rewrite Hg.
+    eapply Rle_trans. apply Rabs_triang.
+    apply Rplus_le_compat.
+    - eapply Rle_trans. apply vmax_nth. exact Hc.
+    - eapply Rle_trans.
+      apply (sumn_prod_bound (AR s i) (fun k => Freal s x k - Freal s y k) n MF HMF).
+      apply Rmult_le_compat_r. exact HMF0. exact (anorm_row aN aq Ha i Hi). }
+  lra.
+Qed.
+
+(* ---------------------------------------------------------------- *)
 (* The first step, from the centre                                   *)
 
 Definition x0 : list R := map IZR (firstn n c).
@@ -1289,6 +1407,31 @@ Proof.
   generalize r_nonneg. lra.
 Qed.
 
+Section Extra.
+
+Hypothesis Hext : check_extra s = true.
+
+Lemma extra_all :
+  (forall i, (i < n)%nat ->
+     nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i))) = true) /\
+  (forall i, (i < n)%nat ->
+     nonneg (I.sub prec (Riv s)
+               (I.add prec (I.abs (Viv (centre_tab s) s i)) (I.mul prec (Kiv s) (Riv s)))) = true).
+Proof.
+  unfold check_extra in Hext. cbv zeta in Hext.
+  rewrite !andb_true_iff in Hext. destruct Hext as [H1 H2].
+  rewrite forallb_forall in H1, H2.
+  split; intros i Hi; [apply H1 | apply H2]; now apply in_seq_lt.
+Qed.
+
+Lemma c_rowH : forall i, (i < n)%nat ->
+  nonneg (I.sub prec (Kiv s) (rowsum s (Hiv s i))) = true.
+Proof. exact (proj1 extra_all). Qed.
+Lemma c_first : forall i, (i < n)%nat ->
+  nonneg (I.sub prec (Riv s)
+            (I.add prec (I.abs (Viv (centre_tab s) s i)) (I.mul prec (Kiv s) (Riv s)))) = true.
+Proof. exact (proj2 extra_all). Qed.
+
 Lemma first_step :
   vmax (vsub x0 (Gmap s x0)) <= (1 - KR s) * IZR r.
 Proof.
@@ -1303,25 +1446,32 @@ Proof.
   rewrite nth_Gmap by (try exact length_x0; lia).
   replace (nth i x0 0 - (nth i x0 0 - sumn (fun k => AR s i k * Freal s x0 k) n))
     with (sumn (fun k => AR s i k * Freal s x0 k) n) by ring.
-  (* the outputs at the centre, contained in the thin evaluation *)
+  (* the outputs at the centre, contained in the thin evaluation at either
+     precision *)
   assert (HF : forall k, (k < n)%nat ->
-            contains (I.convert (Fc s k)) (Xreal (Freal s x0 k))).
+            contains (I.convert (Ft (centre_tab s) k)) (Xreal (Freal s x0 k))).
   { intros k Hk. unfold Freal. rewrite HE.
     destruct (real_at x0 x0_box k Hk) as [v Hv]. rewrite HE in Hv.
-    rewrite Hv. simpl.
-    assert (Henv := iextend_correct prec binds _ _ (env_ok_fromZ prec c)).
-    assert (H := ieval_correct prec _ _ (Evar (oslot s k)) Henv).
-    unfold Fx in Hv. rewrite Hv in H. exact H. }
-  assert (HV : contains (I.convert (Viv (Fctab s) s i))
+    rewrite Hv. simpl. unfold Fx in Hv. unfold centre_tab.
+    destruct (Z.ltb 53%Z (sy_prec s)).
+    - rewrite Fwtab_spec by exact Hk. apply narrow_correct.
+      assert (Henv := wextend_correct (wprec_of s) binds _ _
+                        (wenv_ok_fromZ (wprec_of s) c)).
+      assert (H := weval_correct (wprec_of s) _ _ (Evar (oslot s k)) Henv).
+      rewrite Hv in H. exact H.
+    - rewrite Fctab_spec by exact Hk.
+      assert (Henv := iextend_correct prec binds _ _ (env_ok_fromZ prec c)).
+      assert (H := ieval_correct prec _ _ (Evar (oslot s k)) Henv).
+      rewrite Hv in H. exact H. }
+  assert (HV : contains (I.convert (Viv (centre_tab s) s i))
                  (Xreal (sumn (fun k => AR s i k * Freal s x0 k) n))).
   { unfold Viv. apply isum_seq_correct. intros k Hk.
     change (Xreal (AR s i k * Freal s x0 k))
       with (Xmul (Xreal (AR s i k)) (Xreal (Freal s x0 k))).
-    apply I.mul_correct. apply dyad_correct.
-    rewrite Fctab_spec by assumption. now apply HF. }
+    apply I.mul_correct. apply dyad_correct. now apply HF. }
   set (v := sumn (fun k => AR s i k * Freal s x0 k) n) in *.
   assert (Hc : contains (I.convert (I.sub prec (Riv s)
-                           (I.add prec (I.abs (Viv (Fctab s) s i)) (I.mul prec (Kiv s) (Riv s)))))
+                           (I.add prec (I.abs (Viv (centre_tab s) s i)) (I.mul prec (Kiv s) (Riv s)))))
                         (Xreal (IZR r - (Rabs v + KR s * IZR r)))).
   { change (Xreal (IZR r - (Rabs v + KR s * IZR r)))
       with (Xsub (Xreal (IZR r)) (Xadd (Xreal (Rabs v)) (Xmul (Xreal (KR s)) (Xreal (IZR r))))).
@@ -1359,7 +1509,7 @@ Proof.
     apply Rabs_le. lra.
 Qed.
 
-Theorem newton_correct :
+Theorem newton_core :
   exists x : list R,
     in_box s x /\
     (forall k, (k < n)%nat -> Fx s (E c n x) k = Xreal 0) /\
@@ -1448,7 +1598,22 @@ Proof.
     apply vd_eq in Hd0. injection Hd0 as Hd0. now symmetry.
 Qed.
 
+End Extra.
+
 End Check.
+
+Theorem newton_correct :
+  forall s, check_newton s = true ->
+  exists x : list R,
+    in_box s x /\
+    (forall k, (k < sy_n s)%nat -> Fx s (E (sy_centre s) (sy_n s) x) k = Xreal 0) /\
+    (forall y, in_box s y ->
+       (forall k, (k < sy_n s)%nat -> Fx s (E (sy_centre s) (sy_n s) y) k = Xreal 0) ->
+       y = x).
+Proof.
+  intros s Hs. unfold check_newton in Hs. apply andb_true_iff in Hs.
+  exact (newton_core s (proj1 Hs) (proj2 Hs)).
+Qed.
 
 (* ---------------------------------------------------------------- *)
 (* A system to run the check on                                      *)
