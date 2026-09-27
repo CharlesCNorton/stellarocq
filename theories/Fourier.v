@@ -106,8 +106,18 @@ Qed.
 
 Record fser := { fc : Z -> Z -> R ; fs : Z -> Z -> R }.
 
-(** |m| + |n|, and the weight of mode (m, n) on the strip of width rho. *)
-Definition msize (m n : Z) : R := Rabs (IZR m) + Rabs (IZR n).
+(** The strip is kappa times as wide in the second angle as in the first:
+    the size of mode (m, n) is |m| + kappa |n|, and its weight on the strip of
+    width rho is exp(rho (|m| + kappa |n|)). *)
+Definition kappa : R := / 10.
+
+Lemma kappa_pos : 0 < kappa. Proof. unfold kappa. lra. Qed.
+Lemma kappa_le_1 : kappa <= 1. Proof. unfold kappa. lra. Qed.
+
+Lemma kappa_abs_nonneg (n : Z) : 0 <= kappa * Rabs (IZR n).
+Proof. apply Rmult_le_pos; [apply Rlt_le, kappa_pos | apply Rabs_pos]. Qed.
+
+Definition msize (m n : Z) : R := Rabs (IZR m) + kappa * Rabs (IZR n).
 
 Definition wt (rho : R) (m n : Z) : R := exp (rho * msize m n).
 
@@ -118,7 +128,7 @@ Definition nbound (rho M : R) (u : fser) : Prop :=
   forall N, sqsum (nterm rho u) N <= M.
 
 Lemma msize_nonneg (m n : Z) : 0 <= msize m n.
-Proof. unfold msize. pose proof (Rabs_pos (IZR m)). pose proof (Rabs_pos (IZR n)). lra. Qed.
+Proof. unfold msize. pose proof (Rabs_pos (IZR m)). pose proof (kappa_abs_nonneg n). lra. Qed.
 
 Lemma wt_pos (rho : R) (m n : Z) : 0 < wt rho m n.
 Proof. apply exp_pos. Qed.
@@ -216,23 +226,37 @@ Proof.
   apply Rle_trans with (sqsum (fun m n => / (exp 1 * delta) * nterm rho u m n) N).
   - apply sqsum_le. intros m n. unfold nterm at 1. simpl.
     apply nterm_mult_shift; [exact Hd |].
-    unfold msize. pose proof (Rabs_pos (IZR n)). lra.
+    unfold msize. pose proof (kappa_abs_nonneg n). lra.
   - rewrite sqsum_scal.
     apply Rmult_le_compat_l; [| apply H].
     apply Rlt_le, Rinv_0_lt_compat, Rmult_lt_0_compat; [apply exp_pos | exact Hd].
 Qed.
 
+(** The derivative in the second angle costs 1 / kappa more, the strip being
+    narrower in it. *)
 Theorem nbound_dp (rho delta M : R) (u : fser) :
-  0 < delta -> nbound rho M u -> nbound (rho - delta) (/ (exp 1 * delta) * M) (dp u).
+  0 < delta -> nbound rho M u -> nbound (rho - delta) (/ kappa * (/ (exp 1 * delta) * M)) (dp u).
 Proof.
   intros Hd H N.
-  apply Rle_trans with (sqsum (fun m n => / (exp 1 * delta) * nterm rho u m n) N).
+  assert (Hk := kappa_pos).
+  apply Rle_trans with (sqsum (fun m n => / kappa * (/ (exp 1 * delta) * nterm rho u m n)) N).
   - apply sqsum_le. intros m n. unfold nterm at 1. simpl.
-    apply nterm_mult_shift; [exact Hd |].
-    unfold msize. pose proof (Rabs_pos (IZR m)). lra.
-  - rewrite sqsum_scal.
-    apply Rmult_le_compat_l; [| apply H].
-    apply Rlt_le, Rinv_0_lt_compat, Rmult_lt_0_compat; [apply exp_pos | exact Hd].
+    pose proof (nterm_mult_shift rho delta (kappa * IZR n) u m n Hd) as Hs.
+    assert (Hc : Rabs (kappa * IZR n) <= msize m n).
+    { unfold msize. rewrite Rabs_mult, (Rabs_pos_eq kappa) by lra. pose proof (Rabs_pos (IZR m)). lra. }
+    specialize (Hs Hc).
+    rewrite Rabs_Ropp, !Rabs_mult, (Rabs_pos_eq kappa) in Hs by lra.
+    rewrite Rabs_Ropp, !Rabs_mult.
+    apply (Rmult_le_reg_l kappa); [exact Hk |].
+    replace (kappa * ((Rabs (IZR n) * Rabs (fs u m n) + Rabs (IZR n) * Rabs (fc u m n)) * wt (rho - delta) m n))
+      with ((kappa * Rabs (IZR n) * Rabs (fs u m n) + kappa * Rabs (IZR n) * Rabs (fc u m n)) * wt (rho - delta) m n)
+      by ring.
+    rewrite <- Rmult_assoc, Rinv_r, Rmult_1_l by lra.
+    exact Hs.
+  - rewrite (sqsum_scal (/ kappa)), sqsum_scal.
+    assert (0 <= / (exp 1 * delta)) by (apply Rlt_le, Rinv_0_lt_compat, Rmult_lt_0_compat; [apply exp_pos | exact Hd]).
+    apply Rmult_le_compat_l; [apply Rlt_le, Rinv_0_lt_compat, Hk |].
+    apply Rmult_le_compat_l; [assumption | apply H].
 Qed.
 
 (** * The operator L = rho0 d_t + d_p and its inverse *)
@@ -285,7 +309,7 @@ Proof.
         with (Rabs (divisor rho0 m n)) by (field; lra).
       exact Hd.
     + apply Rmult_le_compat_l; [apply Rabs_pos |].
-      unfold msize. pose proof (Rabs_pos (IZR n)). lra.
+      unfold msize. pose proof (kappa_abs_nonneg n). lra.
 Qed.
 
 Definition linv_const (delta : R) : R := (1 + / (exp 1 * delta)) / gamma.

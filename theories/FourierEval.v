@@ -243,7 +243,7 @@ Theorem feval_dp (rho M : R) (u : fser) (t p : R) :
 Proof.
   intros Hr H.
   assert (H0 : nbound 0 M u) by (apply (nbound_mono rho); [lra | exact H]).
-  assert (Hd : nbound 0 (/ (exp 1 * rho) * M) (dp u)).
+  assert (Hd : nbound 0 (/ kappa * (/ (exp 1 * rho) * M)) (dp u)).
   { replace 0 with (rho - rho) by ring. apply nbound_dp; assumption. }
   (* the same argument with the roles of t and p exchanged *)
   set (fn := fun N y => sqsum (term u t y) N).

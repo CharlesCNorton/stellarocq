@@ -2,11 +2,14 @@
 
     At a point of an approximately invariant torus K of the field-line flow
     with error E = L K - V(K), the tangent a = d_t K and the normal
-    N = J a g, with g = 1 / (sigma |a|^2) for the invariant density sigma of
-    the flow, make a frame with a ^ N = 1 / sigma. Write eta = (sigma E ^ N,
-    sigma a ^ E) for the coordinates of E in it, T = sigma (L N - DV N) ^ N for
-    the torsion and dE = d_t E. If the correction xi solves
-    L xi_1 + T xi_2 = -eta_1 and L xi_2 = -eta_2, then
+    N = J a g + b a, with g = 1 / (sigma |a|^2) for the invariant density
+    sigma of the flow and any b, make a frame with a ^ N = 1 / sigma. The
+    multiple b of the tangent leaves the frame's area alone and changes the
+    torsion by L b, so a b solving L b = -(T - <T>) makes the torsion
+    constant. Write eta = (sigma E ^ N, sigma a ^ E) for the coordinates of E
+    in the frame, T = sigma (L N - DV N) ^ N for the torsion and dE = d_t E.
+    If the correction xi solves L xi_1 + T xi_2 = -eta_1 and
+    L xi_2 = -eta_2, then
 
       E + L (xi_1 a + xi_2 N) - DV (xi_1 a + xi_2 N)
         = (alpha xi_1) a + (beta xi_1 + c xi_2) N
@@ -24,7 +27,7 @@ From Coq Require Import Reals Lra.
 Local Open Scope R_scope.
 
 Theorem frame_step
-    (a1 a2 g s s1 s2 E1 E2 dE1 dE2 D11 D12 D21 D22 La1 La2 Lg Ls xi1 xi2 Lxi1 Lxi2 : R)
+    (a1 a2 g b s s1 s2 E1 E2 dE1 dE2 D11 D12 D21 D22 La1 La2 Lg Lb Ls xi1 xi2 Lxi1 Lxi2 : R)
     (N1 N2 LN1 LN2 eta1 eta2 T alpha beta c : R) :
   s * (a1 * a1 + a2 * a2) * g = 1 ->
   La1 = dE1 + (D11 * a1 + D12 * a2) ->
@@ -32,8 +35,9 @@ Theorem frame_step
   Ls = s1 * E1 + s2 * E2 - s * (D11 + D22) ->
   Ls * (a1 * a1 + a2 * a2) * g + s * (2 * (a1 * La1 + a2 * La2)) * g
     + s * (a1 * a1 + a2 * a2) * Lg = 0 ->
-  N1 = - (a2 * g) -> N2 = a1 * g ->
-  LN1 = - (La2 * g + a2 * Lg) -> LN2 = La1 * g + a1 * Lg ->
+  N1 = - (a2 * g) + b * a1 -> N2 = a1 * g + b * a2 ->
+  LN1 = - (La2 * g + a2 * Lg) + (Lb * a1 + b * La1) ->
+  LN2 = La1 * g + a1 * Lg + (Lb * a2 + b * La2) ->
   eta1 = s * (E1 * N2 - E2 * N1) -> eta2 = s * (a1 * E2 - a2 * E1) ->
   T = s * ((LN1 - (D11 * N1 + D12 * N2)) * N2 - (LN2 - (D21 * N1 + D22 * N2)) * N1) ->
   Lxi1 = - (eta1 + T * xi2) -> Lxi2 = - eta2 ->

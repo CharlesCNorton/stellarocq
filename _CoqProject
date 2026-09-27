@@ -46,3 +46,11 @@ theories/FourierParity.v
 theories/FourierDFT.v
 theories/FourierCanon.v
 theories/KAMFrame.v
+theories/KAMVec.v
+theories/KAMFin.v
+theories/KAMStep.v
+theories/KAMBound.v
+theories/KAMDiff.v
+theories/KAMUpdate.v
+theories/KAMScale.v
+theories/KAMIter.v

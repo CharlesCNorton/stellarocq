@@ -343,9 +343,11 @@ Proof.
   apply Rmult_le_compat_l; [exact Hr |]. unfold msize.
   rewrite !minus_IZR.
   pose proof (Rabs_triang (IZR k) (IZR m - IZR k)).
-  pose proof (Rabs_triang (IZR l) (IZR n - IZR l)).
+  pose proof (Rabs_triang (IZR l) (IZR n - IZR l)) as T.
   replace (IZR k + (IZR m - IZR k)) with (IZR m) in * by ring.
   replace (IZR l + (IZR n - IZR l)) with (IZR n) in * by ring.
+  apply (Rmult_le_compat_l kappa) in T; [| exact (Rlt_le _ _ kappa_pos)].
+  rewrite Rmult_plus_distr_l in T.
   lra.
 Qed.
 
@@ -355,10 +357,12 @@ Proof.
   apply Rmult_le_compat_l; [exact Hr |]. unfold msize.
   rewrite !minus_IZR.
   pose proof (Rabs_triang (IZR k) (- (IZR k - IZR m))).
-  pose proof (Rabs_triang (IZR l) (- (IZR l - IZR n))).
+  pose proof (Rabs_triang (IZR l) (- (IZR l - IZR n))) as T.
   rewrite !Rabs_Ropp in *.
   replace (IZR k + - (IZR k - IZR m)) with (IZR m) in * by ring.
   replace (IZR l + - (IZR l - IZR n)) with (IZR n) in * by ring.
+  apply (Rmult_le_compat_l kappa) in T; [| exact (Rlt_le _ _ kappa_pos)].
+  rewrite Rmult_plus_distr_l in T.
   lra.
 Qed.
 

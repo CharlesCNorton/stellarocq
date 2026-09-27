@@ -27,7 +27,7 @@ Proof.
   replace ((Rabs 1 + Rabs 0) * wt rho 0 0) with 1 in H.
   - exact H.
   - unfold wt, msize. rewrite !Rabs_R0, Rabs_R1.
-    replace (rho * (0 + 0)) with 0 by ring. rewrite exp_0. ring.
+    replace (rho * (0 + kappa * 0)) with 0 by ring. rewrite exp_0. ring.
 Qed.
 
 Lemma conv_p_unit (f : Z -> Z -> R) (x : R) (m n : Z) : conv_p f (at2 0 0 x) m n = x * f m n.
