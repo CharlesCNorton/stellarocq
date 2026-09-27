@@ -16,7 +16,8 @@ From Coq Require Import ZArith Reals Lra Lia.
 From Coquelicot Require Import Coquelicot.
 From Stellarocq Require Import KAMScalar Dioph Fourier FourierSum FourierEval FourierProd FourierMul
   FourierAlg FourierMulEval FourierMulSem FourierMulLim FourierLim FourierInv FourierSqrt
-  FourierParity FourierDFT FourierCanon KAMFrame KAMVec KAMFin KAMStep KAMBound KAMDiff.
+  FourierParity FourierDFT FourierCanon FourierPer KAMFrame KAMVec KAMFin KAMPer KAMStep KAMBound
+  KAMDiff.
 Local Open Scope R_scope.
 
 Definition kdA (c : kcon) (gamma d : R) : R := kdE d * kP c gamma d.
@@ -82,8 +83,9 @@ Proof. unfold kmln. split; intros m n; cbn [vR vZ vsub]; unfold fsub; fnorm; spl
 
 Section Update.
 
-Variables (F : fmodel) (om gamma w d : R) (K : vf) (g b : fser) (c : kcon) (eps : R).
-Hypothesis Hdio : diophantine1 om gamma.
+Variables (F : fmodel) (P : Z) (om gamma w d : R) (K : vf) (g b : fser) (c : kcon) (eps : R).
+Hypothesis HP : (0 < P)%Z.
+Hypothesis Hdio : dioph_per P om gamma.
 Hypothesis Hgam : 0 < gamma <= 1.
 Hypothesis Hd : 0 < d.
 Hypothesis Hw : 7 * d < 2 * w.
@@ -94,6 +96,12 @@ Hypothesis Cg : is_canon g.
 Hypothesis Pg : is_even g.
 Hypothesis Cb : is_canon b.
 Hypothesis Pb : is_odd b.
+Hypothesis QK : vper P K.
+Hypothesis Qg : is_per P g.
+Hypothesis Qb : is_per P b.
+Hypothesis QV : vper P (Vf F K).
+Hypothesis QD : mper P (DVf F K).
+Hypothesis QS : is_per P (Sf F K).
 Hypothesis BB : nbound w (cB c) b.
 Hypothesis BA : vbound w (cA c) (ktng K).
 Hypothesis BG : nbound w (cG c) g.
@@ -114,6 +122,7 @@ Hypothesis BS : nbound w (cS c) (Sf F K).
 
 Hypothesis CS' : is_canon (Sf F (knext F om K g b)).
 Hypothesis PS' : is_even (Sf F (knext F om K g b)).
+Hypothesis QS' : is_per P (Sf F (knext F om K g b)).
 Hypothesis BS' : nbound (w - 2 * d) (cS c) (Sf F (knext F om K g b)).
 Hypothesis HlipS : forall P, vbound (w - 2 * d) P (vsub (knext F om K g b) K) ->
   nbound (w - 2 * d) (cLS c * P) (fsub (Sf F (knext F om K g b)) (Sf F K)).
@@ -150,7 +159,8 @@ Lemma uN : 0 <= cN c. Proof. exact (vbound_nonneg _ _ _ BN). Qed.
 
 Lemma U_dK : vbound w2 (kP c gamma d * eps) (vsub K' K).
 Proof.
-  pose proof (bnd_corr F om gamma w d K g b c eps Hdio Hgam Hd uw3d BA BN BE BT Htau BS) as Hc.
+  pose proof (bnd_corr F P om gamma w d K g b c eps HP Hdio Hgam Hd uw3d QK Qg Qb QV QD QS
+                BA BN BE BT Htau BS) as Hc.
   destruct (next_sub_feq F om K g b) as [E1 E2].
   exact (vbound_feq _ _ _ _ (feq_sym _ _ E1) (feq_sym _ _ E2) Hc).
 Qed.
@@ -301,6 +311,15 @@ Qed.
 Lemma U_g'even : is_even g'.
 Proof.
   apply finv_even; [| exact Pg]. apply fmul_even_even; [exact PS' | apply vdot_asym_asym; apply P_tng'].
+Qed.
+
+Lemma Q_tng' : vper P (ktng K').
+Proof. apply vper_vdt. exact (next_per F P om K g b HP QK Qg Qb QV QD QS). Qed.
+
+Lemma U_g'per : is_per P g'.
+Proof.
+  apply finv_per; [exact HP | | exact Qg].
+  apply fmul_per; [exact HP | exact QS' | apply vdot_per; [exact HP | apply Q_tng' | apply Q_tng']].
 Qed.
 
 (** * The normal *)

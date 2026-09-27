@@ -20,7 +20,7 @@ From Coq Require Import ZArith Reals Lra Lia.
 From Coquelicot Require Import Coquelicot.
 From Stellarocq Require Import KAMScalar Dioph Fourier FourierSum FourierEval FourierProd FourierMul
   FourierAlg FourierMulEval FourierMulSem FourierMulLim FourierLim FourierInv FourierSqrt
-  FourierParity FourierDFT FourierCanon KAMFrame KAMVec KAMFin KAMStep.
+  FourierParity FourierDFT FourierCanon FourierPer KAMFrame KAMVec KAMFin KAMPer KAMStep.
 Local Open Scope R_scope.
 
 (** The constants a state of the iteration is held to. *)
@@ -75,9 +75,12 @@ Qed.
 
 Section StepBounds.
 
-Variables (F : fmodel) (om gamma w d : R) (K : vf) (g b : fser) (c : kcon) (eps : R).
-Hypothesis Hdio : diophantine1 om gamma.
+Variables (F : fmodel) (P : Z) (om gamma gammaA w d : R) (K : vf) (g b : fser) (c : kcon) (eps : R).
+Hypothesis HP : (0 < P)%Z.
+Hypothesis Hdio : dioph_per P om gamma.
 Hypothesis Hgam : 0 < gamma <= 1.
+Hypothesis HdioA : diophantine1 om gammaA.
+Hypothesis HgamA : 0 < gammaA <= 1.
 Hypothesis Hd : 0 < d.
 Hypothesis Hw : 3 * d < w.
 Hypothesis Heps : 0 <= eps.
@@ -89,6 +92,12 @@ Hypothesis Pg : is_even g.
 Hypothesis Cb : is_canon b.
 Hypothesis Pb : is_odd b.
 Hypothesis Fb : fin w b.
+Hypothesis QK : vper P K.
+Hypothesis Qg : is_per P g.
+Hypothesis Qb : is_per P b.
+Hypothesis QV : vper P (Vf F K).
+Hypothesis QD : mper P (DVf F K).
+Hypothesis QS : is_per P (Sf F K).
 Hypothesis FK : vfin w K.
 Hypothesis BA : vbound w (cA c) (ktng K).
 Hypothesis BG : nbound w (cG c) g.
@@ -215,6 +224,46 @@ Qed.
 Theorem next_canon : vcanon (knext F om K g b). Proof. apply vcanon_vadd; [exact CK | apply C_corr]. Qed.
 Theorem next_sym : vsym (knext F om K g b). Proof. apply vsym_vadd; [exact PK | apply P_corr]. Qed.
 
+(** * The period of the step's parts *)
+
+Lemma Q_tng : vper P (ktng K). Proof. unfold ktng. apply vper_vdt. exact QK. Qed.
+Lemma Q_nrm : vper P (knrm K g b).
+Proof.
+  unfold knrm. apply vper_vadd.
+  - apply vper_vsmul; [exact HP | exact Qg | apply vper_vJ, Q_tng].
+  - apply vper_vsmul; [exact HP | exact Qb | exact Q_tng].
+Qed.
+Lemma Q_err : vper P (kerr F om K).
+Proof. unfold kerr. apply vper_vsub; [apply vper_vlc, QK | exact QV]. Qed.
+Lemma Q_eta1 : is_per P (keta1 F om K g b).
+Proof. unfold keta1. apply fmul_per; [exact HP | exact QS | apply wedge_per; [exact HP | apply Q_err | apply Q_nrm]]. Qed.
+Lemma Q_eta2 : is_per P (keta2 F om K).
+Proof. unfold keta2. apply fmul_per; [exact HP | exact QS | apply wedge_per; [exact HP | apply Q_tng | apply Q_err]]. Qed.
+Lemma Q_mln : vper P (kmln F om K g b).
+Proof.
+  unfold kmln. apply vper_vsub; [apply vper_vlc, Q_nrm |].
+  apply mapp_per; [exact HP | exact QD | apply Q_nrm].
+Qed.
+Lemma Q_twist : is_per P (ktwist F om K g b).
+Proof. unfold ktwist. apply fmul_per; [exact HP | exact QS | apply wedge_per; [exact HP | apply Q_mln | apply Q_nrm]]. Qed.
+Lemma Q_w2 : is_per P (kw2 F om K). Proof. unfold kw2. apply fscal_per, linv_per, Q_eta2. Qed.
+Lemma Q_xi2 : is_per P (kxi2 F om K g b).
+Proof. unfold kxi2. apply fadd_per; [apply Q_w2 | apply fconst_per, HP]. Qed.
+Lemma Q_rhs1 : is_per P (krhs1 F om K g b).
+Proof.
+  unfold krhs1. apply fadd_per; [apply Q_eta1 |].
+  apply fadd_per; [apply fmul_per; [exact HP | apply Q_twist | apply Q_w2] | apply fscal_per, Q_twist].
+Qed.
+Lemma Q_xi1 : is_per P (kxi1 F om K g b). Proof. unfold kxi1. apply fscal_per, linv_per, Q_rhs1. Qed.
+Lemma Q_corr : vper P (kcorr F om K g b).
+Proof.
+  unfold kcorr. apply vper_vadd.
+  - apply vper_vsmul; [exact HP | apply Q_xi1 | apply Q_tng].
+  - apply vper_vsmul; [exact HP | apply Q_xi2 | apply Q_nrm].
+Qed.
+Theorem next_per : vper P (knext F om K g b).
+Proof. unfold knext. apply vper_vadd; [exact QK | apply Q_corr]. Qed.
+
 Lemma C_dE : vcanon (vdt (kerr F om K)). Proof. apply vcanon_vdt, C_err. Qed.
 Lemma P_dE : vsym (vdt (kerr F om K)). Proof. apply vasym_vdt, P_err. Qed.
 Lemma C_alpha : is_canon (kalpha F om K g b).
@@ -287,7 +336,7 @@ Qed.
 Lemma B_w2 : nbound w1 (kW2 c gamma d * eps) (kw2 F om K).
 Proof.
   apply (nbound_le _ (Rabs (-1) * (linv_const gamma d * (kH2 c * eps)))); [rewrite Rabs_m1; unfold kW2; right; ring |].
-  apply nbound_fscal. apply (nbound_linv om gamma Hdio Hgam w d); [exact Hd | apply B_eta2].
+  apply nbound_fscal. apply (nbound_linv_per P HP om gamma Hdio Hgam w d); [apply Q_eta2 | exact Hd | apply B_eta2].
 Qed.
 
 Lemma B_Tw2 : nbound w1 (cTm c * (kW2 c gamma d * eps)) (fmul (ktwist F om K g b) (kw2 F om K)).
@@ -329,7 +378,7 @@ Lemma B_xi1 : nbound w2 (kX1 c gamma d * eps) (kxi1 F om K g b).
 Proof.
   apply (nbound_le _ (Rabs (-1) * (linv_const gamma d * (kR1 c gamma d * eps)))); [rewrite Rabs_m1; unfold kX1; right; ring |].
   apply nbound_fscal. replace w2 with (w1 - d) by (unfold w1, w2; ring).
-  apply (nbound_linv om gamma Hdio Hgam w1 d); [exact Hd | apply B_rhs1].
+  apply (nbound_linv_per P HP om gamma Hdio Hgam w1 d); [apply Q_rhs1 | exact Hd | apply B_rhs1].
 Qed.
 
 Theorem bnd_corr : vbound w2 (kP c gamma d * eps) (kcorr F om K g b).
@@ -430,7 +479,7 @@ Theorem step_bound : vbound w2 (kE c gamma d * (eps * eps)) (kerr F om (knext F 
 Proof.
   assert (Htw : fc (ktwist F om K g b) 0 0 <> 0).
   { intros E. destruct Htau as [H0 H1]. rewrite E, Rabs_R0 in H1. lra. }
-  pose proof (step_identity F om gamma w d K g b Hdio Hgam Hd Hw FK (vfin_of _ _ _ BA) FlK
+  pose proof (step_identity F om gammaA w d K g b HdioA HgamA Hd Hw FK (vfin_of _ _ _ BA) FlK
                 (fin_of _ _ _ BG) Fb (fin_of _ _ _ BS) (vfin_of _ _ _ BS1) (mfin_of _ _ _ BD)
                 (vfin_of _ _ _ BV) (vfin_of _ _ _ BV') Hframe Hchain_R Hchain_Z Hliou
                 (P_eta2 0%Z 0%Z) Htw) as SI.

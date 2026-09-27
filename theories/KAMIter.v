@@ -14,24 +14,31 @@
     at most twice their first-step values times eps_0 ([inv_all]). The
     torsion is carried as a bound on the strip where each step reads it,
     starting from its bound T_0 at K_0, and its average moves by no more.
-    The conditions on eps_0 are finitely many inequalities between numbers
-    at the first step. *)
+    Every torus and frame inverse belongs to the field period P, so the
+    inverse of L needs the rotation number to be Diophantine only against
+    the multiples of P ([Hdio]); the Diophantine condition against every
+    integer ([HdioA]) enters only through the finiteness of the step's
+    parts. The conditions on eps_0 are finitely many inequalities between
+    numbers at the first step. *)
 
 From Coq Require Import ZArith Reals Lra Lia.
 From Coquelicot Require Import Coquelicot.
 From Stellarocq Require Import KAMScalar Dioph Fourier FourierSum FourierEval FourierProd FourierMul
   FourierAlg FourierMulEval FourierMulSem FourierMulLim FourierLim FourierInv FourierSqrt
-  FourierParity FourierDFT FourierCanon KAMFrame KAMVec KAMFin KAMStep KAMBound KAMDiff KAMUpdate
-  KAMScale.
+  FourierParity FourierDFT FourierCanon FourierPer KAMFrame KAMVec KAMFin KAMPer KAMStep KAMBound
+  KAMDiff KAMUpdate KAMScale.
 From Stellarocq Require Hypotheses Invariance.
 Local Open Scope R_scope.
 
 Section Iter.
 
-Variables (F : fmodel) (om gamma : R) (K0 : vf) (g0 b : fser) (w0 d0 r : R) (c : kcon)
+Variables (F : fmodel) (P : Z) (om gamma gammaA : R) (K0 : vf) (g0 b : fser) (w0 d0 r : R) (c : kcon)
   (A0 G0 N0 T0 tau0 eps0 : R).
-Hypothesis Hdio : diophantine1 om gamma.
+Hypothesis HP : (0 < P)%Z.
+Hypothesis Hdio : dioph_per P om gamma.
 Hypothesis Hgam : 0 < gamma <= 1.
+Hypothesis HdioA : diophantine1 om gammaA.
+Hypothesis HgamA : 0 < gammaA <= 1.
 Hypothesis Hd0 : 0 < d0.
 Hypothesis Hw0 : 6 * d0 < w0.
 Hypothesis HA : 0 <= cA c.
@@ -203,8 +210,11 @@ Lemma nn_kT0 : 0 <= kT c om gamma d0. Proof. exact (proj1 (DkT _ Hd0)). Qed.
 (** * The field model on the ball about K_0 *)
 
 Definition good (w : R) (K : vf) : Prop :=
-  winf <= w /\ w <= w0 /\ vcanon K /\ vsym K /\ vbound w r (vsub K K0).
+  winf <= w /\ w <= w0 /\ vcanon K /\ vsym K /\ vper P K /\ vbound w r (vsub K K0).
 
+Hypothesis MQV : forall w K, good w K -> vper P (Vf F K).
+Hypothesis MQD : forall w K, good w K -> mper P (DVf F K).
+Hypothesis MQS : forall w K, good w K -> is_per P (Sf F K).
 Hypothesis MCV : forall w K, good w K -> vcanon (Vf F K).
 Hypothesis MPV : forall w K, good w K -> vasym (Vf F K).
 Hypothesis MCD : forall w K, good w K -> mcanon (DVf F K).
@@ -242,6 +252,9 @@ Hypothesis Cg0 : is_canon g0.
 Hypothesis Pg0 : is_even g0.
 Hypothesis Cb : is_canon b.
 Hypothesis Pb : is_odd b.
+Hypothesis Q0 : vper P K0.
+Hypothesis Qg0 : is_per P g0.
+Hypothesis Qb : is_per P b.
 Hypothesis FK0 : vfin w0 K0.
 Hypothesis BB0 : nbound w0 (cB c) b.
 Hypothesis BA0 : vbound w0 A0 (ktng K0).
@@ -281,6 +294,7 @@ Definition sT (n : nat) : R := fsum (fun k => kT c om gamma (itd k) * iteps k) n
 
 Definition inv (n : nat) : Prop :=
   vcanon (fst (kit n)) /\ vsym (fst (kit n)) /\ is_canon (snd (kit n)) /\ is_even (snd (kit n)) /\
+  vper P (fst (kit n)) /\ is_per P (snd (kit n)) /\
   vbound (itw n) (sP n) (vsub (fst (kit n)) K0) /\
   vbound (itw n) (A0 + sA n) (ktng (fst (kit n))) /\
   nbound (itw n) (G0 + sG n) (snd (kit n)) /\
@@ -312,7 +326,7 @@ Qed.
 
 Lemma good_vfin (w : R) (K : vf) : good w K -> vfin w K.
 Proof.
-  intros [H1 [H2 [_ [_ Hb]]]].
+  intros [H1 [H2 [_ [_ [_ Hb]]]]].
   destruct (vfin_mono w0 w K0 H2 FK0) as [[M1 F1] [M2 F2]]. destruct Hb as [B1 B2].
   split.
   - exists (M1 + r). exact (nbound_add_diff w M1 r (vR K0) (vR K) F1 B1).
@@ -321,9 +335,9 @@ Qed.
 
 Lemma good_mono (w w' : R) (K : vf) : good w K -> winf <= w' -> w' <= w -> good w' K.
 Proof.
-  intros [H1 [H2 [H3 [H4 H5]]]] H6 H7.
+  intros [H1 [H2 [H3 [H4 [H4' H5]]]]] H6 H7.
   assert (H8 : w' <= w0) by lra.
-  exact (conj H6 (conj H8 (conj H3 (conj H4 (vbound_mono w w' _ _ H7 H5))))).
+  exact (conj H6 (conj H8 (conj H3 (conj H4 (conj H4' (vbound_mono w w' _ _ H7 H5)))))).
 Qed.
 
 Lemma itw0 : itw 0 = w0.
@@ -334,8 +348,8 @@ Proof.
   unfold inv, sP, sA, sG, sN, sT. cbn [kit fst snd fsum]. rewrite itw0, itd0.
   assert (Z0 : vbound w0 0 (vsub K0 K0)).
   { apply vbound_zero. intros m n. unfold vsub, fsub, fadd, fscal. simpl. repeat split; ring. }
-  refine (conj C0 (conj P0 (conj Cg0 (conj Pg0 (conj Z0 (conj _ (conj _ (conj _
-            (conj Hframe0 (conj BE0 (conj _ _))))))))))).
+  refine (conj C0 (conj P0 (conj Cg0 (conj Pg0 (conj Q0 (conj Qg0 (conj Z0 (conj _ (conj _ (conj _
+            (conj Hframe0 (conj BE0 (conj _ _))))))))))))).
   - apply (vbound_le _ A0); [lra | exact BA0].
   - apply (nbound_le _ G0); [lra | exact BG0].
   - apply (vbound_le _ N0); [lra | exact BN0].
@@ -345,7 +359,7 @@ Qed.
 
 Theorem inv_step (n : nat) : inv n -> inv (S n).
 Proof.
-  intros [CK [PK [Cg [Pg [Bball [BAn [BGn [BNn [Hfr [BE [BTn Htw]]]]]]]]]]].
+  intros [CK [PK [Cg [Pg [QK [Qg [Bball [BAn [BGn [BNn [Hfr [BE [BTn Htw]]]]]]]]]]]]].
   set (K := fst (kit n)) in *. set (g := snd (kit n)) in *.
   set (w := itw n) in *. set (d := itd n) in *. set (e := iteps n) in *.
   assert (Hd : 0 < d) by apply itd_pos.
@@ -365,12 +379,14 @@ Proof.
   assert (BB : nbound w (cB c) b) by (apply (nbound_mono w0); [exact Hwl | exact BB0]).
   assert (Gd : good w K).
   { assert (Hb : vbound w r (vsub K K0)) by (apply (vbound_le _ (sP n)); [lra | exact Bball]).
-    exact (conj (Rlt_le _ _ (itw_gt n)) (conj Hwl (conj CK (conj PK Hb)))). }
+    exact (conj (Rlt_le _ _ (itw_gt n)) (conj Hwl (conj CK (conj PK (conj QK Hb))))). }
   assert (FK : vfin w K) by (apply good_vfin, Gd).
   pose proof (MBS _ _ Gd) as BS. pose proof (MBD _ _ Gd) as BD.
+  pose proof (MQV _ _ Gd) as QV. pose proof (MQD _ _ Gd) as QD. pose proof (MQS _ _ Gd) as QS.
   assert (Htau : 0 < ctau c <= Rabs (fc (ktwist F om K g b) 0 0)) by lra.
   (* the next torus is in the ball *)
-  pose proof (U_dK F om gamma w d K g b c e Hdio Hgam Hd Hw7 BA BN BE BT Htau BS) as DK.
+  pose proof (U_dK F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 QK Qg Qb QV QD QS
+                BA BN BE BT Htau BS) as DK.
   set (K' := knext F om K g b) in *.
   assert (Bball' : vbound (w - 2 * d) (sP (S n)) (vsub K' K0)).
   { apply (vbound_feq' _ _ _ _ (feq_sym2 _ _ (vsub_vsub_feq K' K K0))).
@@ -378,10 +394,11 @@ Proof.
     apply vbound_vadd; [exact DK | apply (vbound_mono w); [lra | exact Bball]]. }
   pose proof (next_canon F om K g b CK Cg Cb (MCV _ _ Gd) (MCD _ _ Gd) (MCS _ _ Gd)) as CK'.
   pose proof (next_sym F om K g b PK Pg Pb (MPV _ _ Gd) (MPD _ _ Gd) (MPS _ _ Gd)) as PK'.
+  pose proof (next_per F P om K g b HP QK Qg Qb QV QD QS) as QK'.
   assert (Gd' : good (w - 2 * d) K').
   { assert (X1 : winf <= w - 2 * d) by lra. assert (X2 : w - 2 * d <= w0) by lra.
     assert (Hb : vbound (w - 2 * d) r (vsub K' K0)) by (apply (vbound_le _ (sP (S n))); [lra | exact Bball']).
-    exact (conj X1 (conj X2 (conj CK' (conj PK' Hb)))). }
+    exact (conj X1 (conj X2 (conj CK' (conj PK' (conj QK' Hb))))). }
   assert (Gd2 : good (w - 2 * d) K) by (apply (good_mono w); [exact Gd | lra | lra]).
   (* smallness at this step *)
   assert (Hsm_a : kdA c gamma d * e <= cA c).
@@ -398,26 +415,33 @@ Proof.
   { pose proof (small_step _ _ nn_kdW0 sc_kdW n (nn_kdW n)) as H.
     pose proof (kW_anti c om HN d0 d Hd (itd_le n)) as H2. unfold d, e in *. lra. }
   (* the step *)
-  pose proof (step_bound F om gamma w d K g b c e Hdio Hgam Hd Hw CK PK Cg Cb (fin_of _ _ _ BB) FK
-                BA BG BN BE BT Htau Hfr
+  pose proof (step_bound F P om gamma gammaA w d K g b c e HP Hdio Hgam HdioA HgamA Hd Hw CK PK Cg Cb
+                (fin_of _ _ _ BB) QK Qg Qb QV QD QS FK BA BG BN BE BT Htau Hfr
                 (MCV _ _ Gd) (MPV _ _ Gd) (MCD _ _ Gd) (MCS _ _ Gd) (MPS _ _ Gd) (MCG _ _ Gd)
                 (MBV _ _ Gd) BD BS (MBG _ _ Gd) (Mchain_R _ _ Gd) (Mchain_Z _ _ Gd) (Mliou _ _ Gd)
-                (MCV _ _ Gd') (MBV _ _ Gd') (fun P HP => Mtaylor _ _ _ Gd2 Gd' P HP)) as SB.
-  pose proof (U_dtng F om gamma w d K g b c e Hdio Hgam Hd Hw7 BA BN BE BT Htau BS) as DT.
-  pose proof (U_g'sub F om gamma w d K g b c e Hdio Hgam Hd Hw7 CK Cg BA BG BN BE BT Htau Hfr
-                (MCS _ _ Gd) BS (MBS _ _ Gd') (fun P HP => MlipS _ _ _ Gd2 Gd' P HP) Hsm_a Hsm_q) as DG.
-  pose proof (U_frame' F om gamma w d K g b c e Hdio Hgam Hd Hw7 CK Cg BA BG BN BE BT Htau Hfr
-                (MCS _ _ Gd) BS (MBS _ _ Gd') (fun P HP => MlipS _ _ _ Gd2 Gd' P HP) Hsm_a Hsm_q) as FR.
-  pose proof (U_dN F om gamma w d K g b c e Hdio Hgam Hd Hw7 CK Cg BB BA BG BN BE BT Htau Hfr
-                (MCS _ _ Gd) BS (MBS _ _ Gd') (fun P HP => MlipS _ _ _ Gd2 Gd' P HP) Hsm_a Hsm_q) as DN.
-  pose proof (U_dT F om gamma w d K g b c e Hdio Hgam Hd Hw7 CK Cg BB BA BG BN BE BT Htau Hfr
-                (MCS _ _ Gd) BD BS (MBS _ _ Gd') (fun P HP => MlipS _ _ _ Gd2 Gd' P HP)
-                (fun P HP => MlipD _ _ _ Gd2 Gd' P HP) Hsm_a Hsm_q Hsm_n Hsm_w) as DTw.
-  pose proof (U_twist F om gamma w d K g b c e Hdio Hgam Hd Hw7 CK Cg BB BA BG BN BE BT Htau Hfr
-                (MCS _ _ Gd) BD BS (MBS _ _ Gd') (fun P HP => MlipS _ _ _ Gd2 Gd' P HP)
-                (fun P HP => MlipD _ _ _ Gd2 Gd' P HP) Hsm_a Hsm_q Hsm_n Hsm_w) as TW.
+                (MCV _ _ Gd') (MBV _ _ Gd') (fun Q HQ => Mtaylor _ _ _ Gd2 Gd' Q HQ)) as SB.
+  pose proof (U_dtng F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 QK Qg Qb QV QD QS
+                BA BN BE BT Htau BS) as DT.
+  pose proof (U_g'sub F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 CK Cg QK Qg Qb QV QD QS
+                BA BG BN BE BT Htau Hfr
+                (MCS _ _ Gd) BS (MBS _ _ Gd') (fun Q HQ => MlipS _ _ _ Gd2 Gd' Q HQ) Hsm_a Hsm_q) as DG.
+  pose proof (U_frame' F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 CK Cg QK Qg Qb QV QD QS
+                BA BG BN BE BT Htau Hfr
+                (MCS _ _ Gd) BS (MBS _ _ Gd') (fun Q HQ => MlipS _ _ _ Gd2 Gd' Q HQ) Hsm_a Hsm_q) as FR.
+  pose proof (U_dN F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 CK Cg QK Qg Qb QV QD QS
+                BB BA BG BN BE BT Htau Hfr
+                (MCS _ _ Gd) BS (MBS _ _ Gd') (fun Q HQ => MlipS _ _ _ Gd2 Gd' Q HQ) Hsm_a Hsm_q) as DN.
+  pose proof (U_dT F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 CK Cg QK Qg Qb QV QD QS
+                BB BA BG BN BE BT Htau Hfr
+                (MCS _ _ Gd) BD BS (MBS _ _ Gd') (fun Q HQ => MlipS _ _ _ Gd2 Gd' Q HQ)
+                (fun Q HQ => MlipD _ _ _ Gd2 Gd' Q HQ) Hsm_a Hsm_q Hsm_n Hsm_w) as DTw.
+  pose proof (U_twist F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 CK Cg QK Qg Qb QV QD QS
+                BB BA BG BN BE BT Htau Hfr
+                (MCS _ _ Gd) BD BS (MBS _ _ Gd') (fun Q HQ => MlipS _ _ _ Gd2 Gd' Q HQ)
+                (fun Q HQ => MlipD _ _ _ Gd2 Gd' Q HQ) Hsm_a Hsm_q Hsm_n Hsm_w) as TW.
   pose proof (U_g'canon F om K g b CK Cg Cb (MCV _ _ Gd) (MCD _ _ Gd) (MCS _ _ Gd) (MCS _ _ Gd')) as Cg'.
   pose proof (U_g'even F om K g b PK Pg Pb (MPV _ _ Gd) (MPD _ _ Gd) (MPS _ _ Gd) (MPS _ _ Gd')) as Pg'.
+  pose proof (U_g'per F P om K g b HP QK Qg Qb QV QD QS (MQS _ _ Gd')) as Qg'.
   (* the invariant at the next step *)
   assert (EW : itw (S n) = w - 3 * d) by (unfold w, d; apply itw_S).
   assert (ED : itd (S n) = d / 2) by (unfold d; apply itd_S).
@@ -451,8 +475,8 @@ Proof.
     rewrite Rabs_minus_sym in T1. unfold K' in *. lra. }
   unfold inv. change (fst (kit (S n))) with K'. change (snd (kit (S n))) with (gnext F om K g b).
   rewrite EW, ED.
-  exact (conj CK' (conj PK' (conj Cg' (conj Pg' (conj I5 (conj I6 (conj I7 (conj I8
-           (conj FR (conj I10 (conj I11 I12))))))))))).
+  exact (conj CK' (conj PK' (conj Cg' (conj Pg' (conj QK' (conj Qg' (conj I5 (conj I6 (conj I7 (conj I8
+           (conj FR (conj I10 (conj I11 I12))))))))))))).
 Qed.
 
 Theorem inv_all (n : nat) : inv n.
@@ -463,7 +487,7 @@ Proof. induction n as [| n IH]; [exact inv0 | exact (inv_step n IH)]. Qed.
 Lemma state_step (n : nat) :
   vbound (itw (S n)) (kP c gamma (itd n) * iteps n) (vsub (fst (kit (S n))) (fst (kit n))).
 Proof.
-  destruct (inv_all n) as [CK [PK [Cg [Pg [Bball [BAn [BGn [BNn [Hfr [BE [BTn Htw]]]]]]]]]]].
+  destruct (inv_all n) as [CK [PK [Cg [Pg [QK [Qg [Bball [BAn [BGn [BNn [Hfr [BE [BTn Htw]]]]]]]]]]]]].
   set (K := fst (kit n)) in *. set (g := snd (kit n)) in *.
   set (w := itw n) in *. set (d := itd n) in *. set (e := iteps n) in *.
   assert (Hd : 0 < d) by apply itd_pos.
@@ -476,10 +500,11 @@ Proof.
     by (apply (nbound_le _ (T0 + sT n)); [lra | exact BTn]).
   assert (Gd : good w K).
   { assert (Hb : vbound w r (vsub K K0)) by (apply (vbound_le _ (sP n)); [lra | exact Bball]).
-    exact (conj (Rlt_le _ _ (itw_gt n)) (conj Hwl (conj CK (conj PK Hb)))). }
+    exact (conj (Rlt_le _ _ (itw_gt n)) (conj Hwl (conj CK (conj PK (conj QK Hb))))). }
   pose proof (MBS _ _ Gd) as BS.
   assert (Htau : 0 < ctau c <= Rabs (fc (ktwist F om K g b) 0 0)) by lra.
-  pose proof (U_dK F om gamma w d K g b c e Hdio Hgam Hd Hw7 BA BN BE BT Htau BS) as DK.
+  pose proof (U_dK F P om gamma w d K g b c e HP Hdio Hgam Hd Hw7 QK Qg Qb (MQV _ _ Gd) (MQD _ _ Gd)
+                (MQS _ _ Gd) BA BN BE BT Htau BS) as DK.
   assert (EW : itw (S n) = w - 3 * d) by (unfold w, d; apply itw_S).
   change (fst (kit (S n))) with (knext F om K g b). rewrite EW.
   apply (vbound_mono (w - 2 * d)); [lra | exact DK].
@@ -584,6 +609,11 @@ Proof.
   split; [apply flim_even | apply flim_odd]; intros n; destruct (inv_all n) as [_ [[P1 P2] _]]; assumption.
 Qed.
 
+Lemma Kstar_per : vper P Kstar.
+Proof.
+  split; apply flim_per; intros n; destruct (inv_all n) as [_ [_ [_ [_ [[Q1 Q2] _]]]]]; assumption.
+Qed.
+
 Lemma nbound_lim (rho M : R) (a : nat -> R) (u : fser) :
   is_lim_seq a 0 -> (forall n, nbound rho (M + a n) u) -> nbound rho M u.
 Proof.
@@ -603,7 +633,7 @@ Proof.
     apply (vbound_feq' _ _ _ _ (feq_sym2 _ _ (vsub_vsub_feq Kstar (fst (kit n)) K0))).
     apply (vbound_le _ (ceps n + sP n)); [pose proof (sP_le n); lra |].
     apply vbound_vadd; [apply vbound_vsub_sym, Kstar_close |].
-    destruct (inv_all n) as [_ [_ [_ [_ [Bb _]]]]].
+    destruct (inv_all n) as [_ [_ [_ [_ [_ [_ [Bb _]]]]]]].
     apply (vbound_mono (itw n)); [left; apply itw_gt | exact Bb]. }
   split; apply (nbound_lim _ _ ceps); try exact ceps_lim; intros n; [exact (proj1 (Hc n)) | exact (proj2 (Hc n))].
 Qed.
@@ -612,17 +642,17 @@ Lemma Kstar_good : good winf Kstar.
 Proof.
   assert (Hb : vbound winf r (vsub Kstar K0)) by (apply (vbound_le _ _ _ _ Hr Kstar_ball)).
   assert (H1 : winf <= winf) by lra. assert (H2 : winf <= w0) by (unfold winf; lra).
-  exact (conj H1 (conj H2 (conj Kstar_canon (conj Kstar_sym Hb)))).
+  exact (conj H1 (conj H2 (conj Kstar_canon (conj Kstar_sym (conj Kstar_per Hb))))).
 Qed.
 
 Lemma Kn_good (n : nat) : good winf (fst (kit n)).
 Proof.
-  destruct (inv_all n) as [CK [PK [_ [_ [Bb _]]]]].
+  destruct (inv_all n) as [CK [PK [_ [_ [QK [_ [Bb _]]]]]]].
   assert (Hb : vbound winf r (vsub (fst (kit n)) K0)).
   { apply (vbound_le _ (sP n)); [pose proof (sP_le n); lra |].
     apply (vbound_mono (itw n)); [left; apply itw_gt | exact Bb]. }
   assert (H1 : winf <= winf) by lra. assert (H2 : winf <= w0) by (unfold winf; lra).
-  exact (conj H1 (conj H2 (conj CK (conj PK Hb)))).
+  exact (conj H1 (conj H2 (conj CK (conj PK (conj QK Hb))))).
 Qed.
 
 Lemma err_split_feq (K K' : vf) :
@@ -651,7 +681,7 @@ Proof.
   assert (Dn : vbound winf (ceps n) (vsub Kstar K)) by (apply vbound_vsub_sym, Kstar_close).
   apply (vbound_feq' _ _ _ _ (feq_sym2 _ _ (err_split_feq K Kstar))).
   unfold errb. apply vbound_vadd; [| apply vbound_vsub].
-  - destruct (inv_all n) as [_ [_ [_ [_ [_ [_ [_ [_ [_ [BE _]]]]]]]]]].
+  - destruct (inv_all n) as [_ [_ [_ [_ [_ [_ [_ [_ [_ [_ [_ [BE _]]]]]]]]]]]].
     apply (vbound_mono (itw n)); [left; pose proof (itw_gt n); pose proof winf_pos; lra | exact BE].
   - unfold kdE. replace 0 with (winf - winf) by ring. apply vbound_vlc; [apply winf_pos | exact Dn].
   - apply (vbound_mono winf); [apply winf_nonneg |].
