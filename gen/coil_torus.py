@@ -17,6 +17,8 @@ and its weighted tangent mu0 I gamma'(t) dt / (4 pi), both exact doubles.
   main --bt-tighten OUT OUT_t && main --bt OUT_t
   python gen/coil_torus.py grid  TORUS.npz COILS.npz OUT --nu 96 --nv 480
   main --bp-tighten OUT OUT_t && main --bp OUT_t
+  python gen/coil_torus.py grid  TORUS.npz COILS.npz OUT --nu 96 --nv 480 --ceiling C
+  main --bp OUT
 
 The covering bounds the sine at every point of the torus, which Taylor cells of
 the second order can reach only for a sine far above what an accurate torus
@@ -31,8 +33,10 @@ not repeat exactly from one field period to the next.
 """
 
 import argparse
+import math
 import pathlib
 import sys
+from fractions import Fraction
 
 import numpy as np
 
@@ -121,6 +125,14 @@ def header(modes, Rc, Zs, P, T):
     return L
 
 
+def ceiling_dyadic(x):
+    """The least N 2^q with N below 2^53 that is at least x > 0."""
+    q = math.floor(math.log2(x)) - 52
+    N = math.ceil(Fraction(x) / Fraction(2) ** q)
+    assert N * Fraction(2) ** q >= Fraction(x) and N < 2**53
+    return N, q
+
+
 def cmd_grid(a):
     """Point certificates of the sine at every point of an nu by nv grid of the
     torus, u and v each over [0, 2 pi): `main --bp-tighten` sets each point's
@@ -132,7 +144,8 @@ def cmd_grid(a):
            for j in range(a.nv) for i in range(a.nu)]
     k, K = (int(x) for x in a.shard.split("/"))
     pts = pts[k::K]
-    L += [f"POINTS {len(pts)}"] + [f"{mu} {mv} 1 0 0" for mu, mv in pts]
+    N, q = ceiling_dyadic(a.ceiling) if a.ceiling else (1, 0)
+    L += [f"POINTS {len(pts)}"] + [f"{mu} {mv} {N} {q} 0" for mu, mv in pts]
     pathlib.Path(a.out).write_text("\n".join(L) + "\n")
     print(f"wrote {a.out}: {len(modes)} modes, {len(P)} source points, {len(pts)} points")
 
@@ -165,6 +178,9 @@ def main():
         if name == "grid":
             s.add_argument("--shard", default="0/1", metavar="K/N",
                            help="every N-th point from the K-th, for runs side by side")
+            s.add_argument("--ceiling", type=float, default=None,
+                           help="claim |sine| at most this at every point, which "
+                           "main --bp establishes without --bp-tighten")
         s.set_defaults(fn=fn)
     a = ap.parse_args()
     return a.fn(a)
