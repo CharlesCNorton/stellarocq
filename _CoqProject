@@ -27,3 +27,6 @@ theories/BoxCell.v
 theories/Newcomb.v
 theories/QSFloor.v
 theories/Coil.v
+theories/Invariance.v
+theories/KAMScalar.v
+theories/Dioph.v
