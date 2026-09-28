@@ -636,7 +636,8 @@ theorem~\cite{boldo2017} and the certificates of the Kepler
 conjecture~\cite{hales2017} come closest, and high-energy physics is being
 formalized in Lean~\cite{toobysmith2025}. Stellarator equilibrium codes are
 verified by convergence studies, manufactured solutions and comparison between
-codes such as VMEC and SPEC~\cite{hudson2012,loizu2015}. We know of no prior work that states the output
+codes, VMEC against SPEC~\cite{hudson2012,loizu2015} and against
+DESC~\cite{dudt2020,panici2023}. We know of no prior work that states the output
 of a stellarator equilibrium code as a machine-checked theorem about the field
 it defines.
 
@@ -645,9 +646,8 @@ it defines.
 Stellarocq gives the output of an equilibrium code a meaning a proof assistant
 can check: bounds, harmonics, stability terms, quasisymmetry verdicts and the
 existence of discrete solutions, each a theorem about the field reconstructed
-from the file's exact numbers. The same machinery extends from the equilibrium
-to its coil field, where it carries a machine-checked KAM argument for the flux
-surfaces of a real stellarator, the subject of separate work.
+from the file's exact numbers. Its verdicts enter VMEC++ as regression tests
+whose tolerances are the certified enclosures.
 
 \paragraph{Availability.}
 The development, the certificate generators and the script that writes
@@ -845,6 +845,15 @@ T.~Hales et al., A formal proof of the Kepler conjecture, \emph{Forum Math. Pi}
 \bibitem{toobysmith2025}
 J.~Tooby-Smith, HepLean: Digitalising high energy physics, \emph{Comput. Phys.
 Commun.} \textbf{308}, 109457 (2025).
+
+\bibitem{dudt2020}
+D.~W. Dudt and E.~Kolemen, DESC: A stellarator equilibrium solver, \emph{Phys.
+Plasmas} \textbf{27}, 102513 (2020).
+
+\bibitem{panici2023}
+D.~Panici, R.~Conlin, D.~W. Dudt, K.~Unalmis and E.~Kolemen, The DESC
+stellarator code suite. Part 1. Quick and accurate equilibria computations,
+\emph{J. Plasma Phys.} \textbf{89}, 955890303 (2023).
 
 \end{thebibliography}
 
