@@ -475,3 +475,59 @@ quasisymmetry residual, by `QSFloor.check_qcert`, and prints the enclosures
 of the harmonics of its two terms at every kernel, which `QSFloor.qs_floor`
 turns into a floor on the defect. [gen/qs_floor.py](gen/qs_floor.py) writes the
 file and reads the floor off the harmonics.
+
+## The KAM certificate
+
+`make kam` builds `kam/_ext/_build/default/main.exe`: the six parts of
+`KFinal.cert_ok`, extracted over intervals of 192 fractional bits
+(`KFix.FX`) with Zarith integers, and the driver [kam/main.ml](kam/main.ml).
+
+```
+main.exe MODE E0 SRC JETS FD FS WORKERS O TR
+```
+
+Every file is integers separated by white space. A rational is a numerator
+and a positive denominator, an enclosure two integers, its ends times 2^192.
+Rows run over `zrange K = K, -K, K-1, -(K-1), ..., 1, -1, 0` in the poloidal
+mode and the same order in the second index `l`, the toroidal mode being `P l`;
+a block of rows `(K1, K2)` is `2 K1 + 1` lines of `2 K2 + 1` mantissas. A source
+is six mantissas, its point and its weighted tangent `mu0 I gamma' dt / (4 pi)`.
+
+```
+E0      KE0.e0data, gen/kam_e0.py
+        P N1 M K1 K2 D Km Kn Kmu Knu Kmg Kng / s0 / cosine rows of R and sine rows
+        of Z (Km, Kn), cosine rows of the seeds Ub (Kmu, Knu) and gs (Kmg, Kng),
+        at 2^-s0 / ssrc / the count of base sources and the sources at 2^-ssrc /
+        a b / 6 + 7 + 8 enclosures, not read
+SRC     KSrcRun.srcdata, gen/kam_src.py
+        P Km Kn Kr1 Kr2 N1s N2s Ky1 Ky2 Kmu Knu Kmg Kng / s0 sY ssrc / the rows
+        of R, Z, Ub, gs / the count and the sources / per source its seed, rows
+        (Ky1, Ky2) of cosine and sine mantissa pairs at 2^-sY / a b /
+        4 + 6 + 4 enclosures, not read
+JETS    KJets.jetsdata, gen/kam_jets.py
+        P N1 M K1 K2 D Km Kn Kj1 Kj2 / s0 sJ / the rows of R and Z / nine
+        blocks (Kj1, Kj2) at 2^-sJ, the approximants of B_R, B_phi, B_Z and of
+        their R and Z derivatives, sine rows for the odd ones / ssrc, the count
+        and the sources / 6 + 7 + 9 + 9 enclosures, not read
+FD      KFinal.findata, gen/kam_params.py
+        w0 d0 w1 / the claims Mw (4), B (4), JM (9), JB (9) / Kmb Knb and the
+        sine rows of b at 2^-s0 / N1t Mt NP NT NE
+FS      KFinal.fscal, gen/kam_params.py
+        r eps0 delta A0 G0 N0 T0 tau0 xA xG xN xB xTm xtau
+O, TR   a count, then one enclosure per line
+```
+
+`a` and `b` give the rotation number `P (-b + sqrt 5) / (2 a)`. The checks
+compute every trigonometric and exponential seed from FD (`NP`, `NT` and
+`NE` terms of the series for pi, for cos and sin, and for exp) and take every
+claim from FD. `head` prints `cert_head`, which checks that the three grid
+records describe the same torus, sources and field period and that the
+parameters are admissible. `src` runs `run_src`, writes the enclosures it
+returns to O, reads them back and prints `check_src_with`. `e0` and `jets` print
+`run_E0` and `run_jets`. `twist` runs `run_twist`, writes it to TR, reads it
+back and prints `check_twist_with`. `fin` prints `check_fin` on O and TR and
+each scalar condition. Only `head` and `fin` read FS. `KFinal.cert_ok_torus`
+turns the six verdicts, true on the same files, into an invariant torus of the
+coil field within `delta` of the torus of E0, a pair of Fourier series on a strip
+that carries the field lines at the rotation number of `a` and `b`
+(`TorusLine.fourier_torus`).

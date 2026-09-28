@@ -20,6 +20,7 @@ From Stellarocq Require Import KAMScalar Dioph Fourier FourierSum FourierEval Fo
   FourierDFT FourierCanon FourierPer FourierSym KAMVec KAMFin KAMPer KAMStep KAMBound KAMDiff KAMUpdate
   KAMScale KAMIter Hypotheses Invariance CoilSym FieldKern FieldFam FieldModel FieldTaylor FieldTotal
   FieldBall FieldLine FieldConst.
+From Stellarocq Require TorusLine.
 Local Open Scope R_scope.
 
 Section FieldKAM.
@@ -432,6 +433,45 @@ Proof.
                 MQV' MQD' MQS' MCV MPV MCD MPD MCS MPS MCG MBV MBD MBS MBG McR McZ Mliou' Mtaylor' MlipS' MlipD'
                 C0 S0 Cg0 Pg0 Cb Pb Q0 Qg0 Qb FK0 BB0 BA0 BG0 BN0 BE0 Hframe0 BT0 Htau0 HcA HcG HcN HcT Hrr Hctau2
                 Hsm_a0 Hsm_q0 Hsm_g0 Hsm_n0 Hsm_w0 1) as CL.
+  eexists; eexists. split; [exact IT |]. intros theta phi.
+  destruct (CL theta phi) as [A1 A2]. rewrite Rmult_1_l in A1, A2. exact (conj A1 A2).
+Qed.
+
+(** The same torus is a pair of Fourier families on a strip, solving the
+    invariance equation with rotation om, so that it carries the field lines
+    of TorusLine.fourier_torus_line. *)
+Theorem field_kam_fourier :
+  exists KR KZ : R -> R -> R,
+    TorusLine.fourier_torus (coilB P l) KR KZ om /\
+    forall theta phi,
+      Rabs (KR theta phi - feval (vR K0) theta phi) <= 2 * (kP kc gamma d0 * eps0) /\
+      Rabs (KZ theta phi - feval (vZ K0) theta phi) <= 2 * (kP kc gamma d0 * eps0).
+Proof.
+  destruct kB_nn as [NMV [NDV [NS NS1]]].
+  pose proof (fun w K G => proj1 (MC' w K G)) as MCV.
+  pose proof (fun w K G => proj1 (proj2 (MC' w K G))) as MCD.
+  pose proof (fun w K G => proj1 (proj2 (proj2 (MC' w K G)))) as MCS.
+  pose proof (fun w K G => proj2 (proj2 (proj2 (MC' w K G)))) as MCG.
+  pose proof (fun w K G => proj1 (MP' w K G)) as MPV.
+  pose proof (fun w K G => proj1 (proj2 (MP' w K G))) as MPD.
+  pose proof (fun w K G => proj2 (proj2 (MP' w K G))) as MPS.
+  pose proof (fun w K G => proj1 (MB' w K G)) as MBV.
+  pose proof (fun w K G => proj1 (proj2 (MB' w K G))) as MBD.
+  pose proof (fun w K G => proj1 (proj2 (proj2 (MB' w K G)))) as MBS.
+  pose proof (fun w K G => proj2 (proj2 (proj2 (MB' w K G)))) as MBG.
+  pose proof (fun w K G t p => proj1 (Mchain' w K G t p)) as McR.
+  pose proof (fun w K G t p => proj2 (Mchain' w K G t p)) as McZ.
+  pose proof (kam_fourier kF P om gamma gammaA K0 g0 b w0 d0 r kc A0 G0 N0 T0 tau0 eps0
+                HP Hdio Hgam HdioA HgamA Hd0 Hw0 HA HG HN HB NS NS1 NDV kM2_nn HTm Hctau kLS_nn kLD_nn Heps0 HAE Hsmall
+                MQV' MQD' MQS' MCV MPV MCD MPD MCS MPS MCG MBV MBD MBS MBG McR McZ Mliou' Mtaylor' MlipS' MlipD'
+                C0 S0 Cg0 Pg0 Cb Pb Q0 Qg0 Qb FK0 BB0 BA0 BG0 BN0 BE0 Hframe0 BT0 Htau0 HcA HcG HcN HcT Hrr Hctau2
+                Hsm_a0 Hsm_q0 Hsm_g0 Hsm_n0 Hsm_w0 (coilB P l) 1 Rlt_0_1 Msem') as IT.
+  pose proof (kam_close kF P om gamma gammaA K0 g0 b w0 d0 r kc A0 G0 N0 T0 tau0 eps0
+                HP Hdio Hgam HdioA HgamA Hd0 Hw0 HA HG HN HB NS NS1 NDV kM2_nn HTm Hctau kLS_nn kLD_nn Heps0 HAE Hsmall
+                MQV' MQD' MQS' MCV MPV MCD MPD MCS MPS MCG MBV MBD MBS MBG McR McZ Mliou' Mtaylor' MlipS' MlipD'
+                C0 S0 Cg0 Pg0 Cb Pb Q0 Qg0 Qb FK0 BB0 BA0 BG0 BN0 BE0 Hframe0 BT0 Htau0 HcA HcG HcN HcT Hrr Hctau2
+                Hsm_a0 Hsm_q0 Hsm_g0 Hsm_n0 Hsm_w0 1) as CL.
+  rewrite Rmult_1_l in IT.
   eexists; eexists. split; [exact IT |]. intros theta phi.
   destruct (CL theta phi) as [A1 A2]. rewrite Rmult_1_l in A1, A2. exact (conj A1 A2).
 Qed.

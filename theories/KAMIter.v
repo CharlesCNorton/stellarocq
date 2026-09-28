@@ -27,7 +27,7 @@ From Stellarocq Require Import KAMScalar Dioph Fourier FourierSum FourierEval Fo
   FourierAlg FourierMulEval FourierMulSem FourierMulLim FourierLim FourierInv FourierSqrt
   FourierParity FourierDFT FourierCanon FourierPer KAMFrame KAMVec KAMFin KAMPer KAMStep KAMBound
   KAMDiff KAMUpdate KAMScale.
-From Stellarocq Require Hypotheses Invariance.
+From Stellarocq Require Hypotheses Invariance TorusLine.
 Local Open Scope R_scope.
 
 Section Iter.
@@ -828,6 +828,15 @@ Proof.
     apply feval_bound. exact (nbound_mono winf 0 _ _ Hw B1).
   - rewrite <- (feval_fsub _ _ _ _ theta (s * phi) (nbound_mono winf 0 _ _ Hw HZ) (nbound_mono winf 0 _ _ Hw F2)).
     apply feval_bound. exact (nbound_mono winf 0 _ _ Hw B2).
+Qed.
+
+(** The limit torus is the pair of families of K*, finite on the strip of
+    width winf, read at s phi. *)
+Theorem kam_fourier : TorusLine.fourier_torus B KRs KZs (s * om).
+Proof.
+  destruct (good_vfin _ _ Kstar_good) as [[MR HR] [MZ HZ]].
+  exists (vR Kstar), (vZ Kstar), winf, MR, MZ, s.
+  refine (conj winf_pos (conj HR (conj HZ (conj _ (conj _ kam_param))))); intros t p; reflexivity.
 Qed.
 
 End Iter.

@@ -58,3 +58,20 @@ Print Assumptions gauge_quotient_equilibrium.
 Print Assumptions toroidal_terms3_vanish.
 Print Assumptions toroidal_lambda_terms3_vanish.
 Print Assumptions qs_triple_zero.
+
+From Stdlib Require Import ZArith Lia.
+From Stellarocq Require Import FieldKAM KDioph KFix KFinal.
+Print Assumptions field_kam.
+Print Assumptions om_dioph_per.
+Print Assumptions om_dioph.
+Module AuditP192 <: Prec. Definition k : Z := 192%Z. Lemma k_nonneg : (0 <= k)%Z. Proof. unfold k. lia. Qed. End AuditP192.
+Module AuditFX192 := FX AuditP192.
+Module AuditKAM := Final AuditFX192.
+Print Assumptions AuditKAM.cert_ok_torus.
+
+From Stellarocq Require Import TorusLine FieldPath FieldVel KLohner.
+Print Assumptions fourier_torus_line.
+Print Assumptions taylor2.
+Print Assumptions vel_path_R.
+Print Assumptions lstep_ok.
+Print Assumptions lescape_no_torus.

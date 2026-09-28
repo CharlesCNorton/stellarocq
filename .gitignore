@@ -1,5 +1,8 @@
 _build/
 extract/
+kam/_ext/
+kam/KCertExt.vo*
+kam/KCertExt.glob
 *.vo
 *.vos
 *.vok

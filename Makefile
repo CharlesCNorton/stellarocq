@@ -15,7 +15,7 @@ EXPECT := rocq-core:9.1.1 coq-stdlib:9.2.0 coq-interval:4.11.4 \
           coq-flocq:4.2.2 coq-coquelicot:3.4.5 \
           coq-mathcomp-ssreflect:2.4.0 ocaml:4.14.2
 
-.PHONY: all proofs extract checker static audit versions clean
+.PHONY: all proofs extract checker static kam audit versions clean
 
 versions:
 	@opam list --switch=$(OPAM_SWITCH) --installed --short --columns=name,version > .versions.tmp 2>/dev/null; \
@@ -57,6 +57,16 @@ checker: extract
 static: extract
 	cd extract && dune build --profile static ./main.exe
 	@echo "checker: extract/_build/default/main.exe, statically linked"
+
+# The checker of the KAM certificate KFinal.cert_ok: its six parts, extracted
+# over 192-bit fixed-point intervals with Zarith, and the driver kam/main.ml.
+kam: proofs
+	mkdir -p kam/_ext
+	cd kam/_ext && rm -f *.ml *.mli && rocq compile -R ../../theories Stellarocq ../KCertExt.v
+	python3 kam/stub_reals.py kam/_ext
+	cp kam/main.ml kam/par.ml kam/dune kam/_ext/
+	cd kam/_ext && printf '(lang dune 3.0)\n' > dune-project && dune build ./main.exe
+	@echo "KAM checker: kam/_ext/_build/default/main.exe"
 
 audit: proofs
 	rocq compile -R theories Stellarocq theories/Audit.v
