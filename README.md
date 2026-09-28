@@ -24,6 +24,8 @@ make esc        # the checker of the escape certificate KLohner.check_lescape
 make audit      # Print Assumptions of every theorem
 ```
 
+[paper/stellarocq.tex](paper/stellarocq.tex) describes the equilibrium certificates and their results on VMEC++ output; `tectonic paper/stellarocq.tex` builds it.
+
 `make static` links the same checker statically, and the [releases](https://github.com/CharlesCNorton/stellarocq/releases) carry that build for x86_64 Linux.
 
 ## Use

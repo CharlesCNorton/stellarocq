@@ -79,3 +79,7 @@ Print Assumptions lescape_no_torus.
 From Stellarocq Require Import KBracket.
 Module AuditBracket := Bracket AuditFX192.
 Print Assumptions AuditBracket.lcfs_bracket.
+
+From Stellarocq Require Import Force Continuum.
+Print Assumptions force_law.
+Print Assumptions continuum_force.

@@ -109,3 +109,7 @@ theories/FieldVel.v
 theories/KJet12.v
 theories/KLohner.v
 theories/KBracket.v
+theories/Force.v
+theories/Series.v
+theories/Recon.v
+theories/Continuum.v
