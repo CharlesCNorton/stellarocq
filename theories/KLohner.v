@@ -8,10 +8,12 @@
     as in FieldStep.v; Taylor's formula at second order with its remainder
     over B ([FieldPath.taylor2], [FieldVel.vel_path_R]); the mean value form
     of the velocity about the centre at the angle a; and a new frame A' whose
-    inverse is enclosed through its adjugate. [chain] follows the steps until
-    the hull of the set lies beyond R_D, and [escape_no_torus] turns a chain
-    from every box of a segment into the statement that no invariant torus
-    of TorusLine.v within R <= R_D meets it. *)
+    inverse is enclosed through its adjugate. [lchain] follows the steps,
+    halving a step while its checks fail, until the hull of the set leaves the
+    region R <= R_D2 at angles where cos (P phi) <= 0 and R <= R_D elsewhere,
+    and [lescape_no_torus] turns a chain from every box of a segment of the
+    plane phi = 0 into the statement that no invariant torus of TorusLine.v
+    lying in that region meets the segment. *)
 
 From Coq Require Import ZArith Reals Lra Lia List Bool.
 From Coquelicot Require Import Coquelicot.
@@ -343,6 +345,70 @@ End Parts.
 Definition lstep (P : nat) (Ss : list (i3 * i3)) (si : stepin) (st : lstate) : bool * lstate :=
   (forallb (fun b => b) (checks P Ss si st), st' P Ss si st).
 
+(** The step with each of its parts bound once, which is how the extracted
+    chain computes it: extracted, the definitions of the section are
+    functions that recompute every part they read. *)
+Definition lstepl (P : nat) (Ss : list (i3 * i3)) (si : stepin) (st : lstate) : bool * lstate :=
+  let XR := hullR st in let XZ := hullZ st in
+  let V0 := snd (fvel P Ss XR XZ (sPs si)) in
+  let GR := grow (FI.join XR (FI.add XR (FI.mul (sH0 si) (vFR V0)))) in
+  let GZ := grow (FI.join XZ (FI.add XZ (FI.mul (sH0 si) (vFZ V0)))) in
+  let VB := fvel P Ss GR GZ (sPs si) in
+  let vb := snd VB in
+  let E2R := FI.add XR (FI.mul (sH0 si) (vFR vb)) in
+  let E2Z := FI.add XZ (FI.mul (sH0 si) (vFZ vb)) in
+  let ER := FI.add (FI.add (FI.mul (vRR vb) (vFR vb)) (FI.mul (vRZ vb) (vFZ vb))) (vRP vb) in
+  let EZ := FI.add (FI.add (FI.mul (vZR vb) (vFR vb)) (FI.mul (vZZ vb) (vFZ vb))) (vZP vb) in
+  let VC := fvel P Ss (pt (lcR st)) (pt (lcZ st)) (sPa si) in
+  let VX := fvel P Ss (FI.join (pt (lcR st)) XR) (FI.join (pt (lcZ st)) XZ) (sPa si) in
+  let vx := snd VX in
+  let M11 := FI.add one (FI.mul (sH si) (vRR vx)) in
+  let M12 := FI.mul (sH si) (vRZ vx) in
+  let M21 := FI.mul (sH si) (vZR vx) in
+  let M22 := FI.add one (FI.mul (sH si) (vZZ vx)) in
+  let MA11 := FI.add (FI.mul M11 (pt (lA11 st))) (FI.mul M12 (pt (lA21 st))) in
+  let MA12 := FI.add (FI.mul M11 (pt (lA12 st))) (FI.mul M12 (pt (lA22 st))) in
+  let MA21 := FI.add (FI.mul M21 (pt (lA11 st))) (FI.mul M22 (pt (lA21 st))) in
+  let MA22 := FI.add (FI.mul M21 (pt (lA12 st))) (FI.mul M22 (pt (lA22 st))) in
+  let YR := FI.add (FI.add (pt (lcR st)) (FI.mul (sH si) (vFR (snd VC)))) (FI.mul (sH2 si) ER) in
+  let YZ := FI.add (FI.add (pt (lcZ st)) (FI.mul (sH si) (vFZ (snd VC)))) (FI.mul (sH2 si) EZ) in
+  let m11 := pt (I.midpoint MA11) in let m21 := pt (I.midpoint MA21) in
+  let nrm := FI.sqrt (FI.add (FI.mul m11 m11) (FI.mul m21 m21)) in
+  let fc := I.midpoint (FI.div m11 nrm) in
+  let fs := I.midpoint (FI.div m21 nrm) in
+  let fms := F.neg fs in
+  let det := FI.sub (FI.mul (pt fc) (pt fc)) (FI.mul (pt fms) (pt fs)) in
+  let i11 := FI.div (pt fc) det in
+  let i12 := FI.div (FI.neg (pt fms)) det in
+  let i21 := FI.div (FI.neg (pt fs)) det in
+  let i22 := FI.div (pt fc) det in
+  let cR' := I.midpoint YR in let cZ' := I.midpoint YZ in
+  let U1' := FI.add (FI.add (FI.mul i11 (FI.sub YR (pt cR'))) (FI.mul i12 (FI.sub YZ (pt cZ'))))
+                    (FI.add (FI.mul (FI.add (FI.mul i11 MA11) (FI.mul i12 MA21)) (lU1 st))
+                            (FI.mul (FI.add (FI.mul i11 MA12) (FI.mul i12 MA22)) (lU2 st))) in
+  let U2' := FI.add (FI.add (FI.mul i21 (FI.sub YR (pt cR'))) (FI.mul i22 (FI.sub YZ (pt cZ'))))
+                    (FI.add (FI.mul (FI.add (FI.mul i21 MA11) (FI.mul i22 MA21)) (lU1 st))
+                            (FI.mul (FI.add (FI.mul i21 MA12) (FI.mul i22 MA22)) (lU2 st))) in
+  let st2 := mkls cR' cZ' fc fms fs fc U1' U2' in
+  (forallb (fun b => b)
+     [fst VB; fst VC; fst VX;
+      pt_ok (I.lower XR); pt_ok (I.upper XR); pt_ok (I.lower XZ); pt_ok (I.upper XZ);
+      pt_ok (I.lower GR); pt_ok (I.upper GR); pt_ok (I.lower GZ); pt_ok (I.upper GZ);
+      pt_ok (I.lower (vFR vb)); pt_ok (I.upper (vFR vb));
+      pt_ok (I.lower (vFZ vb)); pt_ok (I.upper (vFZ vb));
+      pt_ok (I.lower E2R); pt_ok (I.upper E2R); pt_ok (I.lower E2Z); pt_ok (I.upper E2Z);
+      flt (I.lower GR) (I.lower E2R); flt (I.upper E2R) (I.upper GR);
+      flt (I.lower GZ) (I.lower E2Z); flt (I.upper E2Z) (I.upper GZ);
+      FI.pos det; st_ok st2], st2).
+
+Lemma lstepl_eq (P : nat) (Ss : list (i3 * i3)) (si : stepin) (st : lstate) :
+  lstepl P Ss si st = lstep P Ss si st.
+Proof.
+  cbv delta [lstepl lstep checks st' XR XZ V0 GR GZ VB E2R E2Z ER EZ VC VX M11 M12 M21 M22 MA11 MA12 MA21 MA22
+             YR YZ nrm fc fs fms det i11 i12 i21 i22 cR' cZ' U1' U2'] beta zeta.
+  reflexivity.
+Qed.
+
 Ltac inlist := repeat (first [left; reflexivity | right]).
 
 Section StepSound.
@@ -628,17 +694,29 @@ Fixpoint first_step (P : nat) (Ss : list (i3 * i3)) (Hu : FI.t) (J : nat) (n : Z
   | [] => None
   | j :: rest =>
       let k := (2 ^ Z.of_nat (J - j))%Z in
-      let r := lstep P Ss (sin_at Hu n k) st in
+      let r := lstepl P Ss (sin_at Hu n k) st in
       if fst r then Some ((n + k)%Z, snd r) else first_step P Ss Hu J n st rest
   end.
 
-Fixpoint lchain (P : nat) (Ss : list (i3 * i3)) (Hu RD : FI.t) (J : nat) (fuel : nat) (n : Z) (st : lstate) : bool :=
-  FI.pos (FI.sub (hullR st) RD) ||
+(** The region: R <= R_D2 where cos (P phi) <= 0, a quarter period or more
+    from the planes phi = 2 pi k / P, and R <= R_D elsewhere. The set has
+    left it when its hull lies beyond R_D2 at an angle whose cos (P phi) is
+    enclosed below zero, or beyond both bounds. *)
+Definition rho (P : nat) (rD rD2 phi : R) : R := if Rle_dec (cos (INR P * phi)) 0 then rD2 else rD.
+
+Definition beyond (P : nat) (Hu RD RD2 : FI.t) (n : Z) (st : lstate) : bool :=
+  let C := FI.cos (FI.mul (FI.of_q (Z.of_nat P) 0) (FI.mul (FI.of_q n 0) Hu)) in
+  ((FI.nonneg (FI.neg C) && FI.pos (FI.sub (hullR st) RD2)) ||
+   (FI.pos (FI.sub (hullR st) RD) && FI.pos (FI.sub (hullR st) RD2)))%bool.
+
+Fixpoint lchain (P : nat) (Ss : list (i3 * i3)) (Hu RD RD2 : FI.t) (J : nat) (fuel : nat) (n : Z) (st : lstate)
+    : bool :=
+  beyond P Hu RD RD2 n st ||
   match fuel with
   | O => false
   | S f =>
       match first_step P Ss Hu J n st (seq 0 (S J)) with
-      | Some (n', st') => lchain P Ss Hu RD J f n' st'
+      | Some (n', st') => lchain P Ss Hu RD RD2 J f n' st'
       | None => false
       end
   end.
@@ -649,10 +727,26 @@ Variables (P : nat) (l : list (src * fser)) (Ss : list (i3 * i3)).
 Hypothesis HP : (0 < P)%nat.
 Hypothesis Hsrc : src_in Ss l.
 Notation BB := (coilB (Z.of_nat P) l).
-Variables (Hu RD : FI.t) (u rD : R) (J : nat).
+Variables (Hu RD RD2 : FI.t) (u rD rD2 : R) (J : nat).
 Hypothesis Hu_ok : inR Hu u.
 Hypothesis Hu_pos : 0 < u.
 Hypothesis HRD : inR RD rD.
+Hypothesis HRD2 : inR RD2 rD2.
+
+Lemma beyond_ok (n : Z) (st : lstate) (x z0 : R) :
+  st_ok st = true -> holds st x z0 -> beyond P Hu RD RD2 n st = true -> rho P rD rD2 (IZR n * u) < x.
+Proof.
+  intros Hst Hh Hb. destruct (hull_ok st x z0 Hst Hh) as [HX _].
+  assert (HC : inR (FI.cos (FI.mul (FI.of_q (Z.of_nat P) 0) (FI.mul (FI.of_q n 0) Hu))) (cos (INR P * (IZR n * u)))).
+  { apply FI.cos_ok. rewrite INR_IZR_INZ. apply inR_mul; [apply inR_Z | apply inR_mul; [apply inR_Z | exact Hu_ok]]. }
+  unfold beyond in Hb. apply orb_prop in Hb. unfold rho.
+  destruct Hb as [Hb | Hb]; apply andb_prop in Hb; destruct Hb as [H1 H2].
+  - pose proof (FI.nonneg_ok _ _ H1 (inR_neg _ _ HC)) as Hc.
+    destruct (Rle_dec (cos (INR P * (IZR n * u))) 0) as [_ | Hn]; [| lra].
+    pose proof (FI.pos_ok _ _ H2 (inR_sub _ _ _ _ HX HRD2)). lra.
+  - pose proof (FI.pos_ok _ _ H1 (inR_sub _ _ _ _ HX HRD)). pose proof (FI.pos_ok _ _ H2 (inR_sub _ _ _ _ HX HRD2)).
+    destruct (Rle_dec (cos (INR P * (IZR n * u))) 0); lra.
+Qed.
 
 Lemma sin_at_ok (n k : Z) : (0 < k)%Z ->
   let a := IZR n * u in let h := IZR k * u in
@@ -682,6 +776,7 @@ Proof.
   intros Hsol Hst Hhold. induction js as [| j rest IH]; cbn [first_step]; [discriminate |].
   set (k := (2 ^ Z.of_nat (J - j))%Z).
   assert (Hk : (0 < k)%Z) by (apply Z.pow_pos_nonneg; lia).
+  rewrite lstepl_eq.
   destruct (lstep P Ss (sin_at Hu n k) st) as [ok st1] eqn:E. cbn [fst snd].
   destruct ok.
   - intros Hs. injection Hs as <- <-.
@@ -694,20 +789,18 @@ Proof.
 Qed.
 
 (** A chain that returns true takes every solution through its first set
-    beyond R_D. *)
+    out of the region. *)
 Theorem lchain_escapes (fuel : nat) : forall (n : Z) (st : lstate) (r z : R -> R),
   (forall s, IZR n * u <= s -> is_derive r s (flR BB (r s) s (z s)) /\ is_derive z s (flZ BB (r s) s (z s))) ->
   st_ok st = true -> holds st (r (IZR n * u)) (z (IZR n * u)) ->
-  lchain P Ss Hu RD J fuel n st = true ->
-  exists s, IZR n * u <= s /\ rD < r s.
+  lchain P Ss Hu RD RD2 J fuel n st = true ->
+  exists s, IZR n * u <= s /\ rho P rD rD2 s < r s.
 Proof.
   induction fuel as [| f IH]; intros n st r z Hsol Hst Hhold Hc; cbn [lchain] in Hc;
     apply orb_prop in Hc; destruct Hc as [He | Hc].
-  - exists (IZR n * u). split; [lra |].
-    pose proof (FI.pos_ok _ _ He (inR_sub _ _ _ _ (proj1 (hull_ok st _ _ Hst Hhold)) HRD)). lra.
+  - exists (IZR n * u). split; [lra | exact (beyond_ok n st _ _ Hst Hhold He)].
   - discriminate.
-  - exists (IZR n * u). split; [lra |].
-    pose proof (FI.pos_ok _ _ He (inR_sub _ _ _ _ (proj1 (hull_ok st _ _ Hst Hhold)) HRD)). lra.
+  - exists (IZR n * u). split; [lra | exact (beyond_ok n st _ _ Hst Hhold He)].
   - destruct (first_step P Ss Hu J n st (seq 0 (S J))) as [[n' st2] |] eqn:E; [| discriminate].
     destruct (first_step_ok n st r z (seq 0 (S J)) n' st2 Hsol Hst Hhold E) as (Hn & Hst2 & Hh2).
     assert (Hnn : IZR n * u <= IZR n' * u) by (apply Rmult_le_compat_r; [lra | apply IZR_le; lia]).
@@ -747,12 +840,12 @@ Proof.
 Qed.
 
 (** The data: the field period, the steps per turn M and the finest halving
-    J, the sources at 2^-ssrc, the scale sb of R1, R_D and the ends of the
-    boxes, and per box its fuel. *)
+    J, the sources at 2^-ssrc, the scale sb of R1, of the two bounds R_D and
+    R_D2 of the region and of the ends of the boxes, and per box its fuel. *)
 Record lescdata := mklesc {
   le_P : nat ; le_M : nat ; le_J : nat ;
   le_ssrc : Z ; le_srcs : list ((Z * Z * Z) * (Z * Z * Z)) ;
-  le_sb : Z ; le_R1 : Z ; le_RD : Z ;
+  le_sb : Z ; le_R1 : Z ; le_RD : Z ; le_RD2 : Z ;
   le_boxes : list (Z * Z * nat) }.
 
 Definition i3q (s : Z) (x : Z * Z * Z) : i3 :=
@@ -777,7 +870,7 @@ Definition box_ok (d : lescdata) (b : Z * Z * nat) : bool :=
   let '(ra, rb, fuel) := b in
   let st := init (le_sb d) ra rb in
   (st_ok st && lchain (le_P d) (src_i (le_ssrc d) (le_srcs d)) (iunit (le_M d) (le_J d)) (FI.of_q (le_RD d) (le_sb d))
-                (le_J d) fuel 0 st)%bool.
+                (FI.of_q (le_RD2 d) (le_sb d)) (le_J d) fuel 0 st)%bool.
 
 Definition check_lescape (d : lescdata) : bool :=
   ((0 <? le_P d)%nat && (0 <? le_M d)%nat && (0 <=? le_sb d)%Z && (0 <=? le_ssrc d)%Z &&
@@ -785,6 +878,11 @@ Definition check_lescape (d : lescdata) : bool :=
 
 Definition R1r (d : lescdata) : R := IZR (le_R1 d) / IZR (2 ^ le_sb d).
 Definition RDr (d : lescdata) : R := IZR (le_RD d) / IZR (2 ^ le_sb d).
+Definition RD2r (d : lescdata) : R := IZR (le_RD2 d) / IZR (2 ^ le_sb d).
+
+(** The region the tori lie in: R <= R_D2 at angles whose cos (P phi) is not
+    positive and R <= R_D elsewhere. *)
+Definition region (d : lescdata) (phi : R) : R := rho (le_P d) (RDr d) (RD2r d) phi.
 
 Lemma src_i_srcl (s sY : Z) (Ky1 Ky2 : nat) (xs : list ((Z * Z * Z) * (Z * Z * Z)))
     (ys : list (list (list (Z * Z)))) :
@@ -816,12 +914,12 @@ Proof.
   - rewrite E1, E0. ring.
 Qed.
 
-(** No invariant torus of TorusLine.v lying within R <= R_D meets the
-    segment R1 <= R <= R_D of the line Z = 0 in the plane phi = 0. *)
+(** No invariant torus of TorusLine.v lying in the region meets the segment
+    R1 <= R <= R_D of the line Z = 0 in the plane phi = 0. *)
 Theorem lescape_no_torus (d : lescdata) (l : list (src * fser)) :
   check_lescape d = true -> src_in (src_i (le_ssrc d) (le_srcs d)) l ->
   forall (KR KZ : R -> R -> R) (om : R), fourier_torus (coilB (Z.of_nat (le_P d)) l) KR KZ om ->
-  (forall t p, KR t p <= RDr d) ->
+  (forall t p, KR t p <= region d p) ->
   forall theta, KZ theta 0 = 0 -> ~ (R1r d <= KR theta 0 <= RDr d).
 Proof.
   intros Hc Hsrc KR KZ om HT Hin theta HZ0 Hseg.
@@ -854,7 +952,8 @@ Proof.
   assert (Ez : z (IZR 0 * u) = KZ theta 0) by (unfold z, lineZ; f_equal; ring).
   assert (Hh : holds (init (le_sb d) ra rb) (r (IZR 0 * u)) (z (IZR 0 * u))).
   { rewrite Er, Ez, HZ0. apply init_holds; assumption. }
-  destruct (lchain_escapes (le_P d) l _ HP Hsrc _ _ u (RDr d) (le_J d) Hu Hu_pos HRD fuel 0 _ r z Hsol Hst Hh Hch)
-    as [s [_ Hs']].
-  unfold r, lineR in Hs'. specialize (Hin (theta + om * (s - 0)) s). lra.
+  assert (HRD2 : inR (FI.of_q (le_RD2 d) (le_sb d)) (RD2r d)) by (apply inR_q, Hsb).
+  destruct (lchain_escapes (le_P d) l _ HP Hsrc _ _ _ u (RDr d) (RD2r d) (le_J d) Hu Hu_pos HRD HRD2 fuel 0 _ r z
+              Hsol Hst Hh Hch) as [s [_ Hs']].
+  unfold r, lineR in Hs'. specialize (Hin (theta + om * (s - 0)) s). unfold region in Hin. lra.
 Qed.

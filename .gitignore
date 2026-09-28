@@ -3,6 +3,9 @@ extract/
 kam/_ext/
 kam/KCertExt.vo*
 kam/KCertExt.glob
+esc/_ext/
+esc/EscExt.vo*
+esc/EscExt.glob
 *.vo
 *.vos
 *.vok

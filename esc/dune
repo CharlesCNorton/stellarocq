@@ -1,0 +1,4 @@
+(executable (name main) (libraries unix zarith)
+ (ocamlopt_flags (:standard -O3 -unsafe -inline 200))
+ (flags (:standard -w -a))
+ (link_flags (-ccopt -static -cclib %{env:COQRUN_STUBS=/home/unsymbolic/.opam/stellarocq/lib/rocq-runtime/vm/libcoqrun_stubs.a})))

@@ -15,7 +15,7 @@ EXPECT := rocq-core:9.1.1 coq-stdlib:9.2.0 coq-interval:4.11.4 \
           coq-flocq:4.2.2 coq-coquelicot:3.4.5 \
           coq-mathcomp-ssreflect:2.4.0 ocaml:4.14.2
 
-.PHONY: all proofs extract checker static kam audit versions clean
+.PHONY: all proofs extract checker static kam esc audit versions clean
 
 versions:
 	@opam list --switch=$(OPAM_SWITCH) --installed --short --columns=name,version > .versions.tmp 2>/dev/null; \
@@ -67,6 +67,22 @@ kam: proofs
 	cp kam/main.ml kam/par.ml kam/dune kam/_ext/
 	cd kam/_ext && printf '(lang dune 3.0)\n' > dune-project && dune build ./main.exe
 	@echo "KAM checker: kam/_ext/_build/default/main.exe"
+
+# The escape checker KLohner.check_lescape over binary64 intervals, extracted
+# with the kernel's float and integer modules, and the driver esc/main.ml.
+# Extraction writes KLohner.mli with CoqInterval's lazy type __hidden_constant
+# equated to hidden_constant, which OCaml rejects, so that interface is
+# inferred instead.
+esc: proofs
+	mkdir -p esc/_ext
+	cd esc/_ext && rm -f *.ml *.mli && rocq compile -R ../../theories Stellarocq ../EscExt.v
+	rm -f esc/_ext/KLohner.mli
+	cp $(KERNEL)/uint63.ml $(KERNEL)/float64.ml $(KERNEL)/float64_common.ml esc/_ext/
+	python3 kam/stub_reals.py esc/_ext
+	python3 gen/patch_extract.py esc/_ext
+	cp esc/main.ml kam/par.ml esc/dune esc/_ext/
+	cd esc/_ext && printf '(lang dune 3.0)\n' > dune-project && dune build ./main.exe
+	@echo "escape checker: esc/_ext/_build/default/main.exe"
 
 audit: proofs
 	rocq compile -R theories Stellarocq theories/Audit.v

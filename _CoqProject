@@ -108,3 +108,4 @@ theories/FieldPath.v
 theories/FieldVel.v
 theories/KJet12.v
 theories/KLohner.v
+theories/KBracket.v

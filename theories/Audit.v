@@ -75,3 +75,7 @@ Print Assumptions taylor2.
 Print Assumptions vel_path_R.
 Print Assumptions lstep_ok.
 Print Assumptions lescape_no_torus.
+
+From Stellarocq Require Import KBracket.
+Module AuditBracket := Bracket AuditFX192.
+Print Assumptions AuditBracket.lcfs_bracket.

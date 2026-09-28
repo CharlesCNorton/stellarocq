@@ -531,3 +531,39 @@ turns the six verdicts, true on the same files, into an invariant torus of the
 coil field within `delta` of the torus of E0, a pair of Fourier series on a strip
 that carries the field lines at the rotation number of `a` and `b`
 (`TorusLine.fourier_torus`).
+
+## The escape certificate
+
+`make esc` builds `esc/_ext/_build/default/main.exe`: `KLohner.check_lescape`,
+extracted over binary64 intervals (`FloatRI.FI`) with Rocq's primitive floats,
+and the driver [esc/main.ml](esc/main.ml).
+
+```
+main.exe MODE SRC ESC WORKERS
+```
+
+SRC is the source data of the KAM certificate, read up to its sources: the
+checker takes from it the field period `P`, the scale `ssrc` and the sources,
+so that both certificates speak of one coil field. ESC is integers separated by
+white space.
+
+```
+ESC     KLohner.lescdata past its sources, gen/kam_escape.py
+        M J sb R1 R_D R_D2 / the count of boxes / per box its ends ra rb at
+        2^-sb and its fuel
+```
+
+The chain of a box starts from the points `ra <= R <= rb`, `Z = 0` of the
+plane `phi = 0` and steps in `phi` by `2^(J-j) u`, `u = 2 pi / (M 2^J)`,
+taking the longest step, `j <= J`, whose checks pass. It returns true once the
+hull of its set lies beyond `R_D2` at an angle where `cos(P phi)` is enclosed
+at or below zero, or beyond both `R_D` and `R_D2`, and false when no step passes
+or its fuel, a number of steps, runs out. `check` prints `check_lescape`, which
+also checks that the boxes cover `[R1, R_D]`; `boxes` prints `box_ok` for each
+box; `trace:K` follows box `K` step by step and prints its angle and hull every
+hundred steps, a diagnostic and not a verdict. `KLohner.lescape_no_torus` turns
+a true verdict into the absence of any invariant torus of
+`TorusLine.fourier_torus` that lies in the region `R <= R_D2` where
+`cos(P phi) <= 0` and `R <= R_D` elsewhere and meets the segment
+`R1 <= R <= R_D` of the line `Z = 0` in the plane `phi = 0`, and
+`KBracket.lcfs_bracket` joins it to `cert_ok_torus` on the same SRC.
