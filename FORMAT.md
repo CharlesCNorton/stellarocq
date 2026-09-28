@@ -181,7 +181,11 @@ span, so it requires the cells to cover it. The checker decides that with
 and with no width in one slot along every line of it, so a gap in one slot or a
 hole that both projections hide makes the verdict INVALID. A certificate that
 varies another slot, such as a Fourier coefficient's, keeps a verdict about each
-cell.
+cell. `--integrate` sums a rule over the cells, so it asks more: the cells of
+each node have to partition its range, each tile exactly once. With width in
+both slots they have to be the lattice of one width in each slot; with none in
+the second, each plane's cells have to abut one after another across the whole
+range, in the order the angle list cycles through the planes.
 
 ## Node blocks
 

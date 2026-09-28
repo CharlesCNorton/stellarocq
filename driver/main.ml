@@ -3432,6 +3432,66 @@ let () =
              done
            with Exit -> ());
           !c in
+        (* A sum over cells is an integral when the cells of each node
+           partition its range: a repeated cell counts twice and a missing one
+           not at all, and both can leave every projection covered. With
+           width in the second slot the rule is Quad.tiling2_encloses over a
+           rectangle of one width in each slot, so a node's cells have to be
+           exactly the lattice of those widths, each once. Without it each
+           plane is summed on its own (Quad.tiling_var_encloses) in the order
+           the angle list cycles through its planes, so the cells of a plane
+           have to share its toroidal angle and abut one after another across
+           the whole range of the first slot. *)
+        let partition =
+          match axis_pairs xu, axis_pairs xv with
+          | None, _ | _, None -> false
+          | Some au, Some av ->
+              let two_d = let (_, _, dvc) = cell_at 0 in Int64.compare dvc 0L > 0 in
+              let lo_all = Array.fold_left (fun acc (c, d) -> min acc (Int64.sub c d)) Int64.max_int au in
+              let hi_all = Array.fold_left (fun acc (c, d) -> max acc (Int64.add c d)) Int64.min_int au in
+              let rec steps w = function
+                | a :: (b :: _ as rest) ->
+                    Int64.equal (Int64.sub b a) (Int64.add w w) && steps w rest
+                | _ -> true in
+              let rec abut = function
+                | (_, h1) :: ((l2, _) :: _ as rest) -> Int64.equal h1 l2 && abut rest
+                | _ -> true in
+              let node_ok b =
+                let ks = Stdlib.List.init na (fun i -> b * na + i) in
+                if two_d then begin
+                  let wu = snd au.(b * na) and wv = snd av.(b * na) in
+                  let us = Stdlib.List.sort_uniq compare (Stdlib.List.map (fun k -> fst au.(k)) ks) in
+                  let vs = Stdlib.List.sort_uniq compare (Stdlib.List.map (fun k -> fst av.(k)) ks) in
+                  let pairs = Stdlib.List.sort_uniq compare
+                                (Stdlib.List.map (fun k -> (fst au.(k), fst av.(k))) ks) in
+                  Stdlib.List.for_all
+                    (fun k -> Int64.equal (snd au.(k)) wu && Int64.equal (snd av.(k)) wv) ks
+                  && steps wu us && steps wv vs
+                  && Stdlib.List.length pairs = na
+                  && Stdlib.List.length us * Stdlib.List.length vs = na
+                end else
+                  Stdlib.List.for_all (fun p ->
+                      match Stdlib.List.filter (fun k -> (k - b * na) mod nplanes = p) ks with
+                      | [] -> false
+                      | (k0 :: _) as kp ->
+                          let vp = fst av.(k0) in
+                          let iv = Stdlib.List.sort compare
+                                     (Stdlib.List.map (fun k ->
+                                          (Int64.sub (fst au.(k)) (snd au.(k)),
+                                           Int64.add (fst au.(k)) (snd au.(k)))) kp) in
+                          Stdlib.List.for_all (fun k -> Int64.equal (fst av.(k)) vp) kp
+                          && abut iv
+                          && Int64.equal (fst (Stdlib.List.hd iv)) lo_all
+                          && Int64.equal (snd (Stdlib.List.nth iv (Stdlib.List.length iv - 1))) hi_all)
+                    (Stdlib.List.init nplanes (fun p -> p)) in
+              Stdlib.List.for_all node_ok (Stdlib.List.init nb (fun b -> b)) in
+        if not partition then begin
+          prerr_endline
+            "the cells of a node are not a partition of its range: a cell is \
+             missing, repeated or out of place, so their sum is not an \
+             integral over it";
+          exit 3
+        end;
         let prec0 = Cell.cprec_of (let (cl, _, _) = cell_at 0 in ccert_of cl) in
         integrate_cells prec0
           (fun k -> let (cl, du, dv) = cell_at k in (ccert_of cl, cl, du, dv))
