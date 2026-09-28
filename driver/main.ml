@@ -3022,11 +3022,91 @@ let () =
     end;
     !good in
   let names = [| "radius"; "poloidal angle"; "toroidal angle" |] in
-  if cells_mode && not tighten && not integrate then begin
-    Stdlib.List.iter
-      (fun sl -> if sl >= 0 && sl <= 2 then ignore (covering_report sl names.(sl)))
-      [xu; xv]
-  end;
+  (* The rectangle the cells span, decided in integers by Cover.covers. With
+     width in both slots, every slab between consecutive edges of the first
+     slot has to be covered in the second by the cells that span the slab, so
+     a hole that each slot's own projection hides is found. With no width in
+     one slot the cells lie on lines of it, and each line has to be covered in
+     the other. A plain verdict over the radius and the angles speaks about
+     that rectangle, so it requires the covering. *)
+  let axis_pairs slot =
+    let over = ref false and bad = ref false in
+    let fine = ref None in
+    for k = 0 to ncells - 1 do
+      match slot_dyadic k slot with
+      | Some d ->
+          (match !fine with
+           | None -> fine := Some d.e
+           | Some e -> if Int64.compare d.e e < 0 then fine := Some d.e)
+      | None -> ()
+    done;
+    let fine = match !fine with Some e -> e | None -> 0L in
+    let rescale m e =
+      let sh = Int64.to_int (Int64.sub e fine) in
+      if sh <= 0 then m
+      else if sh >= 63 then (over := true; m)
+      else
+        let v = Int64.shift_left m sh in
+        if Int64.equal (Int64.shift_right v sh) m then v else (over := true; m) in
+    let a = Array.init ncells (fun k ->
+        match slot_dyadic k slot, slot_width k slot with
+        | Some d, Some w -> (rescale d.m d.e, rescale w d.e)
+        | _ -> bad := true; (0L, 0L)) in
+    if !over || !bad then None else Some a in
+  let covers_sorted lo hi l =
+    let l = Stdlib.List.sort
+              (fun (c1, d1) (c2, d2) ->
+                 compare (Int64.sub c1 d1, c1, d1) (Int64.sub c2 d2, c2, d2)) l in
+    Cover.covers (z_of_int64 lo) (z_of_int64 hi)
+      (Stdlib.List.map (fun (c, d) -> (z_of_int64 c, z_of_int64 d)) l) in
+  let covering_2d au av =
+    let lo a = Array.fold_left (fun acc (c, d) -> min acc (Int64.sub c d)) Int64.max_int a in
+    let hi a = Array.fold_left (fun acc (c, d) -> max acc (Int64.add c d)) Int64.min_int a in
+    let flat a = Array.for_all (fun (_, d) -> Int64.equal d 0L) a in
+    let lines along across =
+      let keys = Stdlib.List.sort_uniq compare (Array.to_list (Array.map fst across)) in
+      Stdlib.List.for_all (fun key ->
+          let l = ref [] in
+          Array.iteri (fun k (c, _) -> if Int64.equal c key then l := along.(k) :: !l) across;
+          covers_sorted (lo along) (hi along) !l) keys in
+    if flat au && flat av then true
+    else if flat av then lines au av
+    else if flat au then lines av au
+    else begin
+      let edges = Stdlib.List.sort_uniq compare
+                    (Stdlib.List.concat_map (fun (c, d) -> [Int64.sub c d; Int64.add c d])
+                       (Array.to_list au)) in
+      let vlo = lo av and vhi = hi av in
+      let rec slabs = function
+        | a :: (b :: _ as rest) ->
+            let l = ref [] in
+            Array.iteri (fun k (c, d) ->
+                if Int64.compare (Int64.sub c d) a <= 0 && Int64.compare (Int64.add c d) b >= 0
+                then l := av.(k) :: !l) au;
+            covers_sorted vlo vhi !l && slabs rest
+        | _ -> true in
+      slabs edges
+    end in
+  let covered =
+    if cells_mode && not tighten && not integrate then begin
+      Stdlib.List.iter
+        (fun sl -> if sl >= 0 && sl <= 2 then ignore (covering_report sl names.(sl)))
+        [xu; xv];
+      if xu >= 0 && xu <= 2 && xv >= 0 && xv <= 2 then begin
+        let c = match axis_pairs xu, axis_pairs xv with
+          | Some au, Some av -> covering_2d au av
+          | _ -> false in
+        Printf.printf "  %s\n%!"
+          (if c then "the cells cover the rectangle they span, slab by slab"
+           else "the cells leave a hole in the rectangle they span");
+        c
+      end else begin
+        Printf.printf
+          "  a varied slot is neither the radius nor an angle, so the verdict speaks \
+           about each cell and not about a range\n%!";
+        true
+      end
+    end else true in
   (* The mean over a node's angles of each component times cos(mu - nv) and
      sin(mu - nv), for every mode of the MODES line. The three components are
      evaluated once per point and every harmonic reuses them, which is the sum
@@ -3541,6 +3621,7 @@ let () =
                    Cell.c3_modes = coq_modes; Cell.c3_cells = [cl3] } in
                Cell.check_ccert3 xu xv xw ct3) in
            ignore !gather;
+           let ok = ok && covered in
            Printf.printf
              "verdict: %s   over three coordinates%s\n%!"
              (if ok then "VALID" else "INVALID")
@@ -3563,6 +3644,7 @@ let () =
                  { Cell.c3_prec = z_of_int64 prec; Cell.c3_cfg = cfg;
                    Cell.c3_modes = coq_modes; Cell.c3_cells = [cl3] } in
                Cell.check_ccert3 xu xv xw ct3) in
+           let ok = ok && covered in
            let t1 = Unix.gettimeofday () in
            Printf.printf
              "verdict: %s   over three coordinates at every point of every \
@@ -3594,6 +3676,7 @@ let () =
            each cell centre\n%!";
         let ok = over_shards (fun k ->
             Cell.check_ccert_t xu xv (ct_t_of (tcell_at k))) in
+        let ok = ok && covered in
         let t1 = Unix.gettimeofday () in
         Printf.printf "verdict: %s   (%.1f s)\n%!"
           (if ok then "VALID" else "INVALID") (t1 -. t0);
@@ -3617,7 +3700,7 @@ let () =
         c > 0
       end else
         over_shards (fun k -> let (cl, _, _) = cell_at k in
-                      Cell.check_ccert xu xv (ccert_of cl))
+                      Cell.check_ccert xu xv (ccert_of cl)) && covered
     end else begin
       Printf.printf
         "stellarocq checker: %d modes, %d nodes x %d angles = %d points, precision %Ld bits, %d workers\n%!"

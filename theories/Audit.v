@@ -59,6 +59,16 @@ Print Assumptions toroidal_terms3_vanish.
 Print Assumptions toroidal_lambda_terms3_vanish.
 Print Assumptions qs_triple_zero.
 
+From Stellarocq Require Import Expr Harmonic BoxCell Integral HalfGrid.
+Print Assumptions Expr.ieval_correct.
+Print Assumptions Expr.iextend_correct.
+Print Assumptions Harmonic.dharm_correct.
+Print Assumptions BoxCell.check_btcert_correct.
+Print Assumptions BoxCell.check_bpcert_correct.
+Print Assumptions Integral.check_int_correct.
+Print Assumptions HalfGrid.node_consistent.
+Print Assumptions HalfGrid.lax_second_order.
+
 From Stdlib Require Import ZArith Lia.
 From Stellarocq Require Import FieldKAM KDioph KFix KFinal.
 Print Assumptions field_kam.

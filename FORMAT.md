@@ -175,6 +175,14 @@ radians and rounding them onto the grid afterwards leaves consecutive cells a
 fraction of an ulp apart, which is far too little to matter numerically and
 enough to put them outside the theorem.
 
+A verdict over the radius and the angles speaks about the rectangle the cells
+span, so it requires the cells to cover it. The checker decides that with
+`Cover.covers` along every slab between consecutive edges of the first slot,
+and with no width in one slot along every line of it, so a gap in one slot or a
+hole that both projections hide makes the verdict INVALID. A certificate that
+varies another slot, such as a Fourier coefficient's, keeps a verdict about each
+cell.
+
 ## Node blocks
 
 ```
