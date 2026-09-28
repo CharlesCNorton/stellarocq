@@ -72,7 +72,7 @@ Coquelicot~\cite{coquelicot}, Flocq~\cite{flocq} and CoqInterval~\cite{melquiond
 Section~\ref{sec:object} states the certified object, Section~\ref{sec:certs}
 the certificate forms and their soundness theorems, and
 Section~\ref{sec:results} what they establish on VMEC++ output. The part of
-the development described here is 31 files and about 22{,}800 lines of Rocq; it
+the development described here is 29 files and about 22{,}100 lines of Rocq; it
 is available at \url{https://github.com/CharlesCNorton/stellarocq}.
 
 \section{The certified object}\label{sec:object}
@@ -130,7 +130,7 @@ exhibits the poloidal relabelling as an exact kernel direction of the
 linearized problem; the residual has no component along the field
 (\code{residual\_along\_field}); and the Euler--Lagrange expressions of
 VMEC's energy $W=\int(B^2/2-\mu_0p)\sqg$ at fixed $\lambda$, $\iota$, flux and
-pressure are $-2\sqg$ times the cylindrical components of the force
+pressure are $-\sqg$ times the cylindrical components of the force
 (\code{energy\_gradient\_is\_force}), so that the forces the solver drives to
 zero are the ideal-MHD force. \code{Symmetry.v} proves that a quasisymmetric
 field makes the two-term ratio $(\mathbf{B}\times\nabla s\cdot\nabla B)/(\mathbf{B}\cdot\nabla B)$
@@ -270,13 +270,14 @@ survives. At coarse resolution the verdict on local stability
 depends on how the radial derivatives are taken.
 
 \paragraph{An orientation test that is not gauge invariant.}
-Four invariance tests of VMEC++ have expected answers that are theorems of the
-development: an axisymmetric input solved with and without toroidal modes
+Four invariance tests of VMEC++ have expected answers that the development
+fixes: an axisymmetric input solved with and without toroidal modes
 (every toroidal derivative of an axisymmetric reconstruction is the zero
 expression), a stellarator-symmetric input solved through the symmetric and the
 asymmetric code paths (a series whose coefficients vanish contributes nothing),
 a restart with a shifted $(0,0)$ coefficient of $\lambda$ (\code{lambda\_gauge}),
-and a five-period stellarator solved over one period and over the torus. The
+and a five-period stellarator solved over one period and over the torus (the
+reconstruction reads each mode by its absolute toroidal number). The
 second exposed an orientation test that is not invariant under the poloidal
 rotation VMEC applies to an asymmetric boundary: the test multiplies two
 $m=1$ coefficients whose product the rotation can drive to zero, where the
