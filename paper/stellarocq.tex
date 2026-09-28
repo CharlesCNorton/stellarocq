@@ -72,7 +72,7 @@ Coquelicot~\cite{coquelicot}, Flocq~\cite{flocq} and CoqInterval~\cite{melquiond
 Section~\ref{sec:object} states the certified object, Section~\ref{sec:certs}
 the certificate forms and their soundness theorems, and
 Section~\ref{sec:results} what they establish on VMEC++ output. The part of
-the development described here is 30 files and about 21{,}500 lines of Rocq; it
+the development described here is 31 files and about 22{,}800 lines of Rocq; it
 is available at \url{https://github.com/CharlesCNorton/stellarocq}.
 
 \section{The certified object}\label{sec:object}
@@ -109,13 +109,18 @@ r_s &= (\partial_vB_s-\partial_sB_v)B^v-(\partial_sB_u-\partial_uB_s)B^u-\mu_0\,
 \end{align}
 where at the node radial derivatives are centred differences of half-grid values
 and values are their averages, as in VMEC. These are \code{expr} trees, which
-\code{Physics.v} states without proofs. Read at a free radius, with every radial
-derivative that of the Hermite reconstruction, they form the continuum residual,
-and \code{Continuum.v} proves that for a stellarator-symmetric state its three
-outputs are the covariant components along $\mathbf{e}_s$, $\mathbf{e}_u$ and
-$\mathbf{e}_v$ of $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ of the
-reconstructed field, with $\mu_0\mathbf{J}$ the curl of that field computed in
-Cartesian coordinates (\code{continuum\_force}, from \code{Force.force\_law}).
+\code{Physics.v} states without proofs, and the development proves what they
+compute. Read at a free radius, with every radial derivative that of the Hermite
+reconstruction, they form the continuum residual, whose three outputs are the
+covariant components along $\mathbf{e}_s$, $\mathbf{e}_u$ and $\mathbf{e}_v$ of
+$\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ of the reconstructed field, with
+$\mu_0\mathbf{J}$ the curl of that field computed in Cartesian coordinates
+(\code{continuum\_force}, and \code{continuum\_force\_asym} for a state without
+stellarator symmetry, from \code{Force.force\_law}). Read at a node, the angular
+outputs are those formulas at the outer half point and the radial output is
+VMEC's combination of the fields at the two half points, each field that of the
+series with VMEC's half-grid values and slopes (\code{node\_residual},
+\code{node\_residual\_asym}).
 
 \paragraph{Identities of the reconstruction.}
 Properties a floating-point code can only sample are theorems here.
@@ -218,10 +223,7 @@ extracted data types and prints verdicts. The trusted components are therefore
 the Rocq kernel and extraction, the OCaml toolchain, the implementation of
 Rocq's primitive 63-bit integers and binary64 floats, the driver's parser, and
 the correspondence between a certificate's dyadic numbers and the doubles of
-its wout file, which a separate tool, \code{gen/verify\_cert.py}, compares. The
-encoding of the node residual, and of the residual of a state without
-stellarator symmetry, is compared with a floating-point reference
-implementation; the kernel does not check it. For
+its wout file, which a separate tool, \code{gen/verify\_cert.py}, compares. For
 the soundness theorems above, \code{Print Assumptions} reports the two axioms of
 the standard library's classical Dedekind reals, excluded middle, functional
 extensionality and the specifications of the primitive operations. The build
@@ -413,7 +415,7 @@ surfaces of a real stellarator, the subject of separate work.
 \paragraph{Availability.}
 The development, the certificate generators and the scripts that draw
 Figure~\ref{fig:conv} are at \url{https://github.com/CharlesCNorton/stellarocq},
-commit \code{8c290a6}; \code{make all} builds the proofs and the checker,
+commit \code{517aaff}; \code{make all} builds the proofs and the checker,
 \code{make audit} prints the assumptions of every theorem, and the release
 \code{checker-74169ad} carries the same checker linked statically for x86\_64
 Linux.
