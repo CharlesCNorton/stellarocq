@@ -206,9 +206,11 @@ the rectangle (\code{check\_ccert\_correct}). Reversed, the same data proves a
 component bounded away from zero, so that no field of the reconstructed form
 balances in the cell. That the cells of a certificate over the radius and the
 angles cover the rectangle they span is not assumed from the generator that
-wrote them: \code{Cover.v} decides it as a chain of integer inequalities along
-every slab of the other slot, and a certificate whose cells leave a gap or a
-hole is rejected like one whose bounds are too small.
+wrote them: the driver decides it slab by slab of the other slot, each slab by
+the chain of integer inequalities of \code{Cover.v}, and a certificate whose
+cells leave a gap or a hole is rejected like one whose bounds are too small.
+The cells of an integral have to partition its range, each tile exactly once,
+which the driver checks in integers before it sums them.
 
 \paragraph{Harmonics and integrals.}
 A spectral solution balances forces mode by mode over the modes it retains, so
@@ -260,7 +262,8 @@ The kernel checks the proofs; what runs is the OCaml extraction of the checking
 functions, linked with an unverified driver that parses certificates into the
 extracted data types and prints verdicts. The trusted components are therefore
 the Rocq kernel and extraction, the OCaml toolchain, the implementation of
-Rocq's primitive 63-bit integers and binary64 floats, the driver's parser, and
+Rocq's primitive 63-bit integers and binary64 floats, the driver's parser and
+its covering and partition checks, and
 the correspondence between a certificate's dyadic numbers and the doubles of
 its wout file, which a separate tool, \code{gen/verify\_cert.py}, compares. The
 classical constructions behind Rocq's real numbers enter the extraction only
@@ -287,7 +290,7 @@ enclosure a passing checker verdict proves.
 \cellA{manufactured, 3D} & \cellB{$\max|x_h-x^*|$, 9/17/33/65 surfaces\newline\code{colloc\_correct}} & \cellC{$2.73432936716\times10^{-6}$, $7.16912169671\times10^{-7}$, $1.83032584737\times10^{-7}$, $4.60748183004\times10^{-8}$} \\[2pt]
 \cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057006\times10^{-5}$, $7.20667052904\times10^{-6}$, $1.86266877275\times10^{-6}$} \\[2pt]
 \cellA{Solov'ev, 1--3 surfaces} & \cellB{collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one zero in boxes of radius $5.7\times10^{-10}$ to $6.3\times10^{-9}$} \\[2pt]
-\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.35,8.45]$, $[8.67,9.07]$, $[6.19,7.76]\times10^{-5}$; the $(2,0)$ and $(1,0)$ harmonics fall 3.8 to 5.3-fold per doubling} \\[2pt]
+\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.35,8.45]$, $[8.67,9.07]$, $[6.19,7.76]\times10^{-5}$; the floating-point $(2,0)$ and $(1,0)$ harmonics fall 3.8 to 5.3-fold per doubling} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{jump of $p+B^2/2$ against $B_{\rm vac}^2/2$\newline\code{check\_bpcert\_correct}} & \cellC{floor at NESTOR's largest jump, ceiling over NESTOR's grid for every vacuum pressure between NESTOR's and BIEST's: $[7.556,7.560]\times10^{-4}$ at 25 surfaces, $[4.9648,4.9672]\times10^{-4}$ at 385, each ceiling below the floor before it} \\[2pt]
 \cellA{\code{nfp4\_QH\_ns50}} & \cellB{two-term quasisymmetry ratios\newline\code{two\_term\_refuted}} & \cellC{span 1.7 at mid radius (Solov'ev: $2\times10^{-4}$), unchanged from 50 to 162 modes} \\[2pt]
 \cellA{\code{li383\_low\_res}} & \cellB{residual over cells\newline\code{check\_ccert\_correct}} & \cellC{does not fall from 16 to 121 surfaces; falls more than twentyfold from 25 to 98 modes} \\[2pt]
@@ -652,9 +655,9 @@ whose tolerances are the certified enclosures.
 \paragraph{Availability.}
 The development, the certificate generators and the script that writes
 Figure~\ref{fig:conv} are at \link{https://github.com/CharlesCNorton/stellarocq},
-commit \code{a403fe8}; \code{make all} builds the proofs and the checker,
+commit \code{1bea7d5}; \code{make all} builds the proofs and the checker,
 \code{make audit} prints the assumptions of every theorem named here, and the release
-\code{checker-a403fe8} carries the same checker linked statically for x86\_64
+\code{checker-1bea7d5} carries the same checker linked statically for x86\_64
 Linux. The VMEC++ tests that carry the certified values are on the branch
 of~\cite{branch}.
 
