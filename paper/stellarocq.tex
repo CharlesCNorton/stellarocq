@@ -1,26 +1,23 @@
 \documentclass[11pt]{article}
-\usepackage[margin=1in]{geometry}
-\usepackage{lmodern}
-\usepackage[T1]{fontenc}
-\usepackage{amsmath,amssymb}
-\usepackage{booktabs}
-\usepackage{array}
-\usepackage{graphicx}
-\usepackage{listings}
-\usepackage{xcolor}
-\usepackage{microtype}
-\usepackage[hidelinks]{hyperref}
-
-\lstdefinelanguage{Rocq}{
-  morekeywords={Definition,Theorem,Lemma,Proof,Qed,forall,exists,let,in,fun,Record,Prop},
-  sensitive=true,
-  morecomment=[n]{(*}{*)},
-}
-\lstset{language=Rocq, basicstyle=\ttfamily\small, keywordstyle=\bfseries,
-  columns=fullflexible, keepspaces=true, xleftmargin=1.5em, aboveskip=0.6em, belowskip=0.6em}
+\setlength{\textwidth}{6.5in}
+\setlength{\oddsidemargin}{0pt}
+\setlength{\evensidemargin}{0pt}
+\setlength{\textheight}{9in}
+\setlength{\topmargin}{0pt}
+\addtolength{\topmargin}{-\headheight}
+\addtolength{\topmargin}{-\headsep}
+\ifdefined\pdfpagewidth \pdfpagewidth=8.5in \pdfpageheight=11in \fi
+\ifdefined\pagewidth \pagewidth=8.5in \pageheight=11in \fi
 
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\sqg}{\sqrt{g}}
+\newcommand{\cellA}[1]{\parbox[t]{3.3cm}{\raggedright\strut#1\strut}}
+\newcommand{\cellB}[1]{\parbox[t]{4.0cm}{\raggedright\strut#1\strut}}
+\newcommand{\cellC}[1]{\parbox[t]{8.0cm}{\raggedright\strut#1\strut}}
+\makeatletter
+\def\sq@slash{/}
+\newcommand{\link}[1]{\texttt{\@tfor\sq@t:=#1\do{\sq@t\ifx\sq@t\sq@slash\allowbreak\fi}}}
+\makeatother
 
 \title{Stellarocq: Machine-Checked Certificates for Stellarator Equilibria}
 \author{Charles C. Norton\\\normalsize\texttt{cnorton2@binghamton.edu}}
@@ -32,19 +29,19 @@
 \begin{abstract}
 Stellarator design rests on ideal-MHD equilibria computed by VMEC and its
 descendants, whose output is a file of floating-point Fourier coefficients.
-Stellarocq is a Rocq development that turns questions about such a file into
-theorems about the magnetic field it defines. The field is reconstructed from
-the exact numbers in a VMEC++ output file by VMEC's own half-grid rule, force
-balance, harmonics, flux-surface integrals, the Mercier criterion, quasisymmetry
-and free-boundary balance are expressions over that reconstruction, and each
-claim is decided by a checker extracted from a proof that its verdict implies
-the claim. On VMEC++ output the certificates attribute a converged residual to
-mode truncation, expose an orientation test that is not invariant under the
-poloidal rotation VMEC applies to asymmetric boundaries, measure the error of
-VMEC's radial scheme on manufactured problems to twelve digits, certify a
-resonant harmonic that radial refinement does not remove, and bound the
-free-boundary pressure jump for every vacuum pressure between the answers of
-NESTOR and BIEST.
+Stellarocq turns questions about such a file into machine-checked theorems
+about the magnetic field it defines. The field is reconstructed from the exact
+numbers of a VMEC++ output file by VMEC's own half-grid rule. Force balance,
+harmonics, flux-surface integrals, the Mercier criterion, quasisymmetry and
+free-boundary balance are expressions over that reconstruction, and each claim
+about them is decided by a checker extracted from a Rocq proof that its verdict
+implies the claim. Testing VMEC++ against an invariance the development proves
+exposed an orientation test that the poloidal rotation VMEC applies to
+asymmetric boundaries defeats, which VMEC++ now tests with an invariant. On
+VMEC++ output the certificates measure the error of VMEC's half-grid rule on
+manufactured problems to twelve digits, certify a resonant harmonic that radial
+refinement does not remove, and bound the free-boundary pressure jump for every
+vacuum pressure between the answers of NESTOR and BIEST.
 \end{abstract}
 
 \section{Introduction}
@@ -61,19 +58,30 @@ What such a file establishes about the field it describes is usually a matter of
 convergence metrics internal to the solver and of diagnostics recomputed in
 floating point. Stellarocq states it as a theorem. The object of every statement
 is the field reconstructed from the exact numbers in the file by the rule the
-solver itself uses. A claim about that field (a bound on the force residual over
-a region, the enclosure of a harmonic, the sign of a Mercier term, the existence
-of a discrete equilibrium in a box) is decided by a checking function written in
-Rocq~\cite{rocq}, proven to imply the claim when it returns \code{true}, and
-extracted to OCaml~\cite{letouzey2003} to run at the scale a three-dimensional
-equilibrium needs. Real-number semantics and interval arithmetic come from
-Coquelicot~\cite{coquelicot}, Flocq~\cite{flocq} and CoqInterval~\cite{melquiond2008}.
+solver itself uses. A claim about that field is decided by a checking function
+written in Rocq~\cite{rocq}, proven to imply the claim when it returns
+\code{true}, and extracted to OCaml~\cite{letouzey2003}. Real-number semantics
+and interval arithmetic come from Coquelicot~\cite{coquelicot},
+Flocq~\cite{flocq} and CoqInterval~\cite{melquiond2008}.
 
-Section~\ref{sec:object} states the certified object, Section~\ref{sec:certs}
-the certificate forms and their soundness theorems, and
-Section~\ref{sec:results} what they establish on VMEC++ output. The part of
-the development described here is 29 files and about 22{,}100 lines of Rocq; it
-is available at \url{https://github.com/CharlesCNorton/stellarocq}.
+Where floating point estimates, a certificate decides. An invariance test whose
+expected answer the development fixes exposed an orientation test that VMEC's
+own relabelling of an asymmetric boundary defeats; it was reported to VMEC++ and
+to educational\_VMEC, and VMEC++ now tests an invariant. The error of VMEC's
+half-grid rule, collocated on manufactured problems, is known to twelve digits,
+with no solver tolerance in it, and falls as $h^2$ in three dimensions, without
+stellarator symmetry and at five times the pressure. On a rippled tokamak the
+harmonic of the force that a nested-surface field cannot balance at a rational
+surface is bounded away from zero at every state within a relative $10^{-12}$ of
+the converged one, and the
+free-boundary pressure jump of a VMEC++ equilibrium is enclosed for every vacuum
+field between the answers of two independent solvers.
+
+Section~\ref{sec:object} states the certified object and the theorem that
+identifies its residual with the ideal-MHD force, Section~\ref{sec:certs} the
+certificate forms and their soundness theorems, and Section~\ref{sec:results}
+what they establish on VMEC++ output. The development is available at
+\link{https://github.com/CharlesCNorton/stellarocq}.
 
 \section{The certified object}\label{sec:object}
 
@@ -86,41 +94,63 @@ between nodes $a$ and $b$, a coefficient of even poloidal mode number is the
 mean of its two node values and one of odd mode number is averaged with the
 $\sqrt{s}$ weight VMEC folds into its Jacobian,
 \begin{equation}
-c_k(s_h) = \tfrac12\bigl(c_k(a)+c_k(b)\bigr)\ \ (m_k \text{ even}),\qquad
-c_k(s_h) = \tfrac12\sqrt{s_h}\,\Bigl(\frac{c_k(a)}{\sqrt{s_a}}+\frac{c_k(b)}{\sqrt{s_b}}\Bigr)\ \ (m_k \text{ odd}),
+c_k(s_h) = {\textstyle\frac12}\bigl(c_k(a)+c_k(b)\bigr)\ \ (m_k \mbox{ even}),\qquad
+c_k(s_h) = {\textstyle\frac12}\sqrt{s_h}\,\Bigl(\frac{c_k(a)}{\sqrt{s_a}}+\frac{c_k(b)}{\sqrt{s_b}}\Bigr)\ \ (m_k \mbox{ odd}),
 \end{equation}
 with radial derivatives the matching difference quotients (for odd $m_k$ plus
 the derivative of the $\sqrt{s}$ factor), and the angular derivatives exact
 derivatives of the series $R=\sum_k c_k\cos(m_k u-n_k v)$,
 $Z=\sum_k z_k\sin(m_k u-n_k v)$. The half-grid $\lambda$ and $\iota$ are the
 file's own, $\Phi'$ is constant, and the pressure is the input's profile. For
-statements at an arbitrary radius the half-point values and slopes are joined by
-a cubic Hermite interpolant, which agrees with the half-grid rule at the half
-points.
+statements at an arbitrary radius each coefficient of $R$ and $Z$ is the cubic
+Hermite interpolant of its half-point values and slopes, which agrees with the
+half-grid rule at the half points; those of $\lambda$ follow the same parity
+rule linearly between half points, and $\iota$ is linear there.
 
 \paragraph{Field and residual.}
 With $\sqg = R(R_uZ_s-R_sZ_u)$, the field is
 $B^u=\Phi'(\iota-\lambda_v)/\sqg$, $B^v=\Phi'(1+\lambda_u)/\sqg$, its covariant
 components $B_i=g_{iu}B^u+g_{iv}B^v$, and $\mu_0\sqg J^s=\partial_uB_v-\partial_vB_u$.
 The residual of $\mathbf{J}\times\mathbf{B}=\nabla p$ has the components
-\begin{align}
-r_u &= -\mu_0\sqg J^s B^v,\qquad r_v = \mu_0\sqg J^s B^u \quad\text{(at the outer half point)},\\
-r_s &= (\partial_vB_s-\partial_sB_v)B^v-(\partial_sB_u-\partial_uB_s)B^u-\mu_0\,dp/ds \quad\text{(at the node)},
-\end{align}
+\begin{equation}
+r_u = -\mu_0\sqg J^s B^v,\qquad r_v = \mu_0\sqg J^s B^u \qquad\mbox{(at the outer half point)},
+\end{equation}
+\begin{equation}
+r_s = (\partial_vB_s-\partial_sB_v)B^v-(\partial_sB_u-\partial_uB_s)B^u-\mu_0\,dp/ds \qquad\mbox{(at the node)},
+\end{equation}
 where at the node radial derivatives are centred differences of half-grid values
 and values are their averages, as in VMEC. These are \code{expr} trees, which
 \code{Physics.v} states without proofs, and the development proves what they
 compute. Read at a free radius, with every radial derivative that of the Hermite
 reconstruction, they form the continuum residual, whose three outputs are the
 covariant components along $\mathbf{e}_s$, $\mathbf{e}_u$ and $\mathbf{e}_v$ of
-$\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ of the reconstructed field, with
-$\mu_0\mathbf{J}$ the curl of that field computed in Cartesian coordinates
-(\code{continuum\_force}, and \code{continuum\_force\_asym} for a state without
-stellarator symmetry, from \code{Force.force\_law}). Read at a node, the angular
-outputs are those formulas at the outer half point and the radial output is
-VMEC's combination of the fields at the two half points, each field that of the
-series with VMEC's half-grid values and slopes (\code{node\_residual},
-\code{node\_residual\_asym}).
+$\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ of the reconstructed field. The
+theorem quantifies over the Cartesian field instead of constructing it: for any
+$\mathbf{G}$ and $P$ differentiable at the point that equal the reconstructed
+field and pressure along the three coordinate lines through it
+(\code{represents}), the outputs are $\mathbf{F}\cdot\mathbf{e}_i$ with
+$\mathbf{F}=(\nabla\times\mathbf{G})\times\mathbf{G}-\mu_0\nabla P$. The
+derivative of $\mathbf{G}$ is fixed by its values along three independent lines,
+so no inverse of the coordinate map enters. Abridged, with the hypotheses that
+give the certificate's slots their values elided:
+{\small
+\begin{verbatim}
+  Theorem continuum_force ... :
+    let r := residual exps (PConfig false prof RRadial) modes in
+    well_formed wm (r_binds r) = true -> ... ->
+    filterdiff G1 (locally (emb FR FZ s0 u0 v0)) (lin3 a11 a12 a13) -> ... ->
+    represents G1 G2 G3 P (fun t => emb FR FZ t u0 v0) ... p s0 -> ... ->
+    let w1 := a32 - a23 in let w2 := a13 - a31 in let w3 := a21 - a12 in
+    let F1 := (w2 * G03 - w3 * G02) - mu0r * q1 in ...
+    xeval E (r_s r) = Xreal (dot3 F1 F2 F3 (FRs s0 u0 v0 * c) (FRs s0 u0 v0 * sn)
+                                   (FZs s0 u0 v0)) /\ ...
+\end{verbatim}}
+\noindent\code{continuum\_force\_asym} is the same statement for a state without
+stellarator symmetry, and both rest on \code{Force.force\_law}, the identity at
+one point. Read at a node, the angular outputs are those formulas at the outer
+half point and the radial output is VMEC's combination of the fields at the two
+half points, each field that of the series with VMEC's half-grid values and
+slopes (\code{node\_residual}, \code{node\_residual\_asym}).
 
 \paragraph{Identities of the reconstruction.}
 Properties a floating-point code can only sample are theorems here.
@@ -151,40 +181,34 @@ generator computes is trusted.
 \code{Expr.v} gives \code{expr} two meanings: a value over extended reals, in
 which division by zero and the square root of a negative number give
 \code{Xnan}, and a value over CoqInterval's floating-point intervals.
-\code{ieval\_correct} states that the interval contains the extended-real value.
-A bounded output interval therefore proves both that the value is a real number
-and that it lies in the bounds. Subexpressions shared between the residual
-components are bound once to environment slots, and \code{iextend\_correct}
-states that extending both environments by the same bindings preserves
-containment.
+\code{ieval\_correct} states that the interval contains the extended-real value,
+so a bounded output interval proves both that the value is a real number and
+that it lies in the bounds. The embedding is deep, so one tree carries both
+meanings and \code{Deriv.v} differentiates it symbolically. Subexpressions shared
+between the residual components are bound once to environment slots by a
+builder that only grows, so a binding made at any stage of the reconstruction is
+among its final ones, and \code{iextend\_correct} states that extending both
+environments by the same bindings preserves containment.
 
 \paragraph{Points.}
 A point certificate carries, for every environment slot, the integer mantissa
 and power-of-two exponent of a double of the wout file, so no rounding happens
 between the file and the certificate, together with claimed bounds $N2^q$ on the
-three residual components. Its soundness theorem reads:
-\begin{lstlisting}
-Definition point_sound (c : cert) (p : cpoint) : Prop :=
-  let r3 := residual (pt_es p) (c_cfg c) (c_modes c) in
-  let env := point_env c p in
-  (exists x, xeval env (r_s r3) = Xreal x /\
-             Rabs x <= IZR (c_NS c) * powerRZ 2 (c_qS c)) /\ ...
-Theorem check_cert_correct : forall c,
-  check_cert c = true -> Forall (point_sound c) (c_points c).
-\end{lstlisting}
+three residual components; \code{check\_cert\_correct} states that a passing
+check bounds every component at every point.
 
 \paragraph{Cells and coverings.}
-\code{Deriv.v} differentiates expressions symbolically and proves the chain
-rule for the result in CoqInterval's extended-real sense. A cell certificate
-bounds a component over a rectangle of two varied slots (two angles, or an angle
-and the radius) by the mean-value combination of its centre value and interval
-enclosures of its derivatives over the rectangle (\code{check\_ccert\_correct}).
-Reversed, the same data proves a component bounded away from zero, so that no
-field of the reconstructed form balances in the cell. That the cells of a
-certificate leave no gap is not assumed from the generator that wrote them:
-\code{Cover.v} checks it as a chain of integer inequalities, so a certificate
-claiming a range it does not cover is rejected like one whose bounds are too
-small.
+\code{Deriv.v} proves the chain rule for its derivatives in CoqInterval's
+extended-real sense. A cell certificate bounds a component over a rectangle of
+two varied slots (two angles, or an angle and the radius) by the mean-value
+combination of its centre value and interval enclosures of its derivatives over
+the rectangle (\code{check\_ccert\_correct}). Reversed, the same data proves a
+component bounded away from zero, so that no field of the reconstructed form
+balances in the cell. That the cells of a certificate over the radius and the
+angles cover the rectangle they span is not assumed from the generator that
+wrote them: \code{Cover.v} decides it as a chain of integer inequalities along
+every slab of the other slot, and a certificate whose cells leave a gap or a
+hole is rejected like one whose bounds are too small.
 
 \paragraph{Harmonics and integrals.}
 A spectral solution balances forces mode by mode over the modes it retains, so
@@ -204,7 +228,8 @@ integrals and is proven never positive, whatever their enclosures
 \paragraph{Boxes of states.}
 In \code{Box.v} every input slot carries a half-width, so one interval
 evaluation covers every field whose coefficients lie in a box. A floor certified
-over a box cannot be an artefact of the one state at which a solver stopped.
+over a box holds for every state in it, not only for the one at which a solver
+stopped.
 
 \paragraph{Discrete equilibria.}
 \code{Newton.v} proves that a passing interval Newton test in Krawczyk
@@ -213,8 +238,22 @@ zero in its box: the map $x-AF(x)$ contracts the box into itself, an
 approximate inverse of $A$ makes its fixed point a zero of $F$, and the
 contraction makes that zero unique. \code{Colloc.v} collocates the residual of
 \code{Physics.v} over a band of surfaces as such a system, with the surface
-coefficients as unknowns (\code{colloc\_correct}). \code{Wide.v} evaluates the
-system's outputs at the centre of the box in floating point of any precision.
+coefficients as unknowns:
+{\small
+\begin{verbatim}
+  Theorem colloc_correct : forall prec n centre r A B KN Kq MN Mq pts,
+    colloc_check prec n centre r A B KN Kq MN Mq pts = true ->
+    exists x : list R,
+      in_box (colloc_system prec n centre r A B KN Kq MN Mq pts) x /\
+      (forall p, In p pts -> xeval (xextend (local_env n centre x p)
+                   (r_binds (local_res p))) (local_out p) = Xreal 0) /\
+      (forall y, in_box (colloc_system prec n centre r A B KN Kq MN Mq pts) y ->
+         (forall p, In p pts -> xeval (xextend (local_env n centre y p)
+                      (r_binds (local_res p))) (local_out p) = Xreal 0) ->
+         y = x).
+\end{verbatim}}
+\noindent\code{Wide.v} evaluates the system's outputs at the centre of the box in
+floating point of any precision.
 
 \paragraph{Trust base.}
 The kernel checks the proofs; what runs is the OCaml extraction of the checking
@@ -223,51 +262,40 @@ extracted data types and prints verdicts. The trusted components are therefore
 the Rocq kernel and extraction, the OCaml toolchain, the implementation of
 Rocq's primitive 63-bit integers and binary64 floats, the driver's parser, and
 the correspondence between a certificate's dyadic numbers and the doubles of
-its wout file, which a separate tool, \code{gen/verify\_cert.py}, compares. For
-the soundness theorems above, \code{Print Assumptions} reports the two axioms of
-the standard library's classical Dedekind reals, excluded middle, functional
-extensionality and the specifications of the primitive operations. The build
-pins Rocq 9.1.1, CoqInterval 4.11.4, Flocq 4.2.2, Coquelicot 3.4.5 and OCaml
-4.14.2.
+its wout file, which a separate tool, \code{gen/verify\_cert.py}, compares. The
+classical constructions behind Rocq's real numbers enter the extraction only
+through the specifications, and \code{gen/patch\_extract.py} replaces them by
+values that fail when consulted. For the soundness theorems above,
+\code{Print Assumptions} reports the two axioms of the standard library's
+classical Dedekind reals, excluded middle, functional extensionality and the
+specifications of the primitive operations. The build pins Rocq 9.1.1,
+CoqInterval 4.11.4, Flocq 4.2.2, Coquelicot 3.4.5 and OCaml 4.14.2.
 
 \section{Results on VMEC++ output}\label{sec:results}
 
-Table~\ref{tab:results} collects the results; this section states what each
-establishes. All equilibria are VMEC++ runs or files from its test data, and
-every number reported as certified is an enclosure a passing checker verdict
-proves.
+Table~\ref{tab:results} collects the results with the theorem each rests on;
+this section states what each establishes. All equilibria are VMEC++ runs or
+files from its test data, and every number reported as certified is an
+enclosure a passing checker verdict proves.
 
 \begin{table}[t]
 \centering\small
-\begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.4cm}>{\raggedright\arraybackslash}p{4.1cm}>{\raggedright\arraybackslash}p{7.8cm}@{}}
-\toprule
-Case & Certified quantity & Result \\
-\midrule
-\code{li383\_low\_res} & residual over cells & does not fall from 16 to 121 surfaces; falls more than twentyfold from 25 to 98 modes \\
-\code{up\_down\_asym}, $s=0.125$, 16 surfaces & Mercier current term & $-3.7\times10^{-3}$ against the file's $-6.1\times10^{-4}$, reversing DMerc; both tend to zero from 33 to 257 surfaces with the file's sign \\
-Solov'ev, 1--3 surfaces & collocated residual & exactly one zero in boxes of radius $5.7\times10^{-10}$ to $6.3\times10^{-9}$ \\
-manufactured, 3D & $\max|x_h-x^*|$, 9/17/33/65 surfaces & $2.73432936716\times10^{-6}$, $7.16912169671\times10^{-7}$, $1.83032584737\times10^{-7}$, $4.60748183004\times10^{-8}$ \\
-manufactured, asymmetric & $\max|x_h-x^*|$, 9/17/33 surfaces & $2.69073057006\times10^{-5}$, $7.20667052904\times10^{-6}$, $1.86266877275\times10^{-6}$ \\
-rippled tokamak, $\iota=1/2$ at $s=0.625$ & $(2,1)$ harmonic of $r_s$, 65/129/257 surfaces & $[8.35,8.45]$, $[8.67,9.07]$, $[6.19,7.76]\times10^{-5}$; the $(2,0)$ and $(1,0)$ harmonics fall 3.8 to 5.3-fold per doubling \\
-CTH-like, free boundary & jump of $p+B^2/2$ against $B_\mathrm{vac}^2/2$ & floor at NESTOR's largest jump, ceiling over NESTOR's grid for every vacuum pressure between NESTOR's and BIEST's: $[7.556,7.560]\times10^{-4}$ at 25 surfaces, $[4.9648,4.9672]\times10^{-4}$ at 385, each ceiling below the floor before it \\
-\code{nfp4\_QH\_ns50} & two-term quasisymmetry ratios & span 1.7 at mid radius (Solov'ev: $2\times10^{-4}$), unchanged from 50 to 162 modes \\
-\bottomrule
+\begin{tabular}{@{}lll@{}}
+\hline
+\cellA{Case} & \cellB{Certified quantity} & \cellC{Result} \\
+\hline
+\cellA{manufactured, 3D} & \cellB{$\max|x_h-x^*|$, 9/17/33/65 surfaces\newline\code{colloc\_correct}} & \cellC{$2.73432936716\times10^{-6}$, $7.16912169671\times10^{-7}$, $1.83032584737\times10^{-7}$, $4.60748183004\times10^{-8}$} \\[2pt]
+\cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057006\times10^{-5}$, $7.20667052904\times10^{-6}$, $1.86266877275\times10^{-6}$} \\[2pt]
+\cellA{Solov'ev, 1--3 surfaces} & \cellB{collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one zero in boxes of radius $5.7\times10^{-10}$ to $6.3\times10^{-9}$} \\[2pt]
+\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.35,8.45]$, $[8.67,9.07]$, $[6.19,7.76]\times10^{-5}$; the $(2,0)$ and $(1,0)$ harmonics fall 3.8 to 5.3-fold per doubling} \\[2pt]
+\cellA{CTH-like, free boundary} & \cellB{jump of $p+B^2/2$ against $B_{\rm vac}^2/2$\newline\code{check\_bpcert\_correct}} & \cellC{floor at NESTOR's largest jump, ceiling over NESTOR's grid for every vacuum pressure between NESTOR's and BIEST's: $[7.556,7.560]\times10^{-4}$ at 25 surfaces, $[4.9648,4.9672]\times10^{-4}$ at 385, each ceiling below the floor before it} \\[2pt]
+\cellA{\code{nfp4\_QH\_ns50}} & \cellB{two-term quasisymmetry ratios\newline\code{two\_term\_refuted}} & \cellC{span 1.7 at mid radius (Solov'ev: $2\times10^{-4}$), unchanged from 50 to 162 modes} \\[2pt]
+\cellA{\code{li383\_low\_res}} & \cellB{residual over cells\newline\code{check\_ccert\_correct}} & \cellC{does not fall from 16 to 121 surfaces; falls more than twentyfold from 25 to 98 modes} \\[2pt]
+\cellA{\code{up\_down\_asym}, $s=0.125$, 16 surfaces} & \cellB{Mercier current term\newline\code{mercier\_encloses}} & \cellC{$-3.7\times10^{-3}$ against the file's $-6.1\times10^{-4}$, reversing DMerc; both tend to zero from 33 to 257 surfaces with the file's sign} \\
+\hline
 \end{tabular}
-\caption{Certified results on VMEC++ equilibria.}\label{tab:results}
+\caption{Certified results on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
 \end{table}
-
-\paragraph{Residuals and stability terms at low resolution.}
-The certified residual of \code{li383\_low\_res} is insensitive to radial
-refinement and falls with the mode set (Table~\ref{tab:results}): what a
-converged VMEC++ run leaves at this resolution is the truncation of the mode
-set, which the solver's convergence measure, taken over the retained modes, does
-not see. At $s=0.125$ of \code{up\_down\_asym} with sixteen surfaces, the
-certified current term of the Mercier criterion is $-3.7\times10^{-3}$ where the
-file's, formed from difference quotients across surfaces, is
-$-6.1\times10^{-4}$, and the difference reverses the sign of DMerc; re-solved at
-33 to 257 surfaces the two fall toward zero together and the file's sign
-survives. At coarse resolution the verdict on local stability
-depends on how the radial derivatives are taken.
 
 \paragraph{An orientation test that is not gauge invariant.}
 Four invariance tests of VMEC++ have expected answers that the development
@@ -304,8 +332,9 @@ solutions~\cite{roache2002} measure the order directly. A manufactured mapping
 on the annulus $1/4<s<1$ is not an equilibrium; its continuum residual at the
 collocation points is a source $f$, and the zero $x_h$ of $r-f$ over the
 interior nodes, with $\lambda$ given so that the problem sits on the quotient by
-the poloidal gauge, is the discrete solution. The interval Newton test puts
-exactly one zero in a box $5\times10^{-18}$ wide per unknown around a centre
+the poloidal gauge, is the discrete solution. On systems of up to 423 unknowns,
+the interval Newton test puts exactly one zero in a box $5\times10^{-18}$ wide
+per unknown around a centre
 refined on outputs read at 128 bits, so the error $\max|x_h-x^*|$ is known to
 twelve digits (Table~\ref{tab:results}). It falls by 3.81, 3.92 and 3.97 per
 doubling for a three-dimensional mapping and by 3.73 and 3.87 for one without
@@ -315,14 +344,178 @@ its source share.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\textwidth]{fig_convergence.pdf}
+\setlength{\unitlength}{1pt}
+\begin{picture}(465,172)
+\put(34,30){\line(1,0){120}}
+\put(34,140){\line(1,0){120}}
+\put(34,30){\line(0,1){110}}
+\put(154,30){\line(0,1){110}}
+\put(94,4){\makebox(0,0)[b]{\footnotesize surfaces}}
+\put(94,160){\makebox(0,0)[b]{\footnotesize (a) manufactured mappings}}
+\put(34,145){\makebox(0,0)[bl]{\scriptsize $\max|x_h-x^*|$}}
+\put(42.6,30){\line(0,1){3}}
+\put(42.6,137){\line(0,1){3}}
+\put(42.6,26){\makebox(0,0)[t]{\scriptsize 9}}
+\put(76.9,30){\line(0,1){3}}
+\put(76.9,137){\line(0,1){3}}
+\put(76.9,26){\makebox(0,0)[t]{\scriptsize 17}}
+\put(111.1,30){\line(0,1){3}}
+\put(111.1,137){\line(0,1){3}}
+\put(111.1,26){\makebox(0,0)[t]{\scriptsize 33}}
+\put(145.4,30){\line(0,1){3}}
+\put(145.4,137){\line(0,1){3}}
+\put(145.4,26){\makebox(0,0)[t]{\scriptsize 65}}
+\put(34,56.8){\line(1,0){3}}
+\put(151,56.8){\line(1,0){3}}
+\put(31,56.8){\makebox(0,0)[r]{\scriptsize $10^{-7}$}}
+\put(34,86.5){\line(1,0){3}}
+\put(151,86.5){\line(1,0){3}}
+\put(31,86.5){\makebox(0,0)[r]{\scriptsize $10^{-6}$}}
+\put(34,116.2){\line(1,0){3}}
+\put(151,116.2){\line(1,0){3}}
+\put(31,116.2){\makebox(0,0)[r]{\scriptsize $10^{-5}$}}
+\qbezier(42.6,99.5)(59.7,90.8)(76.9,82.2)
+\qbezier(76.9,82.2)(94,73.4)(111.1,64.6)
+\qbezier(111.1,64.6)(128.3,55.7)(145.4,46.8)
+\put(42.6,99.5){\circle*{3}}
+\put(76.9,82.2){\circle*{3}}
+\put(111.1,64.6){\circle*{3}}
+\put(145.4,46.8){\circle*{3}}
+\qbezier(42.6,129)(59.7,120.5)(76.9,112)
+\qbezier(76.9,112)(94,103.3)(111.1,94.5)
+\put(41.1,127.5){\rule{3pt}{3pt}}
+\put(75.4,110.5){\rule{3pt}{3pt}}
+\put(109.6,93){\rule{3pt}{3pt}}
+\qbezier(42.6,89.9)(44.3,88.9)(46.1,88)
+\qbezier(48.8,86.6)(50.5,85.7)(52.3,84.8)
+\qbezier(55,83.4)(56.8,82.5)(58.5,81.5)
+\qbezier(61.2,80.2)(63,79.2)(64.7,78.3)
+\qbezier(67.4,76.9)(69.2,76)(70.9,75.1)
+\qbezier(73.6,73.7)(75.4,72.8)(77.1,71.8)
+\qbezier(79.8,70.4)(81.6,69.5)(83.3,68.6)
+\qbezier(86,67.2)(87.8,66.3)(89.6,65.3)
+\qbezier(92.2,64)(94,63)(95.8,62.1)
+\qbezier(98.4,60.7)(100.2,59.8)(102,58.9)
+\qbezier(104.6,57.5)(106.4,56.6)(108.2,55.6)
+\qbezier(110.8,54.2)(112.6,53.3)(114.4,52.4)
+\qbezier(117,51)(118.8,50.1)(120.6,49.1)
+\qbezier(123.2,47.8)(125,46.8)(126.8,45.9)
+\qbezier(129.4,44.5)(131.2,43.6)(133,42.7)
+\qbezier(135.7,41.3)(137.4,40.4)(139.2,39.4)
+\qbezier(141.9,38)(143.6,37.1)(145.4,36.2)
+\qbezier(92,131)(98,131)(104,131)
+\put(98,131){\circle*{3}}
+\put(107,131){\makebox(0,0)[l]{\scriptsize 3D}}
+\qbezier(92,121)(98,121)(104,121)
+\put(96.5,119.5){\rule{3pt}{3pt}}
+\put(107,121){\makebox(0,0)[l]{\scriptsize asymmetric}}
+\qbezier(92,111)(94,111)(96,111)
+\qbezier(99,111)(101,111)(103,111)
+\put(107,111){\makebox(0,0)[l]{\scriptsize $\propto h^2$}}
+\put(200,30){\line(1,0){120}}
+\put(200,140){\line(1,0){120}}
+\put(200,30){\line(0,1){110}}
+\put(320,30){\line(0,1){110}}
+\put(260,4){\makebox(0,0)[b]{\footnotesize surfaces}}
+\put(260,160){\makebox(0,0)[b]{\footnotesize (b) rippled tokamak, $\iota=1/2$}}
+\put(200,145){\makebox(0,0)[bl]{\scriptsize harmonic of $r_s$}}
+\put(213.8,30){\line(0,1){3}}
+\put(213.8,137){\line(0,1){3}}
+\put(213.8,26){\makebox(0,0)[t]{\scriptsize 65}}
+\put(260,30){\line(0,1){3}}
+\put(260,137){\line(0,1){3}}
+\put(260,26){\makebox(0,0)[t]{\scriptsize 129}}
+\put(306.2,30){\line(0,1){3}}
+\put(306.2,137){\line(0,1){3}}
+\put(306.2,26){\makebox(0,0)[t]{\scriptsize 257}}
+\put(200,54.8){\line(1,0){3}}
+\put(317,54.8){\line(1,0){3}}
+\put(197,54.8){\makebox(0,0)[r]{\scriptsize $10^{-4}$}}
+\put(200,90.3){\line(1,0){3}}
+\put(317,90.3){\line(1,0){3}}
+\put(197,90.3){\makebox(0,0)[r]{\scriptsize $10^{-3}$}}
+\put(200,125.8){\line(1,0){3}}
+\put(317,125.8){\line(1,0){3}}
+\put(197,125.8){\makebox(0,0)[r]{\scriptsize $10^{-2}$}}
+\qbezier(213.8,52.2)(236.9,52.6)(260,53)
+\qbezier(260,53)(283.1,51.1)(306.2,49.3)
+\put(213.8,52.2){\makebox(0,0){$\scriptstyle\diamond$}}
+\put(260,53){\makebox(0,0){$\scriptstyle\diamond$}}
+\put(306.2,49.3){\makebox(0,0){$\scriptstyle\diamond$}}
+\qbezier[20](213.8,107.6)(236.9,97)(260,86.4)
+\qbezier[20](260,86.4)(283.1,75.7)(306.2,64.9)
+\put(213.8,107.6){\circle{3.5}}
+\put(260,86.4){\circle{3.5}}
+\put(306.2,64.9){\circle{3.5}}
+\qbezier[20](213.8,87.2)(236.9,76.8)(260,66.4)
+\qbezier[21](260,66.4)(283.1,53.5)(306.2,40.7)
+\put(212.3,85.7){\rule{3pt}{3pt}}
+\put(258.5,64.9){\rule{3pt}{3pt}}
+\put(304.7,39.2){\rule{3pt}{3pt}}
+\qbezier[18](213.8,52)(236.9,50.3)(260,48.7)
+\qbezier[18](260,48.7)(283.1,46.5)(306.2,44.4)
+\put(213.8,52){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(260,48.7){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(306.2,44.4){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\qbezier(276,131)(282,131)(288,131)
+\put(282,131){\makebox(0,0){$\scriptstyle\diamond$}}
+\put(291,131){\makebox(0,0)[l]{\scriptsize (2,1)}}
+\qbezier[4](276,121)(282,121)(288,121)
+\put(282,121){\circle{3.5}}
+\put(291,121){\makebox(0,0)[l]{\scriptsize (2,0)}}
+\qbezier[4](276,111)(282,111)(288,111)
+\put(280.5,109.5){\rule{3pt}{3pt}}
+\put(291,111){\makebox(0,0)[l]{\scriptsize (1,0)}}
+\qbezier[4](276,101)(282,101)(288,101)
+\put(282,101){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(291,101){\makebox(0,0)[l]{\scriptsize (3,1)}}
+\put(366,30){\line(1,0){99}}
+\put(366,140){\line(1,0){99}}
+\put(366,30){\line(0,1){110}}
+\put(465,30){\line(0,1){110}}
+\put(415.5,4){\makebox(0,0)[b]{\footnotesize surfaces}}
+\put(415.5,160){\makebox(0,0)[b]{\footnotesize (c) certified $(2,1)$}}
+\put(366,145){\makebox(0,0)[bl]{\scriptsize $10^{-5}$}}
+\put(381.4,30){\line(0,1){3}}
+\put(381.4,137){\line(0,1){3}}
+\put(381.4,26){\makebox(0,0)[t]{\scriptsize 65}}
+\put(415.5,30){\line(0,1){3}}
+\put(415.5,137){\line(0,1){3}}
+\put(415.5,26){\makebox(0,0)[t]{\scriptsize 129}}
+\put(449.6,30){\line(0,1){3}}
+\put(449.6,137){\line(0,1){3}}
+\put(449.6,26){\makebox(0,0)[t]{\scriptsize 257}}
+\put(366,41){\line(1,0){3}}
+\put(462,41){\line(1,0){3}}
+\put(363,41){\makebox(0,0)[r]{\scriptsize 6}}
+\put(366,68.5){\line(1,0){3}}
+\put(462,68.5){\line(1,0){3}}
+\put(363,68.5){\makebox(0,0)[r]{\scriptsize 7}}
+\put(366,96){\line(1,0){3}}
+\put(462,96){\line(1,0){3}}
+\put(363,96){\makebox(0,0)[r]{\scriptsize 8}}
+\put(366,123.5){\line(1,0){3}}
+\put(462,123.5){\line(1,0){3}}
+\put(363,123.5){\makebox(0,0)[r]{\scriptsize 9}}
+\linethickness{0.8pt}
+\put(381.4,105.6){\line(0,1){2.8}}
+\put(378.4,105.6){\line(1,0){6}}
+\put(378.4,108.4){\line(1,0){6}}
+\put(415.5,114.6){\line(0,1){10.9}}
+\put(412.5,114.6){\line(1,0){6}}
+\put(412.5,125.5){\line(1,0){6}}
+\put(449.6,46.3){\line(0,1){43.1}}
+\put(446.6,46.3){\line(1,0){6}}
+\put(446.6,89.4){\line(1,0){6}}
+\thinlines
+\end{picture}
 \caption{(a) The certified error of the half-grid scheme on the manufactured
 mappings; the dashed line falls as $h^2$. (b) Harmonics of the radial force $r_s$
-on the surface $\iota=1/2$ of the rippled tokamak: the certified enclosures of the
-resonant $(2,1)$ harmonic, shaded, and the floating-point values of the
-$(2,0)$, $(1,0)$ and $(3,1)$ harmonics of the same reconstruction. The first two
-fall 3.8 to 5.3-fold per doubling; the resonant harmonic and its $(3,1)$
-sideband stay.}\label{fig:conv}
+on the surface $\iota=1/2$ of the rippled tokamak: the certified resonant $(2,1)$
+harmonic and the floating-point $(2,0)$, $(1,0)$ and $(3,1)$ harmonics of the
+same reconstruction. The first two fall 3.8 to 5.3-fold per doubling; the
+resonant harmonic and its $(3,1)$ sideband stay. (c) The certified enclosures of
+the $(2,1)$ harmonic on a linear scale.}\label{fig:conv}
 \end{figure}
 
 \paragraph{A forced current sheet.}
@@ -332,21 +525,21 @@ coupling drives a $(2,1)$ harmonic of the radial force on the rational surface.
 Its certified value, the rectangle rule for the integral of $r_s\cos(2u-v)$ on
 a $64\times32$ grid of angles, enclosed by \code{dharm\_correct}, stays between
 $6.2\times10^{-5}$ and $9.1\times10^{-5}$ from 65 to 257 surfaces and is linear
-in the ripple; the enclosure at 65 surfaces holds for every state within a
-relative $10^{-12}$ of the converged coefficients. On the same surface the
-axisymmetric harmonics $(2,0)$ and $(1,0)$ fall by 3.8 to 5.3 per doubling, the
-order of the scheme, while the $(3,1)$ sideband falls by only 1.2 to 1.3
-(Figure~\ref{fig:conv}b), and
-the same ripple on a transform profile with no low-order rational surface nearby
-leaves nothing behind. This is the obstruction a nested-surface field meets at a
-rational surface~\cite{grad1967,hahm1985}, whose ideal response is a current
-sheet. In SPEC~\cite{hudson2012}, two Beltrami volumes separated by an ideal
-interface at the rational surface carry the $(2,1)$ sheet as a jump of
-$1.47\times10^{-5}$ in the covariant poloidal field at ripple $0.03$, as in the
-equilibria of~\cite{loizu2015}, and with the rational surface inside a relaxed
-volume SPEC's field-line tracing finds a $(2,1)$ island whose width grows from
-$0.107$ to $0.170$ in the volume's radial coordinate as the ripple goes from
-$0.0075$ to $0.03$.
+in the ripple (Figure~\ref{fig:conv}c); the enclosure at 65 surfaces holds for
+every state within a relative $10^{-12}$ of the converged coefficients. On the
+same surface the axisymmetric harmonics $(2,0)$ and $(1,0)$ fall by 3.8 to 5.3
+per doubling, the order of the scheme, while the $(3,1)$ sideband falls by only
+1.2 to 1.3 (Figure~\ref{fig:conv}b), and the same ripple on a transform profile
+with no low-order rational surface nearby leaves nothing behind. This is the
+obstruction a nested-surface field meets at a rational
+surface~\cite{grad1967,hahm1985}, whose ideal response is a current sheet. In
+SPEC~\cite{hudson2012}, two Beltrami volumes separated by an ideal interface at
+the rational surface carry the $(2,1)$ sheet as a jump of $1.47\times10^{-5}$ in
+the covariant poloidal field at ripple $0.03$, as in the equilibria
+of~\cite{loizu2015}, and with the rational surface inside a relaxed volume
+SPEC's field-line tracing finds a $(2,1)$ island whose width grows from $0.107$
+to $0.170$ in the volume's radial coordinate as the ripple goes from $0.0075$ to
+$0.03$.
 
 \paragraph{Free-boundary balance.}
 At a free-boundary equilibrium $p+B^2/2$ is continuous across the plasma
@@ -354,7 +547,7 @@ boundary, where outside it is the pressure of the full vacuum field. VMEC++
 computes that field with NESTOR~\cite{merkel1986,hirshman1986}; BIEST's
 virtual-casing field~\cite{malhotra2019,malhotra2020} gives it independently. The
 certificate sweeps the vacuum pressure over the segment between the two answers,
-$P_\mathrm{vac}=P_\mathrm{mid}+t\,\delta P$ with $t\in[-1,1]$, and the plasma
+$P_{\rm vac}=P_{\rm mid}+t\,\delta P$ with $t\in[-1,1]$, and the plasma
 side is VMEC's extrapolation of the two outermost half points to $s=1$. On the
 CTH-like test case, NESTOR's jump where it is largest is certified at least
 $7.556\times10^{-4}$ at 25 surfaces, and the jump at every point of NESTOR's
@@ -369,14 +562,38 @@ resolution radial refinement leaves as it is.
 
 \paragraph{Quasisymmetry.}
 A field is quasisymmetric exactly when the two-term ratio is a flux
-function~\cite{helander2008,helander2014}. For a quasisymmetric field every discrete harmonic
-of the defect of the claim ``the ratio equals $F_0$'' is one number times the
-matching harmonic of its second term, so two harmonic ratios with disjoint
-enclosures refute it (\code{two\_term\_refuted}). On \code{wout\_nfp4\_QH\_ns50}
-the certified ratios span 1.7 at mid radius, where the axisymmetric Solov'ev
-equilibrium, quasisymmetric by construction, spans $2\times10^{-4}$ from the
-reconstruction's own residual; the span is unchanged from 50 to 162 modes. The
-field of that file is not quasisymmetric on any surface tested.
+function~\cite{helander2008,helander2014}. For a quasisymmetric field every
+discrete harmonic of the defect of the claim ``the ratio equals $F_0$'' is one
+number times the matching harmonic of its second term, so two harmonic ratios
+with disjoint enclosures refute it:
+{\small
+\begin{verbatim}
+  Theorem two_term_refuted :
+    forall c pts sine1 m1 n1 sine2 m2 n2 (a1 b1 c1 d1 a2 b2 c2 d2 : R),
+    (a1 <= harm_r c r_s sine1 m1 n1 pts <= b1) ->
+    (c1 <= harm_r c r_v sine1 m1 n1 pts <= d1) -> (0 < c1 \/ d1 < 0) ->
+    (a2 <= harm_r c r_s sine2 m2 n2 pts <= b2) ->
+    (c2 <= harm_r c r_v sine2 m2 n2 pts <= d2) -> (0 < c2 \/ d2 < 0) ->
+    (snd (ratio_box a1 b1 c1 d1) < fst (ratio_box a2 b2 c2 d2) \/
+     snd (ratio_box a2 b2 c2 d2) < fst (ratio_box a1 b1 c1 d1)) ->
+    forall lam, ~ two_term_constant c lam pts.
+\end{verbatim}}
+\noindent On \code{wout\_nfp4\_QH\_ns50} the certified ratios span 1.7 at mid
+radius, where the axisymmetric Solov'ev equilibrium, quasisymmetric by
+construction, spans $2\times10^{-4}$ from the reconstruction's own residual; the
+span is unchanged from 50 to 162 modes. The field of that file is not
+quasisymmetric on any surface tested.
+
+\paragraph{Low resolution.}
+The certified residual of \code{li383\_low\_res} does not fall from 16 to 121
+surfaces and falls more than twentyfold from 25 to 98 modes: what a converged
+run leaves at this resolution is mode truncation, which the solver's convergence
+measure, taken over the retained modes, does not see. At $s=0.125$ of
+\code{up\_down\_asym} on sixteen surfaces the certified Mercier current term is
+$-3.7\times10^{-3}$ where the file's difference quotients give
+$-6.1\times10^{-4}$, reversing the sign of DMerc; from 33 to 257 surfaces both
+tend to zero with the file's sign. At sixteen surfaces the sign of DMerc
+depends on how the radial derivatives are taken.
 
 \paragraph{Use in VMEC++.}
 The certified values enter a branch of VMEC++~\cite{branch} as regression tests
@@ -390,19 +607,38 @@ contracted with the perturbation, the discrete form of
 above hold~\cite{pr875}. Tests that DGeod is never positive and that the energy
 Hessian is symmetric are proposed~\cite{pr904}.
 
+\paragraph{Scope.}
+Every theorem here is about the reconstruction of Section~\ref{sec:object},
+whose radial interpolation is a choice: a certified value at a free radius is
+that field's, and at coarse resolution it can differ from what the solver's
+difference quotients give, as the Mercier current term of \code{up\_down\_asym}
+does. The collocated system is the half-grid residual at collocation points,
+not VMEC's own discrete equations, which come from the variation of the energy
+with spectral condensation and a constraint on the $m=1$ modes; its errors
+measure the half-grid rule. Second-order convergence of the rule rests on a
+stability hypothesis, which the manufactured solutions measure and the
+development does not prove. The resonant harmonic is certified over a box a
+relative $10^{-12}$ wide, and the bound of the free-boundary covering is set by
+the angular interpolation of the vacuum answers.
+
 \section{Related work}
 
-Machine-checked numerical analysis has covered the discretization and the
-floating-point program of the one-dimensional wave equation~\cite{boldo2013},
-verified ODE enclosures up to the Lorenz attractor~\cite{immler2018}, and the
-checking of large certificates in the formal proof of the Kepler
-conjecture~\cite{hales2017}. Computer-assisted proofs for partial differential
-equations are well developed outside proof assistants~\cite{nakao2019}. In
-plasma physics, equilibrium codes are verified by convergence studies,
-manufactured solutions and comparison between codes such as VMEC and
-SPEC~\cite{hudson2012,loizu2015}. We know of no prior work that states the
-output of a stellarator equilibrium code as a machine-checked theorem about the
-field it defines.
+Rigorous numerics proves statements about dynamical systems and partial
+differential equations with interval arithmetic: the existence of the Lorenz
+attractor~\cite{tucker1999}, the CAPD library for ordinary differential
+equations~\cite{capd2021}, KAM theory applied by computer~\cite{figueras2017},
+blow-up of the Boussinesq and axisymmetric Euler equations~\cite{chen2023}, and
+elliptic and parabolic problems~\cite{nakao2019}. These proofs run in libraries
+outside a proof assistant. Inside one, verified ODE solvers up to the Lorenz
+attractor~\cite{immler2012,immler2018}, the discretization and floating-point
+program of the one-dimensional wave equation~\cite{boldo2013}, the Lax--Milgram
+theorem~\cite{boldo2017} and the certificates of the Kepler
+conjecture~\cite{hales2017} come closest, and high-energy physics is being
+formalized in Lean~\cite{toobysmith2025}. Stellarator equilibrium codes are
+verified by convergence studies, manufactured solutions and comparison between
+codes such as VMEC and SPEC~\cite{hudson2012,loizu2015}. We know of no prior work that states the output
+of a stellarator equilibrium code as a machine-checked theorem about the field
+it defines.
 
 \section{Conclusion}
 
@@ -414,16 +650,16 @@ to its coil field, where it carries a machine-checked KAM argument for the flux
 surfaces of a real stellarator, the subject of separate work.
 
 \paragraph{Availability.}
-The development, the certificate generators and the scripts that draw
-Figure~\ref{fig:conv} are at \url{https://github.com/CharlesCNorton/stellarocq},
-commit \code{517aaff}; \code{make all} builds the proofs and the checker,
-\code{make audit} prints the assumptions of every theorem, and the release
-\code{checker-74169ad} carries the same checker linked statically for x86\_64
-Linux.
-The VMEC++ tests that
-carry the certified values are on the branch of~\cite{branch}.
+The development, the certificate generators and the script that writes
+Figure~\ref{fig:conv} are at \link{https://github.com/CharlesCNorton/stellarocq},
+commit \code{a403fe8}; \code{make all} builds the proofs and the checker,
+\code{make audit} prints the assumptions of every theorem named here, and the release
+\code{checker-a403fe8} carries the same checker linked statically for x86\_64
+Linux. The VMEC++ tests that carry the certified values are on the branch
+of~\cite{branch}.
 
 \begin{thebibliography}{99}\small\raggedright
+\setlength{\itemsep}{1pt}
 
 \bibitem{hirshman1983}
 S.~P. Hirshman and J.~C. Whitson, Steepest-descent moment method for
@@ -443,7 +679,7 @@ J.~Schilling, E.~Guiraud and V.~Siska, VMEC++, software,
 doi:10.5281/zenodo.14800158.
 
 \bibitem{rocq}
-The Rocq Development Team, The Rocq Prover, \url{https://rocq-prover.org}.
+The Rocq Development Team, The Rocq Prover, \link{https://rocq-prover.org}.
 
 \bibitem{letouzey2003}
 P.~Letouzey, A new extraction for Coq, in \emph{Types for Proofs and Programs
@@ -480,36 +716,36 @@ Analysis} (SIAM, Philadelphia, 2009).
 
 \bibitem{issue788}
 The Jacobian orientation check is not invariant under the poloidal rotation
-applied to an asymmetric boundary, \url{https://github.com/proximafusion/vmecpp/issues/788}.
+applied to an asymmetric boundary, \link{https://github.com/proximafusion/vmecpp/issues/788}.
 
 \bibitem{pr789}
 Test the Jacobian orientation with a quantity the lasym rotation preserves,
-\url{https://github.com/proximafusion/vmecpp/pull/789}.
+\link{https://github.com/proximafusion/vmecpp/pull/789}.
 
 \bibitem{issue27}
 The Jacobian orientation test is not invariant under the poloidal rotation
 applied to an asymmetric boundary,
-\url{https://github.com/jonathanschilling/educational_VMEC/issues/27}.
+\link{https://github.com/jonathanschilling/educational\_VMEC/issues/27}.
 
 \bibitem{branch}
 VMEC++ with Stellarocq's certified values as regression tests,
-\url{https://github.com/CharlesCNorton/vmecpp/tree/stellarocq-certificates}.
+\link{https://github.com/CharlesCNorton/vmecpp/tree/stellarocq-certificates}.
 
 \bibitem{pr903}
 Return NESTOR's boundary vacuum field with return\_vacuum\_field,
-\url{https://github.com/proximafusion/vmecpp/pull/903}.
+\link{https://github.com/proximafusion/vmecpp/pull/903}.
 
 \bibitem{pr905}
 Test that the unpreconditioned force is the gradient of the MHD energy,
-\url{https://github.com/proximafusion/vmecpp/pull/905}.
+\link{https://github.com/proximafusion/vmecpp/pull/905}.
 
 \bibitem{pr875}
 Test three invariances of the solver,
-\url{https://github.com/proximafusion/vmecpp/pull/875}.
+\link{https://github.com/proximafusion/vmecpp/pull/875}.
 
 \bibitem{pr904}
 Test that the energy Hessian is symmetric and DGeod is never positive,
-\url{https://github.com/proximafusion/vmecpp/pull/904}.
+\link{https://github.com/proximafusion/vmecpp/pull/904}.
 
 \bibitem{soloviev1968}
 L.~S. Solov'ev, The theory of hydromagnetic stability of toroidal plasma
@@ -559,23 +795,56 @@ stellarators, \emph{Phys. Rev. Lett.} \textbf{101}, 145003 (2008).
 P.~Helander, Theory of plasma confinement in non-axisymmetric magnetic fields,
 \emph{Rep. Prog. Phys.} \textbf{77}, 087001 (2014).
 
-\bibitem{boldo2013}
-S.~Boldo, F.~Cl\'ement, J.-C. Filli\^atre, M.~Mayero, G.~Melquiond and P.~Weis,
-Wave equation numerical resolution: A comprehensive mechanized proof of a C
-program, \emph{J. Autom. Reason.} \textbf{50}, 423 (2013).
+\bibitem{tucker1999}
+W.~Tucker, The Lorenz attractor exists, \emph{C. R. Acad. Sci. Paris S\'er. I
+Math.} \textbf{328}, 1197 (1999).
 
-\bibitem{immler2018}
-F.~Immler, A verified ODE solver and the Lorenz attractor, \emph{J. Autom.
-Reason.} \textbf{61}, 73 (2018).
+\bibitem{capd2021}
+T.~Kapela, M.~Mrozek, D.~Wilczak and P.~Zgliczy\'nski, CAPD::DynSys: a flexible
+C++ toolbox for rigorous numerical analysis of dynamical systems,
+\emph{Commun. Nonlinear Sci. Numer. Simul.} \textbf{101}, 105578 (2021).
 
-\bibitem{hales2017}
-T.~Hales et al., A formal proof of the Kepler conjecture, \emph{Forum Math. Pi}
-\textbf{5}, e2 (2017).
+\bibitem{figueras2017}
+J.-Ll.~Figueras, A.~Haro and A.~Luque, Rigorous computer-assisted application
+of KAM theory: a modern approach, \emph{Found. Comput. Math.} \textbf{17}, 1123
+(2017).
+
+\bibitem{chen2023}
+J.~Chen and T.~Y. Hou, Stable nearly self-similar blowup of the 2D Boussinesq
+and 3D Euler equations with smooth data II: Rigorous numerics,
+arXiv:2305.05660 (2023).
 
 \bibitem{nakao2019}
 M.~T. Nakao, M.~Plum and Y.~Watanabe, \emph{Numerical Verification Methods and
 Computer-Assisted Proofs for Partial Differential Equations} (Springer,
 Singapore, 2019).
+
+\bibitem{immler2012}
+F.~Immler and J.~H\"olzl, Numerical analysis of ordinary differential equations
+in Isabelle/HOL, in \emph{Interactive Theorem Proving (ITP 2012)}, LNCS 7406,
+377 (2012).
+
+\bibitem{immler2018}
+F.~Immler, A verified ODE solver and the Lorenz attractor, \emph{J. Autom.
+Reason.} \textbf{61}, 73 (2018).
+
+\bibitem{boldo2013}
+S.~Boldo, F.~Cl\'ement, J.-C. Filli\^atre, M.~Mayero, G.~Melquiond and P.~Weis,
+Wave equation numerical resolution: A comprehensive mechanized proof of a C
+program, \emph{J. Autom. Reason.} \textbf{50}, 423 (2013).
+
+\bibitem{boldo2017}
+S.~Boldo, F.~Cl\'ement, F.~Faissole, V.~Martin and M.~Mayero, A Coq formal proof
+of the Lax--Milgram theorem, in \emph{6th ACM SIGPLAN Conference on Certified
+Programs and Proofs (CPP 2017)}, 79 (2017).
+
+\bibitem{hales2017}
+T.~Hales et al., A formal proof of the Kepler conjecture, \emph{Forum Math. Pi}
+\textbf{5}, e2 (2017).
+
+\bibitem{toobysmith2025}
+J.~Tooby-Smith, HepLean: Digitalising high energy physics, \emph{Comput. Phys.
+Commun.} \textbf{308}, 109457 (2025).
 
 \end{thebibliography}
 
