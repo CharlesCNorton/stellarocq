@@ -83,3 +83,8 @@ Print Assumptions AuditBracket.lcfs_bracket.
 From Stellarocq Require Import Force Continuum.
 Print Assumptions force_law.
 Print Assumptions continuum_force.
+
+From Stellarocq Require Import Residuals.
+Print Assumptions continuum_force_asym.
+Print Assumptions node_residual.
+Print Assumptions node_residual_asym.
