@@ -323,8 +323,9 @@ floating-point numbers are named as such.
 \cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state and over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.34,8.46]$, $[8.67,9.08]$, $[6.19,7.77]\times10^{-5}$~T$^2$; over the box $[8.29,8.51]$, $[8.45,9.29]$, $[5.32,8.64]\times10^{-5}$~T$^2$} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]\times10^{-4}$~T$^2$, $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
+\cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.86$, $1.88$, $1.81$, $1.72$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[2pt]
-\cellA{Landreman's sheared equilibrium, 13 surfaces} & \cellB{$\mathbf{B}-\mathbf{B}^*$ on the half-grid surface $s=0.958$ and $\psi^*$ on the node $s=0.917$, at a $64\times32$ grid of a field period\newline\code{check\_bpcert\_correct}} & \cellC{components at most $7.19\times10^{-6}$, $9.34\times10^{-7}$ and $8.25\times10^{-6}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T; $\psi^*$ within $2.32\times10^{-7}$ of $1.834418\times10^{-2}$} \\
+\cellA{Landreman's sheared equilibrium, 13 surfaces} & \cellB{$\mathbf{B}-\mathbf{B}^*$ on the half-grid surfaces $s=0.125$, $0.542$ and $0.958$, and $\psi^*$ on the nodes inside them, at a $64\times32$ grid of a field period\newline\code{check\_bpcert\_correct}} & \cellC{components at most $2.85\times10^{-5}$, $1.06\times10^{-5}$, $2.94\times10^{-5}$; $1.11\times10^{-5}$, $1.73\times10^{-6}$, $1.32\times10^{-5}$; $7.19\times10^{-6}$, $9.34\times10^{-7}$, $8.25\times10^{-6}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T; $\psi^*$ within $3.90\times10^{-6}$, $1.83\times10^{-6}$ and $2.32\times10^{-7}$ of $1.677624$, $10.03543$ and $18.34418\times10^{-3}$} \\
 \hline
 \end{tabular}
 \caption{Certified results on the manufactured problems and on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
@@ -608,7 +609,12 @@ $[7.556,7.561]$, $[7.201,7.206]$, $[6.433,6.437]$, $[5.636,5.640]$ and
 $[4.9647,4.9673]\times10^{-4}$~T$^2$ at 25, 49, 97, 193 and 385 surfaces, for
 every $t$, where $B^2/2$ averages $0.18$~T$^2$ on the boundary. Each enclosure
 lies below the one before it, so the jump falls under radial
-refinement, but only by 1.05 to 1.14 per doubling. VMEC imposes the balance
+refinement, but only by 1.05 to 1.14 per doubling. The two answers differ by
+up to $6.1\times10^{-4}$~T$^2$ on the grid, and with the sweep widened to
+five times that difference, $P_{\rm vac}=P_{\rm mid}+5t\,\delta P$, the
+largest jump is at most $1.86$, $1.88$, $1.81$, $1.72$ and
+$1.66\times10^{-3}$~T$^2$ at 25 to 385 surfaces, a hundredth of $B^2/2$,
+for every vacuum pressure within that band at each point. VMEC imposes the balance
 through the Fourier harmonics it retains, and in floating point the jump on
 NESTOR's grid lies almost wholly beyond them: at 49 surfaces its part in the
 retained harmonics is at most $2.4\times10^{-5}$ and the rest
@@ -655,7 +661,9 @@ $64\times32$ grid of a field period: on the half-grid surface $s=0.958$ the
 components of $\mathbf{B}-\mathbf{B}^*$ are at most $7.19\times10^{-6}$,
 $9.34\times10^{-7}$ and $8.25\times10^{-6}$~T, where $|\mathbf{B}^*|$ lies
 between 0.30 and 0.38~T, and the node surface $s=0.917$ lies between the level
-sets $\psi^*=c\pm2.32\times10^{-7}$, $c=1.834418\times10^{-2}$. In floating
+sets $\psi^*=c\pm2.32\times10^{-7}$, $c=1.834418\times10^{-2}$; on the
+surfaces $s=0.542$ and $0.125$ the largest component is $1.32\times10^{-5}$
+and $2.94\times10^{-5}$~T, the deviation growing toward the axis. In floating
 point the largest $|\mathbf{B}-\mathbf{B}^*|$ on the outermost half-grid surface
 falls from $8.5\times10^{-6}$ at 13 surfaces to $2.1\times10^{-6}$,
 $6.4\times10^{-7}$, $1.05\times10^{-7}$ and $2.2\times10^{-8}$ at 25, 50, 100
