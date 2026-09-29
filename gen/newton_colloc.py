@@ -168,12 +168,12 @@ class Layout:
         return (out, s)
 
 
-def write_cert(path, w, lay, points, centre, r, K, M, A, B):
+def write_cert(path, w, lay, points, centre, r, K, M, A, B, prec=53):
     n = lay.n
     L = []
     P = L.append
     P("STELLAROCQ-NEWTON")
-    P("PREC 53")
+    P(f"PREC {prec}")
     P("SYSTEM colloc")
     P(f"N {n}")
     P("EXP " + " ".join(str(e) for e in lay.exps))
@@ -220,6 +220,18 @@ def evaluate(main, path, n):
     return F, J, width, stats
 
 
+def centre_outputs(main, path, n):
+    """The enclosures of the outputs at the centre, as the check reads them
+    (through Wide.v when the certificate's PREC exceeds 53)."""
+    rc, out = run(f'"{main}" --newton-centre "{path}"')
+    if rc != 0 or "NEWTON-CENTRE" not in out:
+        raise SystemExit(f"the centre evaluation failed:\n{out[-2000:]}")
+    F = np.zeros((n, 2))
+    for m in re.finditer(r"^F (\d+) (\S+) (\S+)$", out, re.M):
+        F[int(m.group(1))] = (float.fromhex(m.group(2)), float.fromhex(m.group(3)))
+    return F
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("wout")
@@ -235,6 +247,12 @@ def main():
     ap.add_argument("--cube", action="store_true",
                     help="keep every unknown on the exponent of --exp, a cube "
                     "in mantissa units, instead of giving each its own")
+    ap.add_argument("--prec", type=int, default=53,
+                    help="the certificate's PREC; above 53 every unknown is "
+                    "carried in a 58-bit mantissa and the centre is refined by "
+                    "Newton steps on its outputs read through Wide.v")
+    ap.add_argument("--refine", type=int, default=3,
+                    help="Newton steps on the wide outputs at the centre")
     ap.add_argument("--main",
                     default=str(ROOT / "extract" / "_build" / "default"
                                 / "main.exe"))
@@ -299,7 +317,36 @@ def main():
     r = 1
     M = 1.0
     verdict = "INVALID"
-    if not a.cube:
+    P = a.prec
+    if P > 53:
+        # Each unknown on the exponent that gives it a mantissa of about 2^58,
+        # and the centre refined by Newton steps on the outputs read through
+        # Wide.v, which see past binary64's rounding of a residual that
+        # cancels large terms; the box then only has to hold the centre's
+        # last digits.
+        D0 = np.array([2.0 ** e for e in lay.exps])
+        x = np.array(centre, dtype=float) * D0
+        Aphys = np.linalg.inv(J / D0[None, :])
+        mag = np.maximum(np.abs(x), 1e-3 * float(np.abs(x).max()))
+        lay.exps = [int(math.floor(math.log2(v))) - 58 for v in mag]
+        D = np.array([2.0 ** e for e in lay.exps])
+        centre = [int(round(float(v))) for v in x / D]
+        for it in range(a.refine):
+            write_cert(a.out, w, lay, points, centre, 0, K, M, zero, zero, prec=P)
+            Fw = centre_outputs(a.main, a.out, n)
+            fmid = 0.5 * (Fw[:, 0] + Fw[:, 1])
+            step = Aphys @ fmid
+            centre = [int(c - round(float(s))) for c, s in zip(centre, step / D, strict=True)]
+            print(f"  refine {it + 1}: max |F(c)| {float(np.abs(fmid).max()):.3e} "
+                  f"(width {float(np.max(Fw[:, 1] - Fw[:, 0])):.1e}), step "
+                  f"{float(np.abs(step).max()):.3e}, {time.time() - t0:.0f} s", flush=True)
+        write_cert(a.out, w, lay, points, centre, 0, K, M, zero, zero, prec=P)
+        F, J, width, _ = evaluate(a.main, a.out, n)
+        A = np.linalg.inv(J)
+        print(f"  refined: exponents {min(lay.exps)}..{max(lay.exps)}, |F|max "
+              f"{float(np.abs(F).max()):.3e}, condition number "
+              f"{float(np.linalg.cond(J)):.3e}", flush=True)
+    elif not a.cube:
         # the needed radius of each unknown from a thin box, then every
         # unknown on its own grid so that the box is that shape
         write_cert(a.out, w, lay, points, centre, r, K, M, A, J)
@@ -315,11 +362,11 @@ def main():
     # the Jacobian widen over the box, and the first step needs
     # |A F(c)| <= (1 - K) r. With the growth read off two radii the radius
     # that balances the two is chosen, and K is the row sum there.
-    write_cert(a.out, w, lay, points, centre, 1, K, M, A, J)
+    write_cert(a.out, w, lay, points, centre, 1, K, M, A, J, prec=P)
     _, _, _, s0 = evaluate(a.main, a.out, n)
     g0, vmax = max(s0["ROWG"], s0["ROWH"]), s0["VMAX"]
     r1 = int(math.ceil(2.0 * vmax)) + 1
-    write_cert(a.out, w, lay, points, centre, r1, K, M, A, J)
+    write_cert(a.out, w, lay, points, centre, r1, K, M, A, J, prec=P)
     _, _, _, s1 = evaluate(a.main, a.out, n)
     g1 = max(s1["ROWG"], s1["ROWH"])
     slope = max((g1 - g0) / r1, 1e-300)
@@ -335,7 +382,7 @@ def main():
         r = max(r, int(math.ceil(vmax / (1.0 - K) * 1.01)) + 1)
         K = min(0.99, (g0 + slope * r) * 1.02 + 2.0 ** -12)
         M = 2.0 * s1["JMAX"] + 2.0 ** -40
-        write_cert(a.out, w, lay, points, centre, r, K, M, A, J)
+        write_cert(a.out, w, lay, points, centre, r, K, M, A, J, prec=P)
         rc, out = run(f'"{a.main}" --newton "{a.out}"')
         m = re.search(r"verdict: (\w+)", out)
         verdict = m.group(1) if m else "NONE"
