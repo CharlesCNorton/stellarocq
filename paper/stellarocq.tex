@@ -309,7 +309,9 @@ Table~\ref{tab:results} collects the certified results with the theorem each
 rests on. The manufactured problems are Stellarocq's collocated systems for the
 manufactured mappings of the VMEC++ pull request~\cite{pr784} that adds a
 force source to the solver, and every other case is a VMEC++ run or a file
-from its test data. A number
+from its test data. The runs of Landreman's equilibrium and of the rippled
+tokamak are VMEC++ 0.4.7, and the free-boundary and Mercier runs the branch
+of~\cite{branch}, which reads NESTOR's vacuum field. A number
 called certified is an enclosure that a passing verdict proves, rounded outward;
 floating-point numbers are named as such.
 
@@ -881,8 +883,9 @@ singular quadrature schemes in magnetic fusion, \emph{Plasma Phys. Control.
 Fusion} \textbf{62}, 024004 (2020).
 
 \bibitem{branch}
-VMEC++ with Stellarocq's certified values as regression tests,
-\link{https://github.com/CharlesCNorton/vmecpp/tree/stellarocq-certificates}.
+VMEC++ with Stellarocq's certified values as regression tests, commit
+\code{88cdb4cc},
+\link{https://github.com/CharlesCNorton/vmecpp/tree/88cdb4cc65fc643e125f5b1440e74792a5ef44a5}.
 
 \bibitem{pr784}
 Measure the discretization by the method of manufactured solutions,
