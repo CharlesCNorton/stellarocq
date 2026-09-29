@@ -16,6 +16,7 @@ theories/Cover2.v
 theories/Integrate.v
 theories/Mercier.v
 theories/MercierRun.v
+theories/MercierFile.v
 theories/Kantorovich.v
 theories/Wide.v
 theories/Newton.v

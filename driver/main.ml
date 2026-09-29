@@ -2552,6 +2552,18 @@ let run_mercier_run path =
   let fa = file "A" in let fb = file "B" in let fg = file "G" in let fs = file "S" in
   expect "PHIPS"; let phm = i64 () in let phe = i64 () in
   expect "SIGNGS"; let sgm = i64 () in let sge = i64 () in
+  (* "FILEDIFF vm ve pm pe sm se cm ce": V'', p' in pascals, iota' and the
+     current gradient as the file's centred differences, each a dyadic m 2^e;
+     the run is then MercierFile.merc_run_q, which carries them to torus
+     integrals (times 4 pi^2, and mu0 for p') in place of the G and S
+     coverings' integrals *)
+  let filediff =
+    if !p < Array.length t && t.(!p) = "FILEDIFF" then begin
+      incr p;
+      let vm = i64 () in let ve = i64 () in let pm = i64 () in let pe = i64 () in
+      let sm = i64 () in let se = i64 () in let cm = i64 () in let ce = i64 () in
+      Some (vm, ve, pm, pe, sm, se, cm, ce)
+    end else None in
   let z = z_of_int64 in
   let block name f =
     let pc = parse_cert f in
@@ -2588,7 +2600,16 @@ let run_mercier_run path =
   Printf.printf
     "the Mercier criterion at node %d from four coverings, each integrated over the \
      angular torus, precision %Ld bits\n%!" b pa.p_prec;
-  match MercierRun.merc_run prec ba bb bg bs (z phm) (z phe) (z sgm) (z sge) with
+  let res =
+    match filediff with
+    | Some (vm, ve, pm, pe, sm, se, cm, ce) ->
+        Printf.printf "V'', mu0 p', iota' and I' are the file's centred differences\n%!";
+        MercierFile.merc_run_q prec ba bb
+          { MercierFile.q_vp = (z vm, z ve); MercierFile.q_pp = (z pm, z pe);
+            MercierFile.q_sh = (z sm, z se); MercierFile.q_cg = (z cm, z ce);
+            MercierFile.q_ph = (z phm, z phe); MercierFile.q_sg = (z sgm, z sge) }
+    | None -> MercierRun.merc_run prec ba bb bg bs (z phm) (z phe) (z sgm) (z sge) in
+  match res with
   | None ->
       (* which covering, run on its own *)
       Stdlib.List.iter (fun (nm, bk) ->

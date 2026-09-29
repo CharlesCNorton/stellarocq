@@ -89,12 +89,50 @@ def coverings(wout, nodes, nu, python, tmp, surface):
     }
 
 
-def run_file(path, node, covs, phip, signgs):
+def run_file(path, node, covs, phip, signgs, filediff=None):
     lines = ["STELLAROCQ-MERCRUN", f"NODE {node}"]
     lines += [f"{k} {covs[k]}" for k in ("A", "B", "G", "S")]
     lines.append("PHIPS {} {}".format(*dyadic(phip)))
     lines.append("SIGNGS {} {}".format(*dyadic(signgs)))
+    if filediff is not None:
+        lines.append("FILEDIFF " + " ".join(f"{m} {e}" for m, e in filediff))
     path.write_text("\n".join(lines) + "\n")
+
+
+def exact_dyadic(q):
+    """A Fraction with a power-of-two denominator as (m, e), q = m 2^e."""
+    from fractions import Fraction
+
+    q = Fraction(q)
+    den = q.denominator
+    if den & (den - 1):
+        raise SystemExit(f"{q} is not a dyadic number")
+    m, e = q.numerator, -(den.bit_length() - 1)
+    while m and m % 2 == 0:
+        m //= 2
+        e += 1
+    return (m, e if m else 0)
+
+
+def file_differences(d, j):
+    """V'', p' in pascals, iota' and the current gradient at node j as the
+    file's centred differences of its half-grid vp, pres, iotas and buco, each
+    exact: (x[j + 1] - x[j]) / h with h = 1 / (ns - 1), V'' carrying signgs so
+    that 4 pi^2 V'' is the angular integral of the radial derivative of the
+    Jacobian."""
+    from fractions import Fraction
+
+    import numpy as np
+
+    ns = int(d.variables["ns"][:])
+    h = Fraction(1, ns - 1)
+    sg = int(round(float(np.asarray(d.variables["signgs"][:]))))
+
+    def diff(name, scale=1):
+        x = np.asarray(d.variables[name][:], dtype=float)
+        return exact_dyadic(scale * (Fraction(float(x[j + 1])) - Fraction(float(x[j]))) / h)
+
+    return [diff("vp", sg), diff("pres"), diff("iotas"), diff("buco")]
 
 
 def inputs_of(out):
@@ -126,6 +164,9 @@ def main():
     ap.add_argument("wout")
     ap.add_argument("--node", type=int, default=None)
     ap.add_argument("--nu", type=int, default=512)
+    ap.add_argument("--filediff", action="store_true",
+                    help="take V'', p', iota' and the current gradient as the file's "
+                         "centred differences (MercierFile.merc_run_q)")
     ap.add_argument(
         "--main",
         default=str(ROOT / "extract" / "_build" / "default" / "main.exe"))
@@ -168,6 +209,8 @@ def main():
     have = ({k: float(np.asarray(d.variables[k][:])[a.node])
              for k in ("DMerc", "DShear", "DCurr", "DWell", "DGeod")
              if k in d.variables} if a.node is not None else {})
+    fdiff = (file_differences(d, a.node)
+             if a.node is not None and getattr(a, "filediff", False) else None)
     d.close()
     sf = f" --nv {a.nv} --surface" if a.nv else ""
 
@@ -245,7 +288,7 @@ def main():
           + (f" by {a.nv} toroidal" if a.nv else ""))
     covs = coverings(a.wout, f"--node {a.node}", a.nu, a.python, tmp, sf)
     path = pathlib.Path(a.write) if a.write else tmp / "merc.txt"
-    run_file(path, 0, covs, phip, signgs)
+    run_file(path, 0, covs, phip, signgs, fdiff)
     print()
     rc, out = run(f'"{a.main}" --mercier-run "{path}"')
     print(out.strip())
