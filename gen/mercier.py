@@ -16,6 +16,11 @@ enclosure passes from one run to another.
 
   python gen/mercier.py wout.nc --node 22 [--nu 512] [--main PATH]
 
+The paper's case is up_down_asym of VMEC++'s test data solved at 17 surfaces
+(ns_array 5, 11, 17 to ftol 1e-11), at node 2, s = 0.125:
+
+  python gen/mercier.py wout_up_down_asym.nc --node 2 --nu 2048 --main PATH
+
 `--write FILE` keeps the run file, which with the four coverings it names is
 what another party would re-check.
 
