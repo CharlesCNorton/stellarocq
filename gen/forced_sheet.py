@@ -23,11 +23,13 @@ force balance for all of them at once.
          --harmonic 2,1 --rel 1e-9 --nu 64 --nv 32
   main --int-tighten cert.txt cert_t.txt && main --int cert_t.txt
 
-The paper's certified (2,1) harmonic, the equispaced sum of r_s cos(2u - v) over
-a 64 by 32 grid for every state within a relative 1e-12, is Harmonic.dharm_correct:
+The paper's certified (2,1) harmonic is Harmonic.dharm_correct for the equispaced
+sum of r_s cos(2u - v) over a 64 by 32 grid, at the converged state with --rel 0
+and for every state within a relative 1e-14 of it with --rel 1e-14, at each of
+the three wouts of `solve`:
 
   python gen/forced_sheet.py hcert DIR/wout_ns65.nc hcert.txt --s 0.625 \\
-         --harmonic 2,1 --rel 1e-12 --nu 64 --nv 32 --output harmonic
+         --harmonic 2,1 --rel 0 --nu 64 --nv 32 --output harmonic
   main --dharm hcert.txt
 """
 
