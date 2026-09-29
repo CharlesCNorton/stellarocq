@@ -47,8 +47,10 @@ harmonic of the force at a rational surface that changes by at most a factor
 vacuum field whose pressure lies at each point between the answers of NESTOR
 and BIEST. Against one of Landreman's exact three-dimensional equilibria they
 bound the difference between VMEC++'s field and the exact field at every point
-of a grid on a flux surface, and the development proves in Rocq that the
-members of his family with $\iota=2$ are ideal-MHD equilibria.
+of grids on its flux surfaces, a difference that falls 3.5 to 5.6-fold per
+doubling of the surfaces away from the axis and stops falling at it, and the
+development proves in Rocq that the members of his family with $\iota=2$ are
+ideal-MHD equilibria.
 \end{abstract}
 
 \section{Introduction}
@@ -325,7 +327,7 @@ floating-point numbers are named as such.
 \cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.86$, $1.88$, $1.81$, $1.72$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[2pt]
-\cellA{Landreman's sheared equilibrium, 13 surfaces} & \cellB{$\mathbf{B}-\mathbf{B}^*$ on the half-grid surfaces $s=0.125$, $0.542$ and $0.958$, and $\psi^*$ on the nodes inside them, at a $64\times32$ grid of a field period\newline\code{check\_bpcert\_correct}} & \cellC{components at most $2.85\times10^{-5}$, $1.06\times10^{-5}$, $2.94\times10^{-5}$; $1.11\times10^{-5}$, $1.73\times10^{-6}$, $1.32\times10^{-5}$; $7.19\times10^{-6}$, $9.34\times10^{-7}$, $8.25\times10^{-6}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T; $\psi^*$ within $3.90\times10^{-6}$, $1.83\times10^{-6}$ and $2.32\times10^{-7}$ of $1.677624$, $10.03543$ and $18.34418\times10^{-3}$} \\
+\cellA{Landreman's sheared equilibrium, 13/25/50/100 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.66\times10^{-7}$; $4.34\times10^{-6}$, $1.11\times10^{-7}$, $1.01\times10^{-7}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\
 \hline
 \end{tabular}
 \caption{Certified results on the manufactured problems and on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
@@ -656,18 +658,20 @@ $\mathbf{B}-\mathbf{B}^*(X)$ on a half-grid surface, with $\mathbf{B}$ the
 reconstructed field and $X$ its position, and $\psi^*(X)$ on a node surface.
 VMEC++'s solution of the sheared member with $\epsilon=0.6$, $S=2.2$,
 $\lambda=2.97$ and $k_b=0.2$, whose transform runs from 4.34 to 4.37, at 13
-surfaces with $m\le11$ and $|n|\le10$, is certified at every point of a
-$64\times32$ grid of a field period: on the half-grid surface $s=0.958$ the
-components of $\mathbf{B}-\mathbf{B}^*$ are at most $7.19\times10^{-6}$,
-$9.34\times10^{-7}$ and $8.25\times10^{-6}$~T, where $|\mathbf{B}^*|$ lies
-between 0.30 and 0.38~T, and the node surface $s=0.917$ lies between the level
-sets $\psi^*=c\pm2.32\times10^{-7}$, $c=1.834418\times10^{-2}$; on the
-surfaces $s=0.542$ and $0.125$ the largest component is $1.32\times10^{-5}$
-and $2.94\times10^{-5}$~T, the deviation growing toward the axis. In floating
-point the largest $|\mathbf{B}-\mathbf{B}^*|$ on the outermost half-grid surface
-falls from $8.5\times10^{-6}$ at 13 surfaces to $2.1\times10^{-6}$,
-$6.4\times10^{-7}$, $1.05\times10^{-7}$ and $2.2\times10^{-8}$ at 25, 50, 100
-and 200, while near the axis it does not fall below $4\times10^{-6}$.
+surfaces with $m\le11$ and $|n|\le10$, and at 25, 50 and 100 surfaces, is
+certified at every point of a $64\times32$ grid of a field period on its
+innermost, middle and outermost half-grid surfaces, where $|\mathbf{B}^*|$ lies
+between 0.30 and 0.38~T. On the outermost the largest component of
+$\mathbf{B}-\mathbf{B}^*$ is at most $8.25\times10^{-6}$, $2.00\times10^{-6}$,
+$5.66\times10^{-7}$ and $1.01\times10^{-7}$~T at 13, 25, 50 and 100 surfaces,
+and on the middle one, at $s$ near $1/2$, $1.32\times10^{-5}$,
+$2.93\times10^{-6}$, $5.39\times10^{-7}$ and $1.11\times10^{-7}$~T, falling 3.5
+to 5.6-fold per doubling; on the innermost, at $s=0.125$, $0.062$, $0.031$ and
+$0.015$, it is at most $2.94\times10^{-5}$, $1.36\times10^{-5}$,
+$5.61\times10^{-6}$ and $4.34\times10^{-6}$~T, and stops falling at the axis.
+The outermost node surfaces lie within $2.32\times10^{-7}$,
+$4.94\times10^{-8}$, $1.77\times10^{-8}$ and $1.69\times10^{-9}$ of a level
+set of $\psi^*$, whose value at the boundary is $0.02$.
 
 \paragraph{Use in VMEC++.}
 The certified values are regression tests on a branch of VMEC++~\cite{branch},
