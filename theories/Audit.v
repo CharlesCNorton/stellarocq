@@ -120,3 +120,11 @@ Print Assumptions integ2_torus_correct.
 Print Assumptions merc_run_correct.
 Print Assumptions merc_unstable.
 Print Assumptions merc_stable.
+
+From Stellarocq Require Import Landreman LandremanExact WideHarm MercierFile.
+Print Assumptions Landreman.iota2_divergence.
+Print Assumptions Landreman.iota2_force.
+Print Assumptions Landreman.iota2_tangent.
+Print Assumptions LandremanExact.exact_b_iota2.
+Print Assumptions WideHarm.wdharm_b_correct.
+Print Assumptions MercierFile.merc_run_q_correct.

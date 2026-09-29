@@ -81,8 +81,7 @@ field's Jacobian and metric differ from the ones VMEC forms
 (Section~\ref{sec:object}). It supplies checking functions, extracted from Rocq
 together with their soundness theorems, for bounds at points and over cells,
 discrete Fourier harmonics, flux-surface integrals, the Mercier criterion and
-the existence of discrete solutions, and it states the trust base they rest on
-(Section~\ref{sec:certs}). It applies them to VMEC++ (Section~\ref{sec:results}):
+the existence of discrete solutions (Section~\ref{sec:certs}). It applies them to VMEC++ (Section~\ref{sec:results}):
 the error of the half-grid rule on manufactured problems, known to a relative
 $10^{-12}$; a harmonic of the force on a rational surface, bounded away from
 zero over a box of states; the free-boundary pressure jump, enclosed for every
@@ -90,9 +89,8 @@ vacuum field between the answers of two independent solvers; the Mercier
 criterion of a coarse equilibrium, whose sign depends on how the radial
 derivatives are taken; and the distance of VMEC++'s field from an exact
 three-dimensional equilibrium. And its certified values are regression tests on a
-branch of VMEC++~\cite{branch}, beside tests of invariances and of the energy's
-gradient that the differential testing behind the development brought into
-VMEC++ itself.
+branch of VMEC++~\cite{branch}, and its differential testing added tests of
+invariances and of the energy's gradient to VMEC++.
 
 \section{The certified object}\label{sec:object}
 
@@ -194,7 +192,7 @@ second order in the radial step.
 
 \paragraph{Identities.}
 The representation builds some properties in, and for the reconstruction they
-are theorems rather than floating-point samples: it is solenoidal
+are theorems: it is solenoidal
 (\code{divergence\_free}), the $(0,0)$ coefficient of $\lambda$ drives nothing
 (\code{lambda\_gauge}), which exhibits the poloidal relabelling as an exact
 kernel direction, and the residual has no component along the field
@@ -239,7 +237,7 @@ from zero. The bound tightens as the cells shrink, since each derivative
 enclosure is taken over its own cell: on one surface of the Solov'ev
 equilibrium, where the residual reaches $4.1\times10^{-7}$ in floating point, 8,
 32, 128, 512, 2048 and 8192 cells bound it by $2.2\times10^3$, $0.97$,
-$3.4\times10^{-2}$, $2.0\times10^{-3}$, $1.2\times10^{-4}$ and
+$3.4\times10^{-2}$, $2.0\times10^{-3}$, $1.3\times10^{-4}$ and
 $7.7\times10^{-6}$, about sixteen-fold less per fourfold refinement from 128
 cells on, in 0.4 to 13 seconds.
 \code{Cover2.v} decides, column by column, that the cells of a verdict cover the
@@ -259,8 +257,7 @@ over the whole angular torus that the same run computes: the lattice reaches
 past each period of $2\pi$, the period ends inside its last cells, and the two
 strips it adds are bounded through the integrand's enclosures over those cells
 (\code{integ2\_torus\_correct}). A verdict is then a theorem about the
-criterion of the reconstruction rather than about its ingredients
-(\code{merc\_run\_correct}). In \code{Box.v} every input slot
+criterion of the reconstruction (\code{merc\_run\_correct}). In \code{Box.v} every input slot
 carries a half-width, so one evaluation covers every field whose coefficients
 lie in a box. The theorem behind the resonant harmonic of
 Section~\ref{sec:results} shows the form every soundness theorem takes:
@@ -296,10 +293,10 @@ driver's parser and its division of the work, and the correspondence between a
 certificate's numbers and the output or formulas they are taken from, which
 \code{gen/verify\_cert.py} checks for a wout file. The classical constructions behind Rocq's
 real numbers appear only in specifications, and extraction directives replace
-them by values that fail when consulted. For the theorems named here,
-\code{Print Assumptions} reports the two axioms of the standard library's
-classical Dedekind reals, excluded middle, functional extensionality and the
-specifications of the primitive operations. The build pins Rocq 9.1.1 with its
+them by values that fail when consulted. The theorems named here rest on the
+two axioms of the standard library's classical Dedekind reals, excluded middle,
+functional extensionality and the specifications of the primitive operations.
+The build pins Rocq 9.1.1 with its
 standard library 9.2.0, CoqInterval 4.11.4, Flocq 4.2.2, Coquelicot 3.4.5,
 MathComp 2.4.0 and OCaml 4.14.2.
 
@@ -312,8 +309,7 @@ force source to the solver, and every other case is a VMEC++ run or a file
 from its test data. The runs of Landreman's equilibrium and of the rippled
 tokamak are VMEC++ 0.4.7, and the free-boundary and Mercier runs the branch
 of~\cite{branch}, which reads NESTOR's vacuum field. A number
-called certified is an enclosure that a passing verdict proves, rounded outward;
-floating-point numbers are named as such.
+called certified is an enclosure that a passing verdict proves, rounded outward.
 
 \begin{table}[t]
 \centering\small
@@ -327,7 +323,7 @@ floating-point numbers are named as such.
 \cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state and over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.34,8.46]$, $[8.67,9.08]$, $[6.19,7.77]\times10^{-5}$~T$^2$; over the box $[8.29,8.51]$, $[8.45,9.29]$, $[5.32,8.64]\times10^{-5}$~T$^2$} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]\times10^{-4}$~T$^2$, $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
-\cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.86$, $1.88$, $1.81$, $1.72$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
+\cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.87$, $1.89$, $1.81$, $1.73$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{the same with the file's centred radial differences\newline\code{merc\_run\_q\_correct}} & \cellC{$[-6.421,-6.366]\times10^{-4}$ and $[1.711,1.875]\times10^{-3}$} \\[2pt]
 \cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.67\times10^{-7}$; $4.35\times10^{-6}$, $1.12\times10^{-7}$, $1.02\times10^{-7}$; $3.34\times10^{-6}$, $2.53\times10^{-8}$, $2.12\times10^{-8}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\
@@ -358,9 +354,8 @@ and the one without stellarator symmetry adds
 $0.004\sin3\phi+\sqrt{s}\,(0.006\sin u+0.002\sin u\cos3\phi)$ to $R$ and
 $0.003\cos3\phi+\sqrt{s}\,(0.006\cos u+0.002\cos u\cos3\phi)$ to $Z$. The file
 that defines them, \code{examples/manufactured\_solution.py} of that pull
-request at commit \code{fbdb696}, whose SHA-256 begins \code{f9bca68d}, is
-copied into Stellarocq's \code{gen/}, and the generator reads every constant of
-the problem from it. A manufactured
+request at commit \code{fbdb696}, is copied into Stellarocq's \code{gen/}, and
+the generator reads every constant of the problem from it. A manufactured
 mapping on the annulus $1/4<s<1$ is not an equilibrium; its continuum residual at
 the collocation points is a source $f$, and the zero $x_h$ of $r-f$ over the
 interior nodes, with $\lambda$ given so that the problem sits on the quotient by
@@ -370,7 +365,7 @@ mapping's own value carried to 120 bits. On systems of up to 423 unknowns
 the interval Newton test puts exactly one zero in a box a few units of a 58-bit
 mantissa wide in each unknown, around a centre refined on outputs read at 128
 bits, so the error $\max|x_h-x^*|$ is enclosed to within $5\times10^{-20}$, a
-relative $10^{-12}$, with no solver tolerance in it; the same problem with its
+relative $10^{-12}$; the same problem with its
 data rounded to binary64 has an error that differs in the eighth digit. It falls by
 3.81, 3.92 and 3.97 per doubling for a three-dimensional mapping and by 3.73 and
 3.87 for one without stellarator symmetry (Figure~\ref{fig:conv}a), and its
@@ -617,7 +612,7 @@ lies below the one before it, so the jump falls under radial
 refinement, but only by 1.05 to 1.14 per doubling. The two answers differ by
 up to $6.1\times10^{-4}$~T$^2$ on the grid, and with the sweep widened to
 five times that difference, $P_{\rm vac}=P_{\rm mid}+5t\,\delta P$, the
-largest jump is at most $1.86$, $1.88$, $1.81$, $1.72$ and
+largest jump is at most $1.87$, $1.89$, $1.81$, $1.73$ and
 $1.66\times10^{-3}$~T$^2$ at 25 to 385 surfaces, a hundredth of $B^2/2$,
 for every vacuum pressure within that band at each point. VMEC imposes the balance
 through the Fourier harmonics it retains, and in floating point the jump on
@@ -756,8 +751,7 @@ error against a true equilibrium rather than a manufactured one.
 \paragraph{Availability.}
 The development, the certificate generators and the script that writes
 Figure~\ref{fig:conv} are at \link{https://github.com/CharlesCNorton/stellarocq},
-commit \code{ed255b9}; \code{make all} builds the proofs and the checker,
-\code{make audit} prints the assumptions of every theorem named here, the
+commit \code{ed255b9}; \code{make all} builds the proofs and the checker, the
 release \code{checker-1ce73cc} carries the same checker linked statically for
 x86\_64 Linux, and each generator's documentation gives the commands of its
 result. The VMEC++ tests that carry the certified values are on the branch
