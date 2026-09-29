@@ -288,7 +288,7 @@ floating-point numbers are named as such.
 \cellA{manufactured, 3D} & \cellB{$\max|x_h-x^*|$, 9/17/33/65 surfaces\newline\code{colloc\_correct}} & \cellC{$2.73432936829\times10^{-6}$, $7.16912170772\times10^{-7}$, $1.83032585742\times10^{-7}$, $4.6074819334\times10^{-8}$} \\[2pt]
 \cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057043\times10^{-5}$, $7.20667053290\times10^{-6}$, $1.86266877703\times10^{-6}$} \\[2pt]
 \cellA{Solov'ev, 1--3 surfaces} & \cellB{zero of the collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one, in boxes of radius $5.7\times10^{-10}$ to $6.3\times10^{-9}$} \\[2pt]
-\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ over a box of relative width $10^{-12}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.34,8.45]$, $[8.67,9.08]$, $[6.19,7.76]\times10^{-5}$~T$^2$} \\[2pt]
+\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state and over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.34,8.46]$, $[8.67,9.08]$, $[6.19,7.77]\times10^{-5}$~T$^2$; over the box $[8.29,8.51]$, $[8.45,9.29]$, $[5.32,8.64]\times10^{-5}$~T$^2$} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]\times10^{-4}$~T$^2$, $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\
@@ -495,9 +495,9 @@ discrete problem that contains the axis.
 \put(415.5,114.6){\line(0,1){10.9}}
 \put(412.5,114.6){\line(1,0){6}}
 \put(412.5,125.5){\line(1,0){6}}
-\put(449.6,46.3){\line(0,1){43.1}}
+\put(449.6,46.3){\line(0,1){43.2}}
 \put(446.6,46.3){\line(1,0){6}}
-\put(446.6,89.4){\line(1,0){6}}
+\put(446.6,89.5){\line(1,0){6}}
 \thinlines
 \end{picture}
 \caption{(a) The certified error of the half-grid scheme on the manufactured
@@ -515,10 +515,11 @@ $1/2$ at $s=0.625$, and a $(1,1)$ boundary ripple of amplitude $0.03$, toroidal
 coupling drives a $(2,1)$ harmonic of the radial force on the rational surface.
 Its certified value, the rectangle rule for the integral of $r_s\cos(2u-v)$ on
 a $64\times32$ grid of angles, in T$^2$ like $r_s$, against $1.2\times10^3$~T$^2$
-for the integral of $B^2$ over the angles there, enclosed by \code{dharm\_correct} over every state
-within a relative $10^{-12}$ of the converged coefficients, lies between
-$6.1\times10^{-5}$ and $9.1\times10^{-5}$ at 65, 129 and 257 surfaces
-(Figure~\ref{fig:conv}c) and is linear in the ripple. From 65 to 129 surfaces it
+for the integral of $B^2$ over the angles there, enclosed by \code{dharm\_correct} at the
+converged state, lies between $6.1\times10^{-5}$ and $9.1\times10^{-5}$ at 65,
+129 and 257 surfaces (Figure~\ref{fig:conv}c), and between $5.3\times10^{-5}$ and
+$9.3\times10^{-5}$ for every state within a relative $10^{-14}$ of the converged
+coefficients; it is linear in the ripple. From 65 to 129 surfaces it
 rises by a factor between 1.02 and 1.09, and from 129 to 257 it falls by a
 factor between 1.11 and 1.47, where the axisymmetric harmonics $(2,0)$ and
 $(1,0)$ of the same reconstruction fall 3.8 to 5.3-fold per doubling in floating
@@ -531,9 +532,9 @@ equilibria with current sheets and stepped pressure
 exist~\cite{bruno1996,enciso2025}. Two limits apply.
 Three resolutions show a harmonic falling far more slowly than the scheme's
 order; they do not decide whether it tends to a nonzero limit, and the
-enclosures widen about fourfold per doubling, from 1.3 to 22 per cent of the
-value, as second radial differences amplify the box's fixed relative width by
-$h^{-2}$. And the box is a
+enclosures widen about fourfold per doubling, from 1.2 to 22 per cent of the
+value, as second radial differences amplify the rounding of the binary64
+interval arithmetic by $h^{-2}$. And the box is a
 box around the converged state: near a rational surface the linearized operator
 is nearly singular, so the box need not contain the exact discrete solution,
 and the collocated Newton test that would certify one passes on that surface at
@@ -656,7 +657,7 @@ floating-point comparison of VMEC++ with them is proposed upstream~\cite{pr912}.
 \paragraph{Availability.}
 The development, the certificate generators and the script that writes
 Figure~\ref{fig:conv} are at \link{https://github.com/CharlesCNorton/stellarocq},
-commit \code{1ce73cc}; \code{make all} builds the proofs and the checker,
+commit \code{225e081}; \code{make all} builds the proofs and the checker,
 \code{make audit} prints the assumptions of every theorem named here, the
 release \code{checker-1ce73cc} carries the same checker linked statically for
 x86\_64 Linux, and each generator's documentation gives the commands of its
