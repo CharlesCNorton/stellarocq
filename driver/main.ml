@@ -159,6 +159,24 @@ let jobs () =
          max 1 (int_of_string (String.trim line))
        with _ -> 1)
 
+(* Fork shard k with [spawn k] for k = 0 .. n-1 and wait for each, returning
+   the statuses in shard order. A shard's exit code is its answer, except
+   that a shard killed by a signal or ended by an uncaught exception (exit
+   2) stopped before giving one: it is forked again, at most twice more,
+   and its last status is what is returned. A shard writes its output file
+   whole, so a rerun replaces whatever a stopped run left. *)
+let run_shards n (spawn : int -> int) =
+  let rec wait k pid tries =
+    match snd (Unix.waitpid [] pid) with
+    | Unix.WEXITED c when c <> 2 -> Unix.WEXITED c
+    | st when tries >= 2 -> st
+    | _ ->
+        Printf.eprintf "shard %d stopped before its answer; running it again\n%!" k;
+        wait k (spawn k) (tries + 1) in
+  Stdlib.List.mapi (fun k pid -> wait k pid 0) (Stdlib.List.init n spawn)
+
+let all_zero sts = Stdlib.List.for_all (fun st -> st = Unix.WEXITED 0) sts
+
 (* Which conjunct of a cell check fails, for diagnosing a rejected
    certificate. Set STELLAROCQ_DEBUG to print it for the first cell. *)
 let debug_cell xu xv (c : Cell.ccert) (cl : Cell.ccell) =
@@ -874,19 +892,15 @@ let integrate_nodes prec cfg modes xu xv
     flush stdout;
     let part i = Printf.sprintf "%s.int%d" tmp i in
     let range i = (i * nb / n, (i + 1) * nb / n) in
-    let pids =
-      Stdlib.List.init n (fun i ->
+    let sts =
+      run_shards n (fun i ->
           match Unix.fork () with
           | 0 ->
               let (lo, hi) = range i in
               let oc = open_out (part i) in
               run lo hi oc; close_out oc; exit 0
           | pid -> pid) in
-    let ok =
-      Stdlib.List.fold_left (fun acc pid ->
-          match snd (Unix.waitpid [] pid) with
-          | Unix.WEXITED 0 -> acc
-          | _ -> false) true pids in
+    let ok = all_zero sts in
     if not ok then begin
       for i = 0 to n - 1 do
         if Sys.file_exists (part i) then Sys.remove (part i)
@@ -1387,8 +1401,8 @@ let run_harm ?(discrete = false) ?(wide = 0L) src =
   let jobs_n = max 1 (min (jobs ()) nv) in
   let tmp = Filename.temp_file "stellarocq" ".harm" in
   let bounds k = (k * nv / jobs_n, (k + 1) * nv / jobs_n) in
-  let pids =
-    Stdlib.List.init jobs_n (fun k ->
+  let sts =
+    run_shards jobs_n (fun k ->
         match Unix.fork () with
         | 0 ->
             let (lo, hi) = bounds k in
@@ -1402,10 +1416,7 @@ let run_harm ?(discrete = false) ?(wide = 0L) src =
             done;
             close_out oc; exit 0
         | pid -> pid) in
-  Stdlib.List.iter (fun pid ->
-      match snd (Unix.waitpid [] pid) with
-      | Unix.WEXITED 0 -> ()
-      | _ -> prerr_endline "a harmonic shard failed"; exit 3) pids;
+  if not (all_zero sts) then (prerr_endline "a harmonic shard failed"; exit 3);
   let rows = ref [] in
   for k = 0 to jobs_n - 1 do
     let (lo, hi) = bounds k in
@@ -1542,8 +1553,8 @@ let run_int_tighten src dst =
         let (e, f) = bound_for prec envv (Expr.Evar (n + len)) in
         Printf.sprintf "%Ld %Ld %Ld %Ld %Ld %Ld" a b cc d e f) in
   let tmp = dst ^ ".part" in
-  let pids =
-    Stdlib.List.init jobs_n (fun k ->
+  let sts =
+    run_shards jobs_n (fun k ->
         match Unix.fork () with
         | 0 ->
             let oc = open_out (Printf.sprintf "%s%d" tmp k) in
@@ -1554,10 +1565,7 @@ let run_int_tighten src dst =
             done;
             close_out oc; exit 0
         | pid -> pid) in
-  Stdlib.List.iter (fun pid ->
-      match snd (Unix.waitpid [] pid) with
-      | Unix.WEXITED 0 -> ()
-      | _ -> prerr_endline "a tightening shard failed"; exit 3) pids;
+  if not (all_zero sts) then (prerr_endline "a tightening shard failed"; exit 3);
   let lines = Array.make ncell "" in
   for k = 0 to jobs_n - 1 do
     let ic = open_in (Printf.sprintf "%s%d" tmp k) in
@@ -1610,8 +1618,8 @@ let run_int src =
   (* shard k takes a contiguous run of rows, so its rows_check carries the row
      index of its first row *)
   let bounds k = (k * nv / jobs_n, (k + 1) * nv / jobs_n) in
-  let pids =
-    Stdlib.List.init jobs_n (fun k ->
+  let sts =
+    run_shards jobs_n (fun k ->
         match Unix.fork () with
         | 0 ->
             let (lo, hi) = bounds k in
@@ -1623,10 +1631,7 @@ let run_int src =
             Stdlib.List.iter (fun x -> Printf.fprintf oc "%h %h\n" (ilo x) (ihi x)) tot;
             close_out oc; exit 0
         | pid -> pid) in
-  Stdlib.List.iter (fun pid ->
-      match snd (Unix.waitpid [] pid) with
-      | Unix.WEXITED 0 -> ()
-      | _ -> prerr_endline "an integration shard failed"; exit 3) pids;
+  if not (all_zero sts) then (prerr_endline "an integration shard failed"; exit 3);
   let ok = ref structural in
   let parts = ref [] in
   for k = 0 to jobs_n - 1 do
@@ -1754,8 +1759,8 @@ let bt_shards (cells : 'a array) (f : 'a -> string) =
   let jobs_n = max 1 (min (jobs ()) ncell) in
   let tmp = Filename.temp_file "stellarocq" ".bt" in
   let bounds k = (k * ncell / jobs_n, (k + 1) * ncell / jobs_n) in
-  let pids =
-    Stdlib.List.init jobs_n (fun k ->
+  let sts =
+    run_shards jobs_n (fun k ->
         match Unix.fork () with
         | 0 ->
             let (lo, hi) = bounds k in
@@ -1763,10 +1768,7 @@ let bt_shards (cells : 'a array) (f : 'a -> string) =
             for i = lo to hi - 1 do output_string oc (f cells.(i) ^ "\n") done;
             close_out oc; exit 0
         | pid -> pid) in
-  Stdlib.List.iter (fun pid ->
-      match snd (Unix.waitpid [] pid) with
-      | Unix.WEXITED 0 -> ()
-      | _ -> prerr_endline "a cell shard failed"; exit 3) pids;
+  if not (all_zero sts) then (prerr_endline "a cell shard failed"; exit 3);
   let out = Array.make ncell "" in
   for k = 0 to jobs_n - 1 do
     let (lo, hi) = bounds k in
@@ -2962,8 +2964,8 @@ let main () =
          how many indices it visited beside how many it accepted, so a split
          that lost cells stops the run instead of shrinking the number. *)
       let part i = Printf.sprintf "%s.count%d" src i in
-      let pids =
-        Stdlib.List.init n (fun i ->
+      let sts =
+        run_shards n (fun i ->
             match Unix.fork () with
             | 0 ->
                 let (lo, hi) = range i in
@@ -2977,11 +2979,7 @@ let main () =
                 Printf.fprintf oc "%d %d" !seen !c;
                 close_out oc; exit 0
             | pid -> pid) in
-      let live =
-        Stdlib.List.fold_left (fun acc pid ->
-            match snd (Unix.waitpid [] pid) with
-            | Unix.WEXITED 0 -> acc
-            | _ -> false) true pids in
+      let live = all_zero sts in
       if not live then begin
         prerr_endline
           "a counting shard failed, so its cells were never visited and the \
@@ -3027,8 +3025,8 @@ let main () =
       (!ok, !worst)
     end else begin
       let part i = Printf.sprintf "%s.max%d" src i in
-      let pids =
-        Stdlib.List.init n (fun i ->
+      let sts =
+        run_shards n (fun i ->
             match Unix.fork () with
             | 0 ->
                 let (lo, hi) = range i in
@@ -3039,11 +3037,7 @@ let main () =
                 close_out oc;
                 exit (if !ok then 0 else 1)
             | pid -> pid) in
-      let ok =
-        Stdlib.List.fold_left (fun acc pid ->
-            match snd (Unix.waitpid [] pid) with
-            | Unix.WEXITED 0 -> acc
-            | _ -> false) true pids in
+      let ok = all_zero sts in
       (* The worst bound is what the run reports, so a partial that cannot be
          read has to stop it: swallowing the read would leave that shard's
          cells out of the maximum and understate the bound while the verdict
@@ -3083,8 +3077,8 @@ let main () =
       !ok
     end else begin
       let part i = Printf.sprintf "%s.seen%d" src i in
-      let pids =
-        Stdlib.List.init n (fun i ->
+      let sts =
+        run_shards n (fun i ->
             match Unix.fork () with
             | 0 ->
                 let (lo, hi) = range i in
@@ -3099,11 +3093,7 @@ let main () =
                 close_out oc;
                 exit (if !ok then 0 else 1)
             | pid -> pid) in
-      let ok =
-        Stdlib.List.fold_left (fun acc pid ->
-            match snd (Unix.waitpid [] pid) with
-            | Unix.WEXITED 0 -> acc
-            | _ -> false) true pids in
+      let ok = all_zero sts in
       (* The count below is what says the split visited every cell, so a
          partial that cannot be read is named rather than swallowed: the
          total check would catch it either way, and it would report a lost
@@ -3363,8 +3353,8 @@ let main () =
       end in
     let nk = Array.length modes in
     let part i = Printf.sprintf "%s.proj%d" src i in
-    let pids =
-      Stdlib.List.init nb (fun node ->
+    let sts =
+      run_shards nb (fun node ->
           match Unix.fork () with
           | 0 ->
               (* one point's environment at a time: a node's worth of them does
@@ -3424,10 +3414,7 @@ let main () =
                 (Stdlib.List.rev !spec);
               close_out oc; exit 0
           | pid -> pid) in
-    Stdlib.List.iter (fun pid ->
-        match snd (Unix.waitpid [] pid) with
-        | Unix.WEXITED 0 -> ()
-        | _ -> prerr_endline "a projection failed"; exit 3) pids;
+    if not (all_zero sts) then (prerr_endline "a projection failed"; exit 3);
     Printf.printf
       "largest mean harmonic of each component over the %d modes, cosine and \
        sine, and the %d angles of a node\n%!" nk na;
@@ -3472,8 +3459,8 @@ let main () =
     if cells_mode then begin
       if tighten then begin
         let part i = Printf.sprintf "%s.part%d" dst i in
-        let pids =
-          Stdlib.List.init n (fun i ->
+        let sts =
+          run_shards n (fun i ->
               match Unix.fork () with
               | 0 ->
                   let (lo, hi) = range i in
@@ -3496,10 +3483,7 @@ let main () =
                   close_out oc;
                   exit 0
               | pid -> pid) in
-        Stdlib.List.iter (fun pid ->
-            match snd (Unix.waitpid [] pid) with
-            | Unix.WEXITED 0 -> ()
-            | _ -> exit 3) pids;
+        if not (all_zero sts) then exit 3;
         let out = ref [] in
         (* the ceiling run reports the widest cell bound; the floor run
            reports the narrowest floor, taking the best of the three
