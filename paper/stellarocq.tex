@@ -828,15 +828,15 @@ can check: bounds, harmonics, stability terms and the existence of discrete
 solutions, each a theorem about the field reconstructed from the file's exact
 numbers, whose residual is proven to be the ideal-MHD force. Its verdicts are regression tests on a branch of VMEC++ whose tolerances are the
 certified enclosures. Against Landreman's explicit
-equilibria~\cite{landreman2026}, whose family with $\iota=2$ the development
+equilibria~\cite{landreman2026}, both of whose families the development
 proves to be ideal-MHD equilibria, the same certificates measure a solver's
 error against a true equilibrium rather than a manufactured one.
 
 \paragraph{Availability.}
 The development, the certificate generators and the script that writes
 Figure~\ref{fig:conv} are at \link{https://github.com/CharlesCNorton/stellarocq},
-commit \code{bbfc4d2}; \code{make all} builds the proofs and the checker, the
-release \code{checker-bbfc4d2} carries the same checker linked statically for
+commit \code{45351f6}; \code{make all} builds the proofs and the checker, the
+release \code{checker-45351f6} carries the same checker linked statically for
 x86\_64 Linux with the certificates behind the results and their SHA-256 sums,
 and each generator's documentation gives the commands of its result. The VMEC++ tests that carry the certified values are on the branch
 of~\cite{branch}.
