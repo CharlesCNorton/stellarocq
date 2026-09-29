@@ -664,7 +664,10 @@ $(\nabla\times\mathbf{B})\times\mathbf{B}=\nabla p$ with $p=p_a-2\psi$
 with a member of either family: the cylindrical components of
 $\mathbf{B}-\mathbf{B}^*(X)$ on a half-grid surface, with $\mathbf{B}$ the
 reconstructed field and $X$ its position, and $\psi^*(X)$ on a node surface.
-VMEC++'s solution of the sheared member with $\epsilon=0.6$, $S=2.2$,
+For the family with $\iota=2$, \code{LandremanExact.v} proves that the
+expressions behind those outputs evaluate to the field and flux label of
+\code{Landreman.v} at every point where the radicand of $\mathbf{B}^*$ is
+positive (\code{exact\_b\_iota2}). VMEC++'s solution of the sheared member with $\epsilon=0.6$, $S=2.2$,
 $\lambda=2.97$ and $k_b=0.2$, whose transform runs from 4.34 to 4.37, at 13
 surfaces with $m\le11$ and $|n|\le10$, and at 25, 50, 100 and 200 surfaces,
 is certified at every point of a $64\times32$ grid of a field period on its

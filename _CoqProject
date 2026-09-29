@@ -120,4 +120,5 @@ theories/Force.v
 theories/Series.v
 theories/Recon.v
 theories/Continuum.v
+theories/LandremanExact.v
 theories/Residuals.v
