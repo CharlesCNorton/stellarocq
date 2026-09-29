@@ -115,6 +115,16 @@ let dyadic_ge (x : float) =
 
 (* ---- tokenizer ---------------------------------------------------------- *)
 
+(* A certificate that ends before its data are complete. *)
+exception Ends_early of int
+
+(* The token at p, which advances; a file that has none there ends early. *)
+let take (t : string array) (p : int ref) =
+  if !p >= Array.length t then raise (Ends_early !p);
+  let x = t.(!p) in
+  incr p;
+  x
+
 (* Whitespace-separated tokens of a file, in order. *)
 let tokens_of_file path =
   let ic = open_in_bin path in
@@ -670,6 +680,7 @@ let rewrite_filtered src dst (lines : string array) (keep : bool array) =
       output_string oc (Printf.sprintf "NANGLES %d\n" kept);
       incr i;
       for k = 0 to n - 1 do
+        if !i >= Array.length all then raise (Ends_early !i);
         if keep.(k) then output_string oc (all.(!i) ^ "\n");
         incr i
       done
@@ -907,7 +918,7 @@ let merc_tags =
 let read_mercier path =
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -1062,7 +1073,7 @@ let run_newton path mode =
   let eval_only = (mode = `Eval) in
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -1310,7 +1321,7 @@ let parse_output tok int64 =
 let read_hcert path =
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -1438,7 +1449,7 @@ let run_harm ?(discrete = false) src =
 let read_icert path =
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -1660,7 +1671,7 @@ let run_int src =
 let read_btcert path =
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -1838,7 +1849,7 @@ let run_bt_tighten src dst =
 let read_bpcert path =
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -1976,7 +1987,7 @@ let run_bp src =
 let run_qs path =
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -2206,7 +2217,7 @@ let mk_tb (a : int array) =
 let parse_cert (src : string) : pcert =
   let toks = tokens_of_file src in
   let p = ref 0 in
-  let tok () = let t = toks.(!p) in incr p; t in
+  let tok () = take toks p in
   let expect w = let t = tok () in
     if t <> w then (Printf.eprintf "expected %s, got %s (tok %d)\n" w t !p; exit 2) in
   let int64 () = Int64.of_string (tok ()) in
@@ -2523,7 +2534,7 @@ let parse_cert (src : string) : pcert =
 let run_mercier_run path =
   let t = tokens_of_file path in
   let p = ref 0 in
-  let tok () = let x = t.(!p) in incr p; x in
+  let tok () = take t p in
   let expect w =
     let x = tok () in
     if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
@@ -3860,6 +3871,10 @@ let main () =
 (* A certificate the parser cannot read, such as a truncated file, ends the
    run with its error on stderr and exit status 2, and no verdict. *)
 let () =
-  try main () with e ->
+  try main () with
+  | Ends_early n ->
+    Printf.eprintf "error: the certificate ends at entry %d, before its data are complete\n%!" n;
+    exit 2
+  | e ->
     Printf.eprintf "error: %s\n%!" (Printexc.to_string e);
     exit 2

@@ -26,6 +26,7 @@ theories/TrigPoly.v
 theories/TrigExpr.v
 theories/Harmonic.v
 theories/HalfGrid.v
+theories/VmecKernel.v
 theories/BoxCell.v
 theories/Newcomb.v
 theories/QSFloor.v

@@ -69,6 +69,12 @@ Print Assumptions Integral.check_int_correct.
 Print Assumptions HalfGrid.node_consistent.
 Print Assumptions HalfGrid.lax_second_order.
 
+From Stellarocq Require Import VmecKernel.
+Print Assumptions VmecKernel.vmec_jacobian_difference.
+Print Assumptions VmecKernel.vmec_sqrtg_difference.
+Print Assumptions VmecKernel.vmec_metric_difference.
+Print Assumptions VmecKernel.vmec_jacobian_second_order.
+
 From Stdlib Require Import ZArith Lia.
 From Stellarocq Require Import FieldKAM KDioph KFix KFinal.
 Print Assumptions field_kam.

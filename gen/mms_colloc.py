@@ -45,6 +45,13 @@ content, and that at five times the pressure.
 
   python gen/mms_colloc.py data CASE --ns 9,17,33 --out DIR --examples PATH
   python gen/mms_colloc.py certs DIR/CASE_ns17.json --main PATH
+
+The paper's problems are the annulus 1/4 < s < 1 with the m = 1 gauge fixed, CASE
+3d at 9, 17, 33 and 65 surfaces and asymmetric and high-beta at 9, 17 and 33:
+
+  python gen/mms_colloc.py data 3d --ns 9,17,33,65 --out DIR --examples PATH \\
+         --smin 0.25 --gauge
+  python gen/mms_colloc.py certs DIR/3d_ns9.json --main PATH
 """
 
 import argparse

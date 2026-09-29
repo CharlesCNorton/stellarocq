@@ -22,6 +22,13 @@ force balance for all of them at once.
   python gen/forced_sheet.py icert DIR/wout_ns129.nc cert.txt --s 0.625 \\
          --harmonic 2,1 --rel 1e-9 --nu 64 --nv 32
   main --int-tighten cert.txt cert_t.txt && main --int cert_t.txt
+
+The paper's certified (2,1) harmonic, the equispaced sum of r_s cos(2u - v) over
+a 64 by 32 grid for every state within a relative 1e-12, is Harmonic.dharm_correct:
+
+  python gen/forced_sheet.py hcert DIR/wout_ns65.nc hcert.txt --s 0.625 \\
+         --harmonic 2,1 --rel 1e-12 --nu 64 --nv 32 --output harmonic
+  main --dharm hcert.txt
 """
 
 import argparse
