@@ -39,18 +39,21 @@ Two certificates per resolution, both on Colloc.v's assembled system:
           right side is the stability constant times the consistency error
           HalfGrid.node_consistent charges.
 
-The mappings are those of VMEC++'s examples/manufactured_solution.py restricted
-to m <= 1: the three-dimensional one, the same with non-stellarator-symmetric
-content, and that at five times the pressure.
+The mappings are those of manufactured_solution.py restricted to m <= 1: the
+three-dimensional one, the same with non-stellarator-symmetric content, and that
+at five times the pressure. manufactured_solution.py beside this file is
+examples/manufactured_solution.py of VMEC++ pull request 784
+(https://github.com/proximafusion/vmecpp/pull/784) at commit fbdb696, SHA-256
+f9bca68d905f5e8889155b76cad8546581005dadb88976018ae87626e8c2338f, and
+`--examples` names another directory holding one.
 
-  python gen/mms_colloc.py data CASE --ns 9,17,33 --out DIR --examples PATH
+  python gen/mms_colloc.py data CASE --ns 9,17,33 --out DIR
   python gen/mms_colloc.py certs DIR/CASE_ns17.json --main PATH
 
 The paper's problems are the annulus 1/4 < s < 1 with the m = 1 gauge fixed, CASE
 3d at 9, 17, 33 and 65 surfaces and asymmetric and high-beta at 9, 17 and 33:
 
-  python gen/mms_colloc.py data 3d --ns 9,17,33,65 --out DIR --examples PATH \\
-         --smin 0.25 --gauge
+  python gen/mms_colloc.py data 3d --ns 9,17,33,65 --out DIR --smin 0.25 --gauge
   python gen/mms_colloc.py certs DIR/3d_ns9.json --main PATH
 """
 
@@ -895,8 +898,8 @@ def main():
     p.add_argument("case", choices=["3d", "asymmetric", "high-beta", "fitted"])
     p.add_argument("--ns", default="9,17,33")
     p.add_argument("--out", required=True)
-    p.add_argument("--examples", required=True,
-                   help="VMEC++'s examples directory, for manufactured_solution.py")
+    p.add_argument("--examples", default=str(pathlib.Path(__file__).resolve().parent),
+                   help="the directory of manufactured_solution.py, this one by default")
     p.add_argument("--smin", type=float, default=0.0,
                    help="the inner radius, held at the mapping with the boundary")
     p.add_argument("--tag", default="", help="appended to the file names")

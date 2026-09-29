@@ -1298,6 +1298,8 @@ let parse_output tok int64 =
   | "newcomb" -> pair (fun (a, b) -> Physics.RNewcomb (a, b))
   | "iota" -> pair (fun (a, b) -> Physics.RIota (a, b))
   | "coil" -> Physics.RCoil (Int64.to_int (int64 ()))
+  | "exact-field" -> Physics.RExactField (z_of_int64 (int64 ()))
+  | "exact-flux" -> Physics.RExactFlux (z_of_int64 (int64 ()))
   | s -> prerr_endline ("unknown OUTPUT " ^ s); exit 2
 
 (* STELLAROCQ-HCERT

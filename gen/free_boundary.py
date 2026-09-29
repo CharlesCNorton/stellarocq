@@ -192,6 +192,10 @@ def jump_state(a, t_only=None):
     for t, P, name in ((1.0, vac["pn"], "NESTOR"), (-1.0, vac["pb"], "BIEST")):
         err = np.abs(eval_series(mid, U, V) + t * eval_series(dif, U, V) - P).max()
         print(f"t = {t:+.0f} reproduces {name}'s grid pressure to {err:.1e}")
+    # --widen k sweeps k times the half difference, so t in [-1, 1] covers every
+    # pressure within k times the two answers' disagreement of their mean
+    k = getattr(a, "widen", 1.0)
+    dif = {mn: [k * x for x in c] for mn, c in dif.items()}
     K = len(w.xm)
     st = state(w, j, phip, 0.0) + vacuum_block(mid, dif, modes)
     if t_only is not None:
@@ -260,6 +264,8 @@ def main():
             s.add_argument("--comp", type=int, default=0, choices=[0, 1, 2],
                            help="0 the jump, 1 the plasma-side edge pressure, "
                            "2 the vacuum pressure")
+        s.add_argument("--widen", type=float, default=1.0,
+                       help="sweep this many times the half difference of the answers")
         s.add_argument("--nu", type=int, default=256)
         s.add_argument("--nv", type=int, default=64)
         s.set_defaults(fn=fn)

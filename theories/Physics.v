@@ -416,7 +416,24 @@ Inductive rout : Type :=
   | RIota (m n : Z)
   | RForced
   | REnergy
-  | RCoil (P : nat).
+  | RCoil (P : nat)
+  | RExactField (fam : Z)
+  | RExactFlux (fam : Z).
+
+(** [RExactField fam] and [RExactFlux fam] measure the reconstruction against
+    a member of Landreman's families of exact equilibria (arXiv:2609.26742),
+    whose field B* and flux label psi* are elementary functions of the
+    Cartesian position. The block after the state holds four slots: the
+    family's parameters, then a value of psi*. With [fam] 0 the member has
+    iota = 2 and parameters a and b, the field of Landreman.v; with [fam] 1
+    it is of the sheared family, with parameters eps, S and lambda.
+
+    [RExactField] is read at the outer half point, whose position, field and
+    angle derivatives are those of the half-grid rule, at X = (R cos v,
+    R sin v, Z): its components are the cylindrical components of B - B*(X),
+    the R, phi and Z ones. [RExactFlux] is read on the node surface itself,
+    R and Z the node's series: its components are psi*(X) less the value the
+    block carries, psi*(X) and R. *)
 
 (** [REnergy] is the energy density on a straight line of states x + t xi,
     at the free radius of slot 0. The certificate carries, after the state, a
@@ -579,6 +596,7 @@ Definition n_extra_slots (o : rout) (K : nat) : nat :=
   | RForced => 3
   | REnergy => 16 * K + 2
   | RCoil P => 6 * P
+  | RExactField _ | RExactFlux _ => 4
   | _ => 0
   end.
 
@@ -2672,6 +2690,138 @@ Definition coil_b (b : builder) (lasym : bool) (modes : list (Z * Z)) (K P : nat
   let (b, sn) := alloc b (Ediv bn (Esqrt (Emul b2 nn))) in
   Residual3 (bindings_of b) sn bn b2.
 
+(* ---------------------------------------------------------------- *)
+(* Landreman's exact equilibria                                      *)
+
+(** The Cartesian field and psi of the member at (x, y, z), from the block
+    after the state. With [fam] 0 and a, b in its first two slots,
+
+      s = x^2 / a^2 + y^2 / b^2,   F = sqrt(1 - (1 - s)^2 - 4 z^2),
+      B = ((2 z x - (a/b) F y) / s, (2 z y + (b/a) F x) / s, 1 - s),
+      psi = (x^2 + y^2 + 4 z^2 + |B|^2 - 2 + eps^2) / 4,  eps = (a^2 - b^2) / 2,
+
+    the functions of Landreman.v. With [fam] 1 and eps, S, lambda there, the
+    complex quantities of Landreman's section 3 in real and imaginary parts:
+    K = conj(w) sqrt(1 + eps / conj(w)^2) with w = x + i y and the principal
+    square root, Xi = w K + pi/2 - S, B_x + i B_y = e^(-i lambda z) i sin(Xi)
+    / (2 K), B_z = Re(e^(-i lambda z) cos Xi) / lambda and
+    psi = (sin^2(lambda z) + (lambda B_z)^2) / 2. *)
+Definition exact_b (b : builder) (lasym : bool) (K : nat) (fam : Z) (x y z : expr)
+    : builder * (expr * expr * expr * expr) :=
+  let p0 := slot_vac lasym K 0 in
+  let p1 := slot_vac lasym K 1 in
+  let p2 := slot_vac lasym K 2 in
+  let (b, x2) := alloc b (esq x) in
+  let (b, y2) := alloc b (esq y) in
+  if Z.eqb fam 0 then
+    let (b, s) := alloc b (Eadd (Ediv x2 (esq p0)) (Ediv y2 (esq p1))) in
+    let (b, oms) := alloc b (Esub e1 s) in
+    let (b, rad) := alloc b (Esub (Esub e1 (esq oms)) (Emul e4 (esq z))) in
+    let (b, F) := alloc b (Esqrt rad) in
+    let (b, Bx) := alloc b (Ediv (Esub (Emul e2 (Emul z x)) (Emul (Ediv p0 p1) (Emul F y))) s) in
+    let (b, By) := alloc b (Ediv (Eadd (Emul e2 (Emul z y)) (Emul (Ediv p1 p0) (Emul F x))) s) in
+    let (b, eps) := alloc b (Ediv (Esub (esq p0) (esq p1)) e2) in
+    let (b, psi) := alloc b (Ediv (Eadd (Eadd (Eadd x2 y2) (Emul e4 (esq z)))
+                                        (Esub (Eadd (Eadd (esq Bx) (esq By)) (esq oms))
+                                              (Esub e2 (esq eps)))) e4) in
+    (b, (Bx, By, oms, psi))
+  else
+    let (b, r2) := alloc b (Eadd x2 y2) in
+    let (b, r4) := alloc b (esq r2) in
+    let (b, Tr) := alloc b (Eadd e1 (Ediv (Emul p0 (Esub x2 y2)) r4)) in
+    let (b, Ti) := alloc b (Ediv (Emul p0 (Emul e2 (Emul x y))) r4) in
+    let (b, Tm) := alloc b (Esqrt (Eadd (esq Tr) (esq Ti))) in
+    let (b, m) := alloc b (Esqrt (Ediv (Eadd Tm Tr) e2)) in
+    let (b, n) := alloc b (Ediv Ti (Emul e2 m)) in
+    let (b, Kr) := alloc b (Eadd (Emul x m) (Emul y n)) in
+    let (b, Ki) := alloc b (Esub (Emul x n) (Emul y m)) in
+    let (b, Xr) := alloc b (Eadd (Esub (Emul x Kr) (Emul y Ki)) (Esub (Ediv Epi e2) p1)) in
+    let (b, Xi) := alloc b (Eadd (Emul x Ki) (Emul y Kr)) in
+    let (b, ep) := alloc b (Eexp Xi) in
+    let (b, em) := alloc b (Eexp (Eneg Xi)) in
+    let (b, ch) := alloc b (Ediv (Eadd ep em) e2) in
+    let (b, sh) := alloc b (Ediv (Esub ep em) e2) in
+    let (b, sX) := alloc b (Esin Xr) in
+    let (b, cX) := alloc b (Ecos Xr) in
+    (* sin Xi = sr + i si and cos Xi = cr + i ci *)
+    let (b, sr) := alloc b (Emul sX ch) in
+    let (b, si) := alloc b (Emul cX sh) in
+    let (b, cr) := alloc b (Emul cX ch) in
+    let (b, ci) := alloc b (Eneg (Emul sX sh)) in
+    (* W = i sin Xi / (2 K) *)
+    let (b, K2) := alloc b (Emul e2 (Eadd (esq Kr) (esq Ki))) in
+    let (b, Wr) := alloc b (Ediv (Eadd (Emul (Eneg si) Kr) (Emul sr Ki)) K2) in
+    let (b, Wi) := alloc b (Ediv (Eadd (Emul sr Kr) (Emul si Ki)) K2) in
+    let (b, lz) := alloc b (Emul p2 z) in
+    let (b, cz) := alloc b (Ecos lz) in
+    let (b, sz) := alloc b (Esin lz) in
+    let (b, Bx) := alloc b (Eadd (Emul cz Wr) (Emul sz Wi)) in
+    let (b, By) := alloc b (Esub (Emul cz Wi) (Emul sz Wr)) in
+    let (b, Pz) := alloc b (Eadd (Emul cz cr) (Emul sz ci)) in
+    let (b, Bz) := alloc b (Ediv Pz p2) in
+    let (b, psi) := alloc b (Ediv (Eadd (esq sz) (esq Pz)) e2) in
+    (b, (Bx, By, Bz, psi)).
+
+(** Z at a half point, from its coefficients and the kernels of the modes. *)
+Definition zhalf_b (b : builder) (lasym : bool) (mk : list (Z * Z * (expr * expr)))
+    (hc : half_coefs) : builder * expr :=
+  let over {A : Type} (l : list A) (f : Z * Z * (expr * expr) -> A -> expr) :=
+    map (fun p => f (fst p) (snd p)) (combine mk l) in
+  sum_b b (over (hc_Z hc) (fun x c => Emul (c_val c) (snd (snd x)))
+           ++ (if lasym then over (hc_Za hc) (fun x c => Emul (c_val c) (fst (snd x)))
+               else [])).
+
+(** B - B*(X) at the outer half point, in cylindrical components. *)
+Definition exact_field_b (b : builder) (lasym : bool) (modes : list (Z * Z)) (K : nat)
+    (fam : Z) : residual3 :=
+  let (b, hcp) := half_coefs_b b lasym modes K 1 2 1 slot_s_j slot_s_b slot_s_hp in
+  let (b, ku) := zkernels_b b vU (nodup Z.eq_dec (map fst modes)) in
+  let (b, kv) := zkernels_b b vV (nodup Z.eq_dec (map snd modes)) in
+  let (b, mk) := modek_b b ku kv modes in
+  let (b, jp) := jpart_b b lasym mk hcp in
+  let (b, Zh) := zhalf_b b lasym mk hcp in
+  let (b, tau) := alloc b (Esub (Emul (jp_Ru jp) (jp_Zs jp)) (Emul (jp_Rs jp) (jp_Zu jp))) in
+  let (b, sg) := alloc b (Emul (jp_R jp) tau) in
+  let (b, Bu) := alloc b (Ediv (Emul vPhip (Esub slot_iota_p (jp_Lv jp))) sg) in
+  let (b, Bv) := alloc b (Ediv (Emul vPhip (Eadd e1 (jp_Lu jp))) sg) in
+  let (b, BR) := alloc b (Eadd (Emul Bu (jp_Ru jp)) (Emul Bv (jp_Rv jp))) in
+  let (b, BP) := alloc b (Emul Bv (jp_R jp)) in
+  let (b, BZ) := alloc b (Eadd (Emul Bu (jp_Zu jp)) (Emul Bv (jp_Zv jp))) in
+  let (b, cv) := alloc b (Ecos vV) in
+  let (b, sv) := alloc b (Esin vV) in
+  let (b, x) := alloc b (Emul (jp_R jp) cv) in
+  let (b, y) := alloc b (Emul (jp_R jp) sv) in
+  let (b, e) := exact_b b lasym K fam x y Zh in
+  let '(Bx, By, Bz, _) := e in
+  let (b, dR) := alloc b (Esub BR (Eadd (Emul Bx cv) (Emul By sv))) in
+  let (b, dP) := alloc b (Esub BP (Esub (Emul By cv) (Emul Bx sv))) in
+  let (b, dZ) := alloc b (Esub BZ Bz) in
+  Residual3 (bindings_of b) dR dP dZ.
+
+(** psi*(X) on the node surface, less the value the block carries. *)
+Definition exact_flux_b (b : builder) (lasym : bool) (modes : list (Z * Z)) (K : nat)
+    (fam : Z) : residual3 :=
+  let (b, ku) := zkernels_b b vU (nodup Z.eq_dec (map fst modes)) in
+  let (b, kv) := zkernels_b b vV (nodup Z.eq_dec (map snd modes)) in
+  let (b, mk) := modek_b b ku kv modes in
+  let row (base : nat) := map (fun k => slot_node base K 1 k) (seq 0 K) in
+  let over (f : Z * Z * (expr * expr) -> expr -> expr) (base : nat) :=
+    map (fun p => f (fst p) (snd p)) (combine mk (row base)) in
+  let (b, Rn) := sum_b b (over (fun x c => Emul c (fst (snd x))) (base_R K)
+                          ++ (if lasym then over (fun x c => Emul c (snd (snd x))) (base_Ra K)
+                              else [])) in
+  let (b, Zn) := sum_b b (over (fun x c => Emul c (snd (snd x))) (base_Z K)
+                          ++ (if lasym then over (fun x c => Emul c (fst (snd x))) (base_Za K)
+                              else [])) in
+  let (b, cv) := alloc b (Ecos vV) in
+  let (b, sv) := alloc b (Esin vV) in
+  let (b, x) := alloc b (Emul Rn cv) in
+  let (b, y) := alloc b (Emul Rn sv) in
+  let (b, e) := exact_b b lasym K fam x y Zn in
+  let '(_, _, _, psi) := e in
+  let (b, d) := alloc b (Esub psi (slot_vac lasym K 3)) in
+  Residual3 (bindings_of b) d psi Rn.
+
 (** The mu0-scaled force residual: r_s at the node from the centered
     differences and averages of its two half points, r_u and r_v at the
     outer half point. *)
@@ -2891,6 +3041,8 @@ Definition residual_tail (cfg : pconfig) (modes : list (Z * Z)) (st : rstate)
   | RIota _ _ => Residual3 (bindings_of b) rs ru rv
   | REnergy => Residual3 (bindings_of b) rs ru rv
   | RCoil _ => Residual3 (bindings_of b) rs ru rv
+  | RExactField _ => Residual3 (bindings_of b) rs ru rv
+  | RExactFlux _ => Residual3 (bindings_of b) rs ru rv
   | RForced =>
       let (b, fs) := alloc b (Esub rs (slot_src lasym K 0)) in
       let (b, fu) := alloc b (Esub ru (slot_src lasym K 1)) in
@@ -2920,6 +3072,8 @@ Definition residual (cfg : pconfig) (modes : list (Z * Z)) : residual3 :=
        | RIota hm hn => iota_b b hm hn
        | REnergy => energy_b b lasym modes K (pc_prof cfg)
        | RCoil P => coil_b b lasym modes K P
+       | RExactField f => exact_field_b b lasym modes K f
+       | RExactFlux f => exact_flux_b b lasym modes K f
        | _ => residual_tail cfg modes (residual_pre cfg modes)
        end.
 
