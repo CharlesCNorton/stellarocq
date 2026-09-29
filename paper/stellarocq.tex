@@ -328,7 +328,7 @@ floating-point numbers are named as such.
 \cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.86$, $1.88$, $1.81$, $1.72$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{the same with the file's centred radial differences\newline\code{merc\_run\_q\_correct}} & \cellC{$[-6.421,-6.366]\times10^{-4}$ and $[1.711,1.875]\times10^{-3}$} \\[2pt]
-\cellA{Landreman's sheared equilibrium, 13/25/50/100 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.66\times10^{-7}$; $4.34\times10^{-6}$, $1.11\times10^{-7}$, $1.01\times10^{-7}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\
+\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.66\times10^{-7}$; $4.34\times10^{-6}$, $1.11\times10^{-7}$, $1.01\times10^{-7}$; $3.33\times10^{-6}$, $2.53\times10^{-8}$, $2.11\times10^{-8}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\
 \hline
 \end{tabular}
 \caption{Certified results on the manufactured problems and on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
@@ -664,20 +664,22 @@ $\mathbf{B}-\mathbf{B}^*(X)$ on a half-grid surface, with $\mathbf{B}$ the
 reconstructed field and $X$ its position, and $\psi^*(X)$ on a node surface.
 VMEC++'s solution of the sheared member with $\epsilon=0.6$, $S=2.2$,
 $\lambda=2.97$ and $k_b=0.2$, whose transform runs from 4.34 to 4.37, at 13
-surfaces with $m\le11$ and $|n|\le10$, and at 25, 50 and 100 surfaces, is
-certified at every point of a $64\times32$ grid of a field period on its
+surfaces with $m\le11$ and $|n|\le10$, and at 25, 50, 100 and 200 surfaces,
+is certified at every point of a $64\times32$ grid of a field period on its
 innermost, middle and outermost half-grid surfaces, where $|\mathbf{B}^*|$ lies
 between 0.30 and 0.38~T. On the outermost the largest component of
 $\mathbf{B}-\mathbf{B}^*$ is at most $8.25\times10^{-6}$, $2.00\times10^{-6}$,
-$5.66\times10^{-7}$ and $1.01\times10^{-7}$~T at 13, 25, 50 and 100 surfaces,
-and on the middle one, at $s$ near $1/2$, $1.32\times10^{-5}$,
-$2.93\times10^{-6}$, $5.39\times10^{-7}$ and $1.11\times10^{-7}$~T, falling 3.5
-to 5.6-fold per doubling; on the innermost, at $s=0.125$, $0.062$, $0.031$ and
-$0.015$, it is at most $2.94\times10^{-5}$, $1.36\times10^{-5}$,
-$5.61\times10^{-6}$ and $4.34\times10^{-6}$~T, and stops falling at the axis.
-The outermost node surfaces lie within $2.32\times10^{-7}$,
-$4.94\times10^{-8}$, $1.77\times10^{-8}$ and $1.69\times10^{-9}$ of a level
-set of $\psi^*$, whose value at the boundary is $0.02$.
+$5.66\times10^{-7}$, $1.01\times10^{-7}$ and $2.11\times10^{-8}$~T at 13, 25,
+50, 100 and 200 surfaces, and on the middle one, at $s$ near $1/2$,
+$1.32\times10^{-5}$, $2.93\times10^{-6}$, $5.39\times10^{-7}$,
+$1.11\times10^{-7}$ and $2.53\times10^{-8}$~T, falling 3.5 to 5.6-fold per
+doubling; on the innermost, at $s=0.125$, $0.062$, $0.031$, $0.015$ and
+$0.008$, it is at most $2.94\times10^{-5}$, $1.36\times10^{-5}$,
+$5.61\times10^{-6}$, $4.34\times10^{-6}$ and $3.33\times10^{-6}$~T, and stops
+falling at the axis. The outermost node surfaces lie within
+$2.32\times10^{-7}$, $4.94\times10^{-8}$, $1.77\times10^{-8}$,
+$1.69\times10^{-9}$ and $1.70\times10^{-10}$ of a level set of $\psi^*$, whose
+value at the boundary is $0.02$.
 
 \paragraph{Use in VMEC++.}
 The certified values are regression tests on a branch of VMEC++~\cite{branch},
