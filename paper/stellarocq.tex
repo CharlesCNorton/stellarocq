@@ -633,7 +633,13 @@ doubling, approaching the factor $\sqrt2$ of a decay as the square
 root of the radial step, while the axisymmetric harmonics $(2,0)$ and $(1,0)$ of
 the same reconstruction fall 3.7 to 4.1-fold per doubling in floating point up to
 513 surfaces, and 3.8 and 2.3-fold from 513 to 1025, and the $(3,1)$ sideband
-1.24 to 1.44-fold per doubling (Figure~\ref{fig:conv}b). The same ripple on a transform
+1.24 to 1.44-fold per doubling (Figure~\ref{fig:conv}b). In floating point the
+harmonic forms a layer about the rational surface, positive inside it and
+negative outside, whose extremes stay of order $10^{-4}$~T$^2$ while their
+separation shrinks only as $h^{1/2}$, from 0.156 to 0.033 in $s$ between 65 and
+1025 surfaces, and whose zero lies a fixed 2.4 to 3.9 radial steps outside the
+rational surface, so that the value on that surface, the layer's slope times
+the offset, falls as $h^{1/2}$. The same ripple on a transform
 profile with no low-order rational surface nearby leaves nothing behind. This is
 the response of a nested-surface field at a rational
 surface~\cite{grad1967,hahm1985,loizu2015b}, whose ideal limit is a current
@@ -747,7 +753,14 @@ $5.61\times10^{-6}$, $4.35\times10^{-6}$ and $3.34\times10^{-6}$~T, and stops
 falling at the axis. The outermost node surfaces lie within
 $2.32\times10^{-7}$, $4.95\times10^{-8}$, $1.77\times10^{-8}$,
 $1.70\times10^{-9}$ and $1.71\times10^{-10}$ of a level set of $\psi^*$, whose
-value at the boundary is $0.02$.
+value at the boundary is $0.02$. Against the member with $\iota=2$, whose every
+surface is rational, VMEC++'s field does not converge: in floating point its
+distance from $\mathbf{B}^*$ at mid-radius is $8.4\times10^{-4}$,
+$2.3\times10^{-4}$, $1.9\times10^{-3}$ and $1.9\times10^{-4}$~T at 13, 25, 50
+and 100 surfaces, with 77 to 86 per cent of its spectral power in the
+resonant harmonics, which
+bend no field line when $\iota=2$ on every surface, so that VMEC's energy is
+flat along them.
 
 \paragraph{Use in VMEC++.}
 The certified values are regression tests on a branch of VMEC++~\cite{branch},

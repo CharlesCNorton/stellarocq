@@ -31,6 +31,15 @@ the three wouts of `solve`:
   python gen/forced_sheet.py hcert DIR/wout_ns65.nc hcert.txt --s 0.625 \\
          --harmonic 2,1 --rel 0 --nu 64 --nv 32 --output harmonic
   main --dharm hcert.txt
+
+With the rows of the grid at 256 bits (WideHarm.wdharm_b_correct), at 65 to
+1025 surfaces: `main --dharm-wide 256 hcert.txt`. `spectrum` prints the same
+sums in floating point for other harmonics, and `layer` the resonant harmonic
+at the nodes about the rational surface, the layer whose width falls as
+h^(1/2):
+
+  python gen/forced_sheet.py spectrum DIR/wout_ns65.nc
+  python gen/forced_sheet.py layer DIR/wout_ns1025.nc --width 40 --step 2
 """
 
 import argparse
@@ -228,6 +237,29 @@ def cmd_spectrum(a):
         print(f"({hm},{hn}) {weight * float((rs * kern).sum()):.6e}")
 
 
+def cmd_layer(a):
+    """The (2,1) harmonic of r_s, the same equispaced sum as spectrum, at every
+    node within --width of the rational node in steps of --step: the layer the
+    discrete solution forms about the rational surface, in floating point."""
+    from make_cert import residual_ref
+
+    w = Wout(a.wout)
+    calibrate_pressure(w)
+    phip = float(w.phips[1])
+    j0 = round((w.ns - 1) * a.s)
+    hm, hn = (int(x) for x in a.harmonic.split(","))
+    us = 2 * np.pi * np.arange(a.nu) / a.nu
+    vs = 2 * np.pi * np.arange(a.nv) / a.nv
+    kern = np.cos(hm * us[:, None] - hn * vs[None, :])
+    weight = (2 * np.pi / a.nu) * (2 * np.pi / a.nv)
+    print(f"{pathlib.Path(a.wout).name}: ({hm},{hn}) harmonic of r_s by node offset from "
+          f"node {j0} of ns = {w.ns}")
+    for d in range(-a.width, a.width + 1, a.step):
+        j = j0 + d
+        rs = np.array([[residual_ref(w, j, u, v, phip)[0] for v in vs] for u in us])
+        print(f"{d:+4d} {w.s_full[j]:.6f} {weight * float((rs * kern).sum()):+.6e}", flush=True)
+
+
 def cmd_solve(a):
     from resonance import solve
 
@@ -328,6 +360,15 @@ def main():
     p.add_argument("--nu", type=int, default=64)
     p.add_argument("--nv", type=int, default=32)
     p.set_defaults(fn=cmd_spectrum)
+    q = sub.add_parser("layer", help="print the resonant harmonic of r_s about the rational surface")
+    q.add_argument("wout")
+    q.add_argument("--s", type=float, default=0.625)
+    q.add_argument("--harmonic", default="2,1")
+    q.add_argument("--width", type=int, default=40)
+    q.add_argument("--step", type=int, default=2)
+    q.add_argument("--nu", type=int, default=64)
+    q.add_argument("--nv", type=int, default=32)
+    q.set_defaults(fn=cmd_layer)
     a = ap.parse_args()
     return a.fn(a)
 

@@ -33,6 +33,13 @@ certificates of every surface and component, and writes DIR/summary.json;
 `points` certifies each component at the points of a grid of a field period
 (STELLAROCQ-BPCERT, BoxCell.check_bpcert_correct) on every surface and writes
 DIR/points.json.
+
+  python gen/landreman.py spectrum WOUT iota2 --eps 0.25 --iota -2
+
+`spectrum` splits B - B* on the middle and outermost half-grid surfaces into
+Fourier harmonics in floating point, and prints the largest and the share of
+the spectral power in the harmonics resonant with --iota (VMEC's sign), which
+for the member with iota = 2 is where VMEC++'s error lies.
 """
 
 import argparse
@@ -324,9 +331,58 @@ def cmd_run(a):
          "rows": rows}, indent=1))
 
 
+def cmd_spectrum(a):
+    """The Fourier harmonics of B - B* on half-grid surfaces, in floating
+    point: the largest, and the share of the spectral power in the harmonics
+    resonant with a transform iota, m iota = n nfp in VMEC's convention."""
+    w = Wout(a.wout)
+    calibrate_pressure(w)
+    p = params(a.family, a)
+    phip = float(w.phips[1])
+    nfp = nfp_of(w)
+    nu, nv = a.nu, a.nv
+    u = 2 * np.pi * np.arange(nu) / nu
+    v = 2 * np.pi / nfp * np.arange(nv) / nv
+    U, V = np.meshgrid(u, v, indexing="ij")
+    nodes = [int(x) for x in a.nodes.split(",")] if a.nodes else [(w.ns - 1) // 2, w.ns - 2]
+    for j in nodes:
+        comps = field_ref(w, j, U.ravel(), V.ravel(), a.family, p, phip)[:3]
+        spec, tot, res = {}, 0.0, 0.0
+        for comp in comps:
+            F = np.fft.fft2(comp.reshape(nu, nv)) / (nu * nv)
+            for i in range(nu):
+                for k in range(nv):
+                    m = i if i <= nu // 2 else i - nu
+                    n = -(k if k <= nv // 2 else k - nv)
+                    if m < 0 or (m == 0 and n < 0):
+                        m, n = -m, -n
+                    power = abs(F[i, k]) ** 2
+                    spec[(m, n)] = spec.get((m, n), 0.0) + power
+                    tot += power
+                    if m != 0 and abs(m * a.iota - n * nfp) < 1e-9:
+                        res += power
+        top = sorted(spec.items(), key=lambda kv: -kv[1])[:5]
+        err = float(np.sqrt(sum(c**2 for c in comps)).max())
+        print(f"{pathlib.Path(a.wout).name} s {w.s_half[j + 1]:.3f}: max |B - B*| {err:.2e}, "
+              f"resonant share {res / tot:.3f}; largest (m,n): "
+              + ", ".join(f"({m},{n}) {np.sqrt(e):.1e}" for (m, n), e in top), flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("spectrum")
+    s.add_argument("wout")
+    s.add_argument("family", choices=list(FAMILY))
+    s.add_argument("--eps", type=float, required=True)
+    s.add_argument("--S", type=float, default=0.0)
+    s.add_argument("--lam", type=float, default=0.0)
+    s.add_argument("--iota", type=float, default=-2.0,
+                   help="the transform the resonance is taken against, VMEC's sign")
+    s.add_argument("--nu", type=int, default=64)
+    s.add_argument("--nv", type=int, default=64)
+    s.add_argument("--nodes", default="")
+    s.set_defaults(fn=cmd_spectrum)
     for name, fn in (("survey", cmd_survey), ("run", cmd_run), ("points", cmd_points)):
         s = sub.add_parser(name)
         s.add_argument("wout")
