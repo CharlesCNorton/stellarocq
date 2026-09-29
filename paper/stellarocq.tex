@@ -40,10 +40,11 @@ Fourier harmonic, a flux-surface integral or a Mercier term, is decided by a
 checker extracted from a Rocq proof that a passing verdict implies the claim.
 The certificates give the error of the half-grid rule on manufactured problems
 to a relative $10^{-12}$, falling by factors of 3.7 to 4.0 per halving of the
-radial step away from the axis. On VMEC++ output they bound away from zero a
-harmonic of the force at a rational surface that changes by at most a factor
-1.5 per doubling of the surfaces from 65 to 257, where the other harmonics fall
-3.8 to 5.3-fold, and they enclose the free-boundary pressure jump for every
+radial step away from the axis. On VMEC++ output they bound away from zero, at
+65 to 1025 surfaces, a harmonic of the force at a rational surface that falls at
+most 1.41-fold per doubling of the surfaces, approaching the square root of the
+radial step, where the axisymmetric harmonics fall about fourfold, and they
+enclose the free-boundary pressure jump for every
 vacuum field whose pressure lies at each point between the answers of NESTOR
 and BIEST. Against one of Landreman's exact three-dimensional equilibria they
 bound the difference between VMEC++'s field and the exact field at every point
@@ -188,7 +189,14 @@ Where every node difference in the identity is at most $K|h|$, the two
 Jacobian factors agree to within ${\textstyle\frac14}(Kh)^2(1+s_h^{-1/2})$
 (\code{vmec\_jacobian\_second\_order}). The certified field is the
 reconstruction's, and VMEC's discrete field differs from it by these terms of
-second order in the radial step.
+second order in the radial step. Evaluated in floating point on the files of
+Section~\ref{sec:results} (\code{gen/jacobian\_gap.py}), the two Jacobians, and
+so the two $\sqg$ (\code{vmec\_sqrtg\_difference}), differ by at most a relative
+$6.3\times10^{-7}$, $1.7\times10^{-7}$, $4.2\times10^{-8}$, $4.5\times10^{-9}$
+and $1.2\times10^{-9}$ on the surfaces with $s\ge1/4$ of Landreman's sheared
+equilibrium at 13, 25, 50, 100 and 200 surfaces, and by at most
+$1.1\times10^{-6}$ on every half-grid surface whose nodes lie off the axis; on
+the Solov'ev equilibrium the largest is $9.1\times10^{-7}$.
 
 \paragraph{Identities.}
 The representation builds some properties in, and for the reconstruction they
@@ -320,7 +328,7 @@ called certified is an enclosure that a passing verdict proves, rounded outward.
 \cellA{manufactured, 3D} & \cellB{$\max|x_h-x^*|$, 9/17/33/65 surfaces\newline\code{colloc\_correct}} & \cellC{$2.73432936829\times10^{-6}$, $7.16912170772\times10^{-7}$, $1.83032585742\times10^{-7}$, $4.6074819334\times10^{-8}$} \\[2pt]
 \cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057043\times10^{-5}$, $7.20667053290\times10^{-6}$, $1.86266877703\times10^{-6}$} \\[2pt]
 \cellA{Solov'ev, 1--3 surfaces} & \cellB{zero of the collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one, in boxes of radius $6.0\times10^{-10}$ to $7.7\times10^{-9}$} \\[2pt]
-\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state and over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.34,8.46]$, $[8.67,9.08]$, $[6.19,7.77]\times10^{-5}$~T$^2$; over the box $[8.29,8.51]$, $[8.45,9.29]$, $[5.32,8.64]\times10^{-5}$~T$^2$} \\[2pt]
+\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state, 65/129/257/513/1025 surfaces, at 256 bits\newline\code{wdharm\_b\_correct}; over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$8.9208$, $8.9310$, $7.4567$, $5.3557$ and 3.8084$\times10^{-5}$~T$^2$, each to a relative $2\times10^{-12}$; over the box $[8.81,9.03]$, $[8.51,9.35]$, $[5.80,9.11]\times10^{-5}$~T$^2$} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]\times10^{-4}$~T$^2$, $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.87$, $1.89$, $1.81$, $1.73$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
@@ -458,44 +466,74 @@ discrete problem that contains the axis.
 \put(260,4){\makebox(0,0)[b]{\footnotesize surfaces}}
 \put(260,160){\makebox(0,0)[b]{\footnotesize (b) rippled tokamak, $\iota=1/2$}}
 \put(200,145){\makebox(0,0)[bl]{\scriptsize harmonic of $r_s$}}
-\put(213.8,30){\line(0,1){3}}
-\put(213.8,137){\line(0,1){3}}
-\put(213.8,26){\makebox(0,0)[t]{\scriptsize 65}}
+\put(207.8,30){\line(0,1){3}}
+\put(207.8,137){\line(0,1){3}}
+\put(207.8,26){\makebox(0,0)[t]{\scriptsize 65}}
+\put(233.9,30){\line(0,1){3}}
+\put(233.9,137){\line(0,1){3}}
+\put(233.9,26){\makebox(0,0)[t]{\scriptsize 129}}
 \put(260,30){\line(0,1){3}}
 \put(260,137){\line(0,1){3}}
-\put(260,26){\makebox(0,0)[t]{\scriptsize 129}}
-\put(306.2,30){\line(0,1){3}}
-\put(306.2,137){\line(0,1){3}}
-\put(306.2,26){\makebox(0,0)[t]{\scriptsize 257}}
-\put(200,54.8){\line(1,0){3}}
-\put(317,54.8){\line(1,0){3}}
-\put(197,54.8){\makebox(0,0)[r]{\scriptsize $10^{-4}$}}
-\put(200,90.3){\line(1,0){3}}
-\put(317,90.3){\line(1,0){3}}
-\put(197,90.3){\makebox(0,0)[r]{\scriptsize $10^{-3}$}}
-\put(200,125.8){\line(1,0){3}}
-\put(317,125.8){\line(1,0){3}}
-\put(197,125.8){\makebox(0,0)[r]{\scriptsize $10^{-2}$}}
-\qbezier(213.8,52.2)(236.9,52.6)(260,53)
-\qbezier(260,53)(283.1,51.1)(306.2,49.3)
-\put(213.8,52.2){\makebox(0,0){$\scriptstyle\diamond$}}
-\put(260,53){\makebox(0,0){$\scriptstyle\diamond$}}
-\put(306.2,49.3){\makebox(0,0){$\scriptstyle\diamond$}}
-\qbezier[20](213.8,107.6)(236.9,97)(260,86.4)
-\qbezier[20](260,86.4)(283.1,75.7)(306.2,64.9)
-\put(213.8,107.6){\circle{3.5}}
-\put(260,86.4){\circle{3.5}}
-\put(306.2,64.9){\circle{3.5}}
-\qbezier[20](213.8,87.2)(236.9,76.8)(260,66.4)
-\qbezier[21](260,66.4)(283.1,53.5)(306.2,40.7)
-\put(212.3,85.7){\rule{3pt}{3pt}}
-\put(258.5,64.9){\rule{3pt}{3pt}}
-\put(304.7,39.2){\rule{3pt}{3pt}}
-\qbezier[18](213.8,52)(236.9,50.3)(260,48.7)
-\qbezier[18](260,48.7)(283.1,46.5)(306.2,44.4)
-\put(213.8,52){\makebox(0,0){$\scriptscriptstyle\triangle$}}
-\put(260,48.7){\makebox(0,0){$\scriptscriptstyle\triangle$}}
-\put(306.2,44.4){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(260,26){\makebox(0,0)[t]{\scriptsize 257}}
+\put(286.1,30){\line(0,1){3}}
+\put(286.1,137){\line(0,1){3}}
+\put(286.1,26){\makebox(0,0)[t]{\scriptsize 513}}
+\put(312.2,30){\line(0,1){3}}
+\put(312.2,137){\line(0,1){3}}
+\put(312.2,26){\makebox(0,0)[t]{\scriptsize 1025}}
+\put(200,49.4){\line(1,0){3}}
+\put(317,49.4){\line(1,0){3}}
+\put(197,49.4){\makebox(0,0)[r]{\scriptsize $10^{-5}$}}
+\put(200,81.8){\line(1,0){3}}
+\put(317,81.8){\line(1,0){3}}
+\put(197,81.8){\makebox(0,0)[r]{\scriptsize $10^{-4}$}}
+\put(200,114.1){\line(1,0){3}}
+\put(317,114.1){\line(1,0){3}}
+\put(197,114.1){\makebox(0,0)[r]{\scriptsize $10^{-3}$}}
+\qbezier(207.8,80.2)(220.9,80.2)(233.9,80.2)
+\qbezier(233.9,80.2)(247,78.9)(260,77.6)
+\qbezier(260,77.6)(273,75.3)(286.1,73)
+\qbezier(286.1,73)(299.1,70.6)(312.2,68.2)
+\put(207.8,80.2){\makebox(0,0){$\scriptstyle\diamond$}}
+\put(233.9,80.2){\makebox(0,0){$\scriptstyle\diamond$}}
+\put(260,77.6){\makebox(0,0){$\scriptstyle\diamond$}}
+\put(286.1,73){\makebox(0,0){$\scriptstyle\diamond$}}
+\put(312.2,68.2){\makebox(0,0){$\scriptstyle\diamond$}}
+\qbezier[13](207.8,129.9)(220.9,120.2)(233.9,110.5)
+\qbezier[13](233.9,110.5)(247,100.7)(260,91)
+\qbezier[12](260,91)(273,81.4)(286.1,71.7)
+\qbezier[12](286.1,71.7)(299.1,62.3)(312.2,52.8)
+\put(207.8,129.9){\circle{3.5}}
+\put(233.9,110.5){\circle{3.5}}
+\put(260,91){\circle{3.5}}
+\put(286.1,71.7){\circle{3.5}}
+\put(312.2,52.8){\circle{3.5}}
+\qbezier[13](207.8,111.3)(220.9,101.5)(233.9,91.8)
+\qbezier[13](233.9,91.8)(247,81.8)(260,71.8)
+\qbezier[12](260,71.8)(273,62.6)(286.1,53.4)
+\qbezier[11](286.1,53.4)(299.1,47.7)(312.2,41.9)
+\put(206.3,109.8){\rule{3pt}{3pt}}
+\put(232.4,90.3){\rule{3pt}{3pt}}
+\put(258.5,70.3){\rule{3pt}{3pt}}
+\put(284.6,51.9){\rule{3pt}{3pt}}
+\put(310.7,40.4){\rule{3pt}{3pt}}
+\qbezier[10](207.8,79.7)(220.9,78.2)(233.9,76.7)
+\qbezier[10](233.9,76.7)(247,74.8)(260,72.9)
+\qbezier[10](260,72.9)(273,70.6)(286.1,68.2)
+\qbezier[10](286.1,68.2)(299.1,65.7)(312.2,63.1)
+\put(207.8,79.7){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(233.9,76.7){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(260,72.9){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(286.1,68.2){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\put(312.2,63.1){\makebox(0,0){$\scriptscriptstyle\triangle$}}
+\qbezier(260,85.4)(262,85)(263.9,84.7)
+\qbezier(266.9,84.1)(268.8,83.7)(270.8,83.4)
+\qbezier(273.8,82.8)(275.7,82.5)(277.7,82.1)
+\qbezier(280.6,81.5)(282.6,81.2)(284.6,80.8)
+\qbezier(287.5,80.3)(289.5,79.9)(291.5,79.5)
+\qbezier(294.4,79)(296.4,78.6)(298.3,78.2)
+\qbezier(301.3,77.7)(303.3,77.3)(305.2,77)
+\qbezier(308.2,76.4)(310.1,76)(312.1,75.7)
 \qbezier(276,131)(282,131)(288,131)
 \put(282,131){\makebox(0,0){$\scriptstyle\diamond$}}
 \put(291,131){\makebox(0,0)[l]{\scriptsize (2,1)}}
@@ -508,6 +546,9 @@ discrete problem that contains the axis.
 \qbezier[4](276,101)(282,101)(288,101)
 \put(282,101){\makebox(0,0){$\scriptscriptstyle\triangle$}}
 \put(291,101){\makebox(0,0)[l]{\scriptsize (3,1)}}
+\qbezier(276,91)(278,91)(280,91)
+\qbezier(283,91)(285,91)(287,91)
+\put(291,91){\makebox(0,0)[l]{\scriptsize $\propto h^{1/2}$}}
 \put(366,30){\line(1,0){99}}
 \put(366,140){\line(1,0){99}}
 \put(366,30){\line(0,1){110}}
@@ -515,71 +556,94 @@ discrete problem that contains the axis.
 \put(415.5,4){\makebox(0,0)[b]{\footnotesize surfaces}}
 \put(415.5,160){\makebox(0,0)[b]{\footnotesize (c) certified $(2,1)$}}
 \put(366,145){\makebox(0,0)[bl]{\scriptsize $10^{-5}$}}
-\put(381.4,30){\line(0,1){3}}
-\put(381.4,137){\line(0,1){3}}
-\put(381.4,26){\makebox(0,0)[t]{\scriptsize 65}}
+\put(375.9,30){\line(0,1){3}}
+\put(375.9,137){\line(0,1){3}}
+\put(375.9,26){\makebox(0,0)[t]{\scriptsize 65}}
+\put(395.7,30){\line(0,1){3}}
+\put(395.7,137){\line(0,1){3}}
+\put(395.7,26){\makebox(0,0)[t]{\scriptsize 129}}
 \put(415.5,30){\line(0,1){3}}
 \put(415.5,137){\line(0,1){3}}
-\put(415.5,26){\makebox(0,0)[t]{\scriptsize 129}}
-\put(449.6,30){\line(0,1){3}}
-\put(449.6,137){\line(0,1){3}}
-\put(449.6,26){\makebox(0,0)[t]{\scriptsize 257}}
-\put(366,41){\line(1,0){3}}
-\put(462,41){\line(1,0){3}}
-\put(363,41){\makebox(0,0)[r]{\scriptsize 6}}
-\put(366,68.5){\line(1,0){3}}
-\put(462,68.5){\line(1,0){3}}
-\put(363,68.5){\makebox(0,0)[r]{\scriptsize 7}}
-\put(366,96){\line(1,0){3}}
-\put(462,96){\line(1,0){3}}
-\put(363,96){\makebox(0,0)[r]{\scriptsize 8}}
-\put(366,123.5){\line(1,0){3}}
-\put(462,123.5){\line(1,0){3}}
-\put(363,123.5){\makebox(0,0)[r]{\scriptsize 9}}
+\put(415.5,26){\makebox(0,0)[t]{\scriptsize 257}}
+\put(435.3,30){\line(0,1){3}}
+\put(435.3,137){\line(0,1){3}}
+\put(435.3,26){\makebox(0,0)[t]{\scriptsize 513}}
+\put(455.1,30){\line(0,1){3}}
+\put(455.1,137){\line(0,1){3}}
+\put(455.1,26){\makebox(0,0)[t]{\scriptsize 1025}}
+\put(366,43.8){\line(1,0){3}}
+\put(462,43.8){\line(1,0){3}}
+\put(363,43.8){\makebox(0,0)[r]{\scriptsize 4}}
+\put(366,60.9){\line(1,0){3}}
+\put(462,60.9){\line(1,0){3}}
+\put(363,60.9){\makebox(0,0)[r]{\scriptsize 5}}
+\put(366,78.1){\line(1,0){3}}
+\put(462,78.1){\line(1,0){3}}
+\put(363,78.1){\makebox(0,0)[r]{\scriptsize 6}}
+\put(366,95.3){\line(1,0){3}}
+\put(462,95.3){\line(1,0){3}}
+\put(363,95.3){\makebox(0,0)[r]{\scriptsize 7}}
+\put(366,112.5){\line(1,0){3}}
+\put(462,112.5){\line(1,0){3}}
+\put(363,112.5){\makebox(0,0)[r]{\scriptsize 8}}
+\put(366,129.7){\line(1,0){3}}
+\put(462,129.7){\line(1,0){3}}
+\put(363,129.7){\makebox(0,0)[r]{\scriptsize 9}}
 \linethickness{0.8pt}
-\put(381.4,105.6){\line(0,1){2.8}}
-\put(378.4,105.6){\line(1,0){6}}
-\put(378.4,108.4){\line(1,0){6}}
-\put(415.5,114.6){\line(0,1){10.9}}
-\put(412.5,114.6){\line(1,0){6}}
-\put(412.5,125.5){\line(1,0){6}}
-\put(449.6,46.3){\line(0,1){43.2}}
-\put(446.6,46.3){\line(1,0){6}}
-\put(446.6,89.5){\line(1,0){6}}
+\put(375.9,127.5){\line(0,1){1.7}}
+\put(372.9,127.5){\line(1,0){6}}
+\put(372.9,129.2){\line(1,0){6}}
+\put(395.7,125.1){\line(0,1){6.8}}
+\put(392.7,125.1){\line(1,0){6}}
+\put(392.7,131.9){\line(1,0){6}}
+\put(415.5,89.7){\line(0,1){26.9}}
+\put(412.5,89.7){\line(1,0){6}}
+\put(412.5,116.6){\line(1,0){6}}
 \thinlines
+\put(375.9,128.3){\circle*{3}}
+\put(395.7,128.5){\circle*{3}}
+\put(415.5,103.2){\circle*{3}}
+\put(435.3,67.1){\circle*{3}}
+\put(455.1,40.5){\circle*{3}}
 \end{picture}
 \caption{(a) The certified error of the half-grid scheme on the manufactured
 mappings; the dashed line falls as $h^2$. (b) Harmonics of the radial force $r_s$
-on the surface $\iota=1/2$ of the rippled tokamak: the certified resonant $(2,1)$
-harmonic and the floating-point $(2,0)$, $(1,0)$ and $(3,1)$ harmonics of the
-same reconstruction. The $(2,0)$ and $(1,0)$ harmonics fall 3.8 to 5.3-fold per
-doubling, the resonant harmonic and its $(3,1)$ sideband at most 1.5-fold. (c) The certified enclosures of
-the $(2,1)$ harmonic on a linear scale.}\label{fig:conv}
+on the surface $\iota=1/2$ of the rippled tokamak: the resonant $(2,1)$ harmonic,
+certified at 256 bits, and the floating-point $(2,0)$, $(1,0)$ and $(3,1)$
+harmonics of the same reconstruction; the dashed line falls as $h^{1/2}$.
+(c) The $(2,1)$ harmonic on a linear scale: its binary64 enclosures at 65, 129
+and 257 surfaces, and its 256-bit enclosures, narrower than the dots, at 65 to
+1025.}\label{fig:conv}
 \end{figure}
 
 \paragraph{A forced current sheet.}
 On VMEC++'s circular tokamak ($R_0=6$, $a=2$) with $\iota=0.9-0.64s$, which is
 $1/2$ at $s=0.625$, and a $(1,1)$ boundary ripple of amplitude $0.03$, toroidal
 coupling drives a $(2,1)$ harmonic of the radial force on the rational surface.
-Its certified value, the rectangle rule for the integral of $r_s\cos(2u-v)$ on
+Its certified value is the rectangle rule for the integral of $r_s\cos(2u-v)$ on
 a $64\times32$ grid of angles, in T$^2$ like $r_s$, against $1.2\times10^3$~T$^2$
-for the integral of $B^2$ over the angles there, enclosed by \code{dharm\_correct} at the
-converged state, lies between $6.1\times10^{-5}$ and $9.1\times10^{-5}$ at 65,
-129 and 257 surfaces (Figure~\ref{fig:conv}c), and between $5.3\times10^{-5}$ and
-$9.3\times10^{-5}$ for every state within a relative $10^{-14}$ of the converged
-coefficients; it is linear in the ripple. From 65 to 129 surfaces it
-rises by a factor between 1.02 and 1.09, and from 129 to 257 it falls by a
-factor between 1.11 and 1.47, where the axisymmetric harmonics $(2,0)$ and
-$(1,0)$ of the same reconstruction fall 3.8 to 5.3-fold per doubling in floating
-point and the $(3,1)$ sideband 1.2 to 1.3-fold (Figure~\ref{fig:conv}b). The
-same ripple on a transform profile with no low-order rational surface nearby
-leaves nothing behind. This is the response of a nested-surface field at a
-rational surface~\cite{grad1967,hahm1985,loizu2015b}, whose ideal limit is a
-current sheet and which~\cite{lazerson2016} studied in VMEC; three-dimensional
-equilibria with current sheets and stepped pressure
-exist~\cite{bruno1996,enciso2025}. The enclosures widen about fourfold per
-doubling, from 1.2 to 22 per cent of the value, as second radial differences
-amplify the rounding of the binary64 interval arithmetic by $h^{-2}$. The box
+for the integral of $B^2$ over the angles there. With each row of the grid
+evaluated and summed at 256 bits, \code{wdharm\_b\_correct} encloses it at the
+converged states of 65, 129, 257, 513 and 1025 surfaces to within a relative
+$2\times10^{-12}$ of $8.9208\times10^{-5}$, $8.9310\times10^{-5}$,
+$7.4567\times10^{-5}$, $5.3557\times10^{-5}$ and $3.8084\times10^{-5}$
+(Figure~\ref{fig:conv}c), and it is linear in the ripple. It rises by 0.11 per
+cent from 65 to 129 surfaces and then falls by 1.20, 1.39 and 1.41 per
+doubling, approaching the factor $\sqrt2$ of a decay as the square
+root of the radial step, while the axisymmetric harmonics $(2,0)$ and $(1,0)$ of
+the same reconstruction fall 3.7 to 4.1-fold per doubling in floating point up to
+513 surfaces, and 3.8 and 2.3-fold from 513 to 1025, and the $(3,1)$ sideband
+1.24 to 1.44-fold per doubling (Figure~\ref{fig:conv}b). The same ripple on a transform
+profile with no low-order rational surface nearby leaves nothing behind. This is
+the response of a nested-surface field at a rational
+surface~\cite{grad1967,hahm1985,loizu2015b}, whose ideal limit is a current
+sheet and which~\cite{lazerson2016} studied in VMEC; three-dimensional equilibria
+with current sheets and stepped pressure exist~\cite{bruno1996,enciso2025}. In
+binary64 interval arithmetic (\code{dharm\_correct}) the enclosures at 65, 129
+and 257 surfaces widen about fourfold per doubling, from 1.1 to 21 per cent of
+the value, as second radial differences amplify the rounding by $h^{-2}$, and
+there the harmonic lies between $5.8\times10^{-5}$ and $9.4\times10^{-5}$ for
+every state within a relative $10^{-14}$ of the converged coefficients. The box
 is centred on the converged state, and on the rational surface the collocated
 Newton test certifies a discrete solution at 33 surfaces, where the Jacobian's
 condition number is a fifth of its value at 65. In SPEC~\cite{hudson2012}, two
@@ -588,8 +652,8 @@ interface at the rational surface carry the $(2,1)$ sheet as a jump of
 $1.47\times10^{-5}$ in the covariant poloidal field at ripple $0.03$, as in the
 equilibria of~\cite{loizu2015}, and with the rational surface inside a relaxed
 volume SPEC's field-line tracing finds a $(2,1)$ island whose width grows from
-$0.107$ to $0.170$ in the volume's radial coordinate as the ripple goes from
-$0.0075$ to $0.03$, as the ripple to the power 0.33.
+$0.107$ to $0.173$ in the volume's radial coordinate as the ripple goes from
+$0.0075$ to $0.03$, as the ripple to the power 0.35.
 
 \paragraph{Free-boundary balance.}
 At a free-boundary equilibrium $\mu_0p+B^2/2$ is continuous across the plasma
@@ -662,7 +726,9 @@ reconstructed field and $X$ its position, and $\psi^*(X)$ on a node surface.
 For the family with $\iota=2$, \code{LandremanExact.v} proves that the
 expressions behind those outputs evaluate to the field and flux label of
 \code{Landreman.v} at every point where the radicand of $\mathbf{B}^*$ is
-positive (\code{exact\_b\_iota2}). VMEC++'s solution of the sheared member with $\epsilon=0.6$, $S=2.2$,
+positive (\code{exact\_b\_iota2}). The comparison below is with the sheared
+family, an equilibrium by Landreman's derivation, while the Rocq proofs cover
+the family with $\iota=2$. VMEC++'s solution of the sheared member with $\epsilon=0.6$, $S=2.2$,
 $\lambda=2.97$ and $k_b=0.2$, whose transform runs from 4.34 to 4.37, at 13
 surfaces with $m\le11$ and $|n|\le10$, and at 25, 50, 100 and 200 surfaces,
 is certified at every point of a $64\times32$ grid of a field period on its
@@ -684,7 +750,7 @@ value at the boundary is $0.02$.
 \paragraph{Use in VMEC++.}
 The certified values are regression tests on a branch of VMEC++~\cite{branch},
 whose tolerances are the enclosures: the manufactured-solution errors, the
-resonant floor with the fall of the axisymmetric harmonics, and the
+resonant harmonic with the fall of the axisymmetric harmonics, and the
 free-boundary jump, which reads NESTOR's boundary vacuum field through an option
 proposed upstream~\cite{pr903}. A finite difference of VMEC++'s energy equals
 its unpreconditioned forces contracted with the perturbation, the discrete form

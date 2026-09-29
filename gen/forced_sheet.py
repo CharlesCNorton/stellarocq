@@ -205,6 +205,29 @@ def reference_harmonic(w, j, phip, harmonic, n=256):
     return acc
 
 
+def cmd_spectrum(a):
+    """The discrete harmonics of r_s at the node of s, in floating point, by the
+    equispaced sum the certified harmonic is: the rectangle rule for the
+    integral of r_s cos(m u - n v) on nu by nv angles."""
+    from make_cert import residual_ref
+
+    w = Wout(a.wout)
+    calibrate_pressure(w)
+    phip = float(w.phips[1])
+    node = round((w.ns - 1) * a.s)
+    if abs(node - (w.ns - 1) * a.s) > 1e-9:
+        raise SystemExit(f"s = {a.s} is not a node of ns = {w.ns}")
+    us = 2 * np.pi * np.arange(a.nu) / a.nu
+    vs = 2 * np.pi * np.arange(a.nv) / a.nv
+    rs = np.array([[residual_ref(w, node, u, v, phip)[0] for v in vs] for u in us])
+    weight = (2 * np.pi / a.nu) * (2 * np.pi / a.nv)
+    print(f"{pathlib.Path(a.wout).name}: node {node} of ns = {w.ns}, grid {a.nu} by {a.nv}")
+    for h in a.harmonics:
+        hm, hn = (int(x) for x in h.split(","))
+        kern = np.cos(hm * us[:, None] - hn * vs[None, :])
+        print(f"({hm},{hn}) {weight * float((rs * kern).sum()):.6e}")
+
+
 def cmd_solve(a):
     from resonance import solve
 
@@ -298,6 +321,13 @@ def main():
                    "residual cleared of the Jacobian, whose integral over the "
                    "torus main --harm certifies exactly")
     h.set_defaults(fn=cmd_hcert)
+    p = sub.add_parser("spectrum", help="print the discrete harmonics of r_s in floating point")
+    p.add_argument("wout")
+    p.add_argument("--s", type=float, default=0.625)
+    p.add_argument("--harmonics", nargs="+", default=["2,1", "2,0", "1,0", "3,1"])
+    p.add_argument("--nu", type=int, default=64)
+    p.add_argument("--nv", type=int, default=32)
+    p.set_defaults(fn=cmd_spectrum)
     a = ap.parse_args()
     return a.fn(a)
 

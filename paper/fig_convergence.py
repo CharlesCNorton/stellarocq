@@ -5,21 +5,30 @@
 stellarocq.tex carries the output inline, drawn with the picture environment of
 the LaTeX kernel alone. (a) The certified error max |x_h - x*| of the half-grid
 scheme on the manufactured mappings (gen/mms_colloc.py). (b) The harmonics of the
-radial force r_s on the surface iota = 1/2 of the rippled tokamak: the certified
-enclosures of the (2,1) harmonic (Harmonic.dharm_correct, gen/forced_sheet.py) and
-the floating-point values of the others that examples/forced_current_sheet.py of
-the VMEC++ branch prints. (c) The certified (2,1) enclosures on a linear scale.
+radial force r_s on the surface iota = 1/2 of the rippled tokamak: the (2,1)
+harmonic certified with its rows at 256 bits (WideHarm.wdharm_b_correct,
+gen/forced_sheet.py hcert, main --dharm-wide 256) and the floating-point values
+of the others that gen/forced_sheet.py spectrum prints for the same files.
+(c) The (2,1) harmonic on a linear scale: its binary64 enclosures
+(Harmonic.dharm_correct, main --dharm) and its 256-bit enclosures.
 """
 import math
 
 MMS_3D = {9: 2.73432936829e-6, 17: 7.16912170772e-7, 33: 1.83032585742e-7, 65: 4.6074819334e-8}
 MMS_ASYM = {9: 2.69073057043e-5, 17: 7.20667053290e-6, 33: 1.86266877703e-6}
-NS = [65, 129, 257]
-H21 = [(8.3487e-5, 8.4502e-5), (8.6756e-5, 9.0721e-5), (6.1943e-5, 7.7635e-5)]
+NS = [65, 129, 257, 513, 1025]
+H21_WIDE = [(8.920812481048862e-05, 8.920812481066525e-05),
+            (8.931013968774432e-05, 8.931013968779015e-05),
+            (7.456678235767228e-05, 7.456678235768514e-05),
+            (5.3557117409117485e-05, 5.3557117409122974e-05),
+            (3.808406728292835e-05, 3.808406728293221e-05)]
+H21_B64 = [(8.87010886598797477e-05, 8.97151939439499611e-05),
+           (8.73273640978774438e-05, 9.12929283797295302e-05),
+           (6.67393171125321417e-05, 8.23942478145557795e-05)]
 OTHERS = {
-    "(2,0)": [3.0753e-3, 7.7319e-4, 1.9271e-4],
-    "(1,0)": [8.1449e-4, 2.1161e-4, 3.9903e-5],
-    "(3,1)": [8.3394e-5, 6.6957e-5, 5.0873e-5],
+    "(2,0)": [3.070877e-3, 7.704611e-4, 1.934922e-4, 4.887547e-5, 1.274317e-5],
+    "(1,0)": [8.162769e-4, 2.041000e-4, 4.926426e-5, 1.326267e-5, 5.875867e-6],
+    "(3,1)": [8.633027e-5, 6.979149e-5, 5.337462e-5, 3.814427e-5, 2.646110e-5],
 }
 
 H = 110.0     # height of every plot box, in pt
@@ -126,6 +135,7 @@ def logpanel(x0, w, xlo, xhi, xs, xlabels, ylo, yhi, decades, title, ylabel, ser
 
 lg = lambda n: math.log2(n - 1)
 xb = [lg(n) for n in NS]
+mid = [0.5 * (lo + hi) for lo, hi in H21_WIDE]
 
 # (a) the certified error of the scheme on the manufactured mappings
 xa = LEFT
@@ -136,30 +146,35 @@ logpanel(xa, 120.0, lg(9) - 0.25, lg(65) + 0.25, [lg(n) for n in MMS_3D], list(M
           ([(lg(9), 1.3e-6), (lg(65), 1.3e-6 / 64)], "dashed", None)],
          [("3D", "solid", "disc"), ("asymmetric", "solid", "square"), ("$\\propto h^2$", "dashed", None)], 62.0)
 
-# (b) the harmonics of r_s on the rational surface
+# (b) the harmonics of r_s on the rational surface, with a line falling as h^(1/2)
 xb0 = xa + 120.0 + 12.0 + LEFT
-logpanel(xb0, 120.0, xb[0] - 0.3, xb[-1] + 0.3, xb, NS, -4.7, -1.6, [-4, -3, -2],
+ref = 1.7 * mid[-1]
+logpanel(xb0, 120.0, xb[0] - 0.3, xb[-1] + 0.3, xb, NS, -5.6, -2.2, [-5, -4, -3],
          "(b) rippled tokamak, $\\iota=1/2$", "harmonic of $r_s$",
-         [([(x, 0.5 * (lo + hi)) for x, (lo, hi) in zip(xb, H21)], "solid", "diamond")]
-         + [([(x, v) for x, v in zip(xb, vals)], "dotted", mark)
-            for vals, mark in zip(OTHERS.values(), ("ring", "square", "triangle"))],
+         [(list(zip(xb, mid)), "solid", "diamond")]
+         + [(list(zip(xb, vals)), "dotted", mark)
+            for vals, mark in zip(OTHERS.values(), ("ring", "square", "triangle"))]
+         + [([(xb[2], ref * 2 ** ((xb[-1] - xb[2]) / 2)), (xb[-1], ref)], "dashed", None)],
          [("(2,1)", "solid", "diamond"), ("(2,0)", "dotted", "ring"),
-          ("(1,0)", "dotted", "square"), ("(3,1)", "dotted", "triangle")], 44.0)
+          ("(1,0)", "dotted", "square"), ("(3,1)", "dotted", "triangle"),
+          ("$\\propto h^{1/2}$", "dashed", None)], 44.0)
 
-# (c) the certified (2,1) enclosures on a linear scale
+# (c) the (2,1) harmonic on a linear scale: binary64 enclosures and 256-bit values
 xc0 = xb0 + 120.0 + 12.0 + LEFT
 wc = 465.0 - xc0
-Xc = lambda v: xc0 + (v - xb[0] + 0.45) / (xb[-1] - xb[0] + 0.9) * wc
-Yc = lambda v: Y0 + (v - 5.6e-5) / (9.6e-5 - 5.6e-5) * H
+Xc = lambda v: xc0 + (v - xb[0] + 0.5) / (xb[-1] - xb[0] + 1.0) * wc
+Yc = lambda v: Y0 + (v - 3.2e-5) / (9.6e-5 - 3.2e-5) * H
 frame(xc0, wc, "(c) certified $(2,1)$", "$10^{-5}$")
 xticks(xc0, wc, Xc, xb, NS)
-yticks(xc0, wc, Yc, [6e-5, 7e-5, 8e-5, 9e-5], ["6", "7", "8", "9"])
+yticks(xc0, wc, Yc, [4e-5, 5e-5, 6e-5, 7e-5, 8e-5, 9e-5], ["4", "5", "6", "7", "8", "9"])
 out.append("\\linethickness{0.8pt}")
-for x, (lo, hi) in zip(xb, H21):
+for x, (lo, hi) in zip(xb, H21_B64):
     put(Xc(x), Yc(lo), f"\\line(0,1){{{f(Yc(hi) - Yc(lo))}}}")
     put(Xc(x) - 3, Yc(lo), "\\line(1,0){6}")
     put(Xc(x) - 3, Yc(hi), "\\line(1,0){6}")
 out.append("\\thinlines")
+for x, v in zip(xb, mid):
+    marker("disc", Xc(x), Yc(v))
 
 print("\\setlength{\\unitlength}{1pt}")
 print(f"\\begin{{picture}}(465,{f(Y0 + H + 32)})")
