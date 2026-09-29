@@ -31,16 +31,18 @@
 The output of a stellarator equilibrium code is a file of floating-point Fourier
 coefficients. Stellarocq states what such a file establishes as machine-checked
 theorems about the magnetic field it defines. The field is reconstructed from
-the exact numbers of a VMEC++ output file by VMEC's half-grid rule, and the
-development proves that the residual it evaluates is
-$\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ of that field. Each claim about the
-field, a bound, a Fourier harmonic, a flux-surface integral or a Mercier term, is
-decided by a checker extracted from a Rocq proof that a passing verdict implies
-the claim. On VMEC++ output the certificates give the error of the half-grid
-rule on manufactured problems to twelve digits, falling as $h^2$ away from the
-axis. They bound away from zero a harmonic of the force at a rational surface
-that radial refinement reduces far more slowly than the scheme's order, and
-they enclose the free-boundary pressure jump for every vacuum field between the
+the exact numbers of a VMEC++ output file by VMEC's half-grid interpolation of
+the surface coefficients. The development proves that the residual it evaluates
+is $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ of that field, and that its
+Jacobian and metric differ from those VMEC forms from the same numbers by exact
+terms of second order in the radial step. Each claim about the field, a bound, a
+Fourier harmonic, a flux-surface integral or a Mercier term, is decided by a
+checker extracted from a Rocq proof that a passing verdict implies the claim.
+The certificates give the error of the half-grid rule on manufactured problems
+to a relative $10^{-12}$, falling as $h^2$ away from the axis. On VMEC++ output
+they bound away from zero a harmonic of the force at a rational surface that
+radial refinement reduces far more slowly than the scheme's order, and they
+enclose the free-boundary pressure jump for every vacuum field between the
 answers of NESTOR and BIEST.
 \end{abstract}
 
@@ -57,8 +59,10 @@ such as the Mercier stability terms, all in binary64 floating point.
 What such a file establishes about the field it describes is judged by
 convergence metrics internal to the solver and by diagnostics recomputed in
 floating point. Stellarocq states it as a theorem. The object of every statement
-is the field reconstructed from the exact numbers in the file by the rule the
-solver itself uses. A claim about that field is decided by a checking function
+is the field reconstructed from the exact numbers in the file by the solver's
+own interpolation of its surface coefficients, and the development proves how
+the Jacobian and metric of that field differ from the ones the solver forms. A
+claim about that field is decided by a checking function
 written in Rocq~\cite{rocq}, proven to imply the claim when it returns
 \code{true}, and extracted to OCaml~\cite{letouzey2003}; real-number semantics
 and interval arithmetic come from Coquelicot~\cite{coquelicot},
@@ -67,8 +71,8 @@ Flocq~\cite{flocq} and CoqInterval~\cite{melquiond2008}.
 Section~\ref{sec:object} states the certified object and the theorem that
 identifies its residual with the ideal-MHD force, and Section~\ref{sec:certs}
 the certificate forms and the trust base. Section~\ref{sec:results} reports what
-they establish on VMEC++ output and where each result stops: the error of the
-half-grid rule on manufactured problems, known to twelve digits; a harmonic of
+they establish and where each result stops: the error of the half-grid rule on
+manufactured problems, known to a relative $10^{-12}$; on VMEC++ output, a harmonic of
 the force on a rational surface, bounded away from zero over a box of states;
 the free-boundary pressure jump, enclosed for every vacuum field between the
 answers of two independent solvers; and the Mercier criterion of a coarse
@@ -151,12 +155,35 @@ combination of the fields at the two half points, with centred differences for
 radial derivatives, and each of those fields is that of the series with VMEC's
 half-grid values and slopes (\code{node\_residual}, \code{node\_residual\_asym}).
 
+\paragraph{VMEC's products.}
+Every half-point quantity that is linear in the coefficients, $R$, $Z$ and their
+derivatives, agrees with VMEC's term for term. The Jacobian and the metric
+elements are products, which VMEC forms from averages over the two nodes of
+products of node values, where the reconstruction multiplies the interpolated
+series. \code{VmecKernel.v} transcribes VMEC++'s kernels and proves the
+differences exactly. With $r$, $z$ the even parts and $\hat r$, $\hat z$ the odd
+parts divided by $\sqrt{s}$ of the node values, and $\Delta$ the outer node's
+value less the inner one's, the reconstruction's factor $R_uZ_s-R_sZ_u$ and
+VMEC's $\tau$ satisfy
+\begin{equation}
+(R_uZ_s-R_sZ_u)-\tau=-{\textstyle\frac18}\bigl(\Delta\hat r_u\,\Delta\hat z-\Delta\hat z_u\,\Delta\hat r\bigr)
+-\frac{1}{8\sqrt{s_h}}\bigl(\Delta r_u\,\Delta\hat z-\Delta z_u\,\Delta\hat r\bigr)
+\end{equation}
+(\code{vmec\_jacobian\_difference}), and each of $g_{uu}$, $g_{uv}$ and $g_{vv}$
+differs from VMEC's by a sum of such products (\code{vmec\_metric\_difference}).
+Where every node difference in the identity is at most $K|h|$, the two
+Jacobian factors agree to within ${\textstyle\frac14}(Kh)^2(1+s_h^{-1/2})$
+(\code{vmec\_jacobian\_second\_order}). The certified field is the
+reconstruction's, and VMEC's discrete field differs from it by these terms of
+second order in the radial step.
+
 \paragraph{Identities.}
-Properties a floating-point code can only sample are theorems about the
-reconstruction. It is exactly solenoidal (\code{divergence\_free}); the $(0,0)$
-coefficient of $\lambda$ drives nothing (\code{lambda\_gauge}), which exhibits
-the poloidal relabelling as an exact kernel direction; the residual has no
-component along the field (\code{residual\_along\_field}); and the
+The representation builds some properties in, and for the reconstruction they
+are theorems rather than floating-point samples: it is solenoidal
+(\code{divergence\_free}), the $(0,0)$ coefficient of $\lambda$ drives nothing
+(\code{lambda\_gauge}), which exhibits the poloidal relabelling as an exact
+kernel direction, and the residual has no component along the field
+(\code{residual\_along\_field}). The
 Euler--Lagrange expressions of VMEC's energy $W=\int(B^2/2-\mu_0p)\sqg$ at fixed
 $\lambda$, $\iota$, flux and pressure are $-\sqg$ times the cylindrical
 components of the force (\code{energy\_gradient\_is\_force}), so that the
@@ -243,10 +270,12 @@ specifications of the primitive operations. The build pins Rocq 9.1.1 with its
 standard library 9.2.0, CoqInterval 4.11.4, Flocq 4.2.2, Coquelicot 3.4.5,
 MathComp 2.4.0 and OCaml 4.14.2.
 
-\section{Results on VMEC++ output}\label{sec:results}
+\section{Results}\label{sec:results}
 
 Table~\ref{tab:results} collects the certified results with the theorem each
-rests on. All equilibria are VMEC++ runs or files from its test data. A number
+rests on. The manufactured problems are Stellarocq's collocated systems for
+VMEC++'s manufactured mappings, and every other case is a VMEC++ run or a file
+from its test data. A number
 called certified is an enclosure that a passing verdict proves, rounded outward;
 floating-point numbers are named as such.
 
@@ -259,13 +288,13 @@ floating-point numbers are named as such.
 \cellA{manufactured, 3D} & \cellB{$\max|x_h-x^*|$, 9/17/33/65 surfaces\newline\code{colloc\_correct}} & \cellC{$2.73432936829\times10^{-6}$, $7.16912170772\times10^{-7}$, $1.83032585742\times10^{-7}$, $4.6074819334\times10^{-8}$} \\[2pt]
 \cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057043\times10^{-5}$, $7.20667053290\times10^{-6}$, $1.86266877703\times10^{-6}$} \\[2pt]
 \cellA{Solov'ev, 1--3 surfaces} & \cellB{zero of the collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one, in boxes of radius $5.7\times10^{-10}$ to $6.3\times10^{-9}$} \\[2pt]
-\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ over a box of relative width $10^{-12}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.34,8.45]$, $[8.67,9.08]$, $[6.19,7.76]\times10^{-5}$} \\[2pt]
-\cellA{CTH-like, free boundary} & \cellB{largest jump of $p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]\times10^{-4}$, $[4.9647,4.9673]\times10^{-4}$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
-\cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$, at most $1.051\times10^{-2}$} \\[2pt]
+\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ over a box of relative width $10^{-12}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$[8.34,8.45]$, $[8.67,9.08]$, $[6.19,7.76]\times10^{-5}$~T$^2$} \\[2pt]
+\cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]\times10^{-4}$~T$^2$, $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
+\cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\
 \hline
 \end{tabular}
-\caption{Certified results on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
+\caption{Certified results on the manufactured problems and on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
 \end{table}
 
 \paragraph{The order of the half-grid rule.}
@@ -288,15 +317,17 @@ coefficients it holds fixed, $\lambda$, the transform and the source, is the
 mapping's own value carried to 120 bits. On systems of up to 423 unknowns
 the interval Newton test puts exactly one zero in a box a few units of a 58-bit
 mantissa wide in each unknown, around a centre refined on outputs read at 128
-bits, so the error $\max|x_h-x^*|$ is enclosed to within $5\times10^{-20}$,
-twelve or more significant digits, with no solver tolerance in it. It falls by
+bits, so the error $\max|x_h-x^*|$ is enclosed to within $5\times10^{-20}$, a
+relative $10^{-12}$, with no solver tolerance in it; the same problem with its
+data rounded to binary64 has an error that differs in the eighth digit. It falls by
 3.81, 3.92 and 3.97 per doubling for a three-dimensional mapping and by 3.73 and
 3.87 for one without stellarator symmetry (Figure~\ref{fig:conv}a), and its
 enclosures are identical at five times the pressure, which enters the radial
 force only as a flux function that the rule and its source share. Two limits bound what this
-measures. The collocated system is the half-grid residual at collocation points,
-not VMEC's own discrete equations, which come from the variation of the energy
-with spectral condensation and a constraint on the $m=1$ modes. And the annulus
+measures. The collocated system is the half-grid residual of the reconstruction
+at collocation points, not VMEC's own discrete equations, which come from the
+variation of the energy with spectral condensation and a constraint on the $m=1$
+modes and form the Jacobian and metric from VMEC's products. And the annulus
 leaves out the axis, where the rule is first order. The first-order radial
 convergence that~\cite{panici2023} report for VMEC is of a different quantity,
 the force error of VMEC's own solutions averaged over $0.1\le s\le0.99$ of a
@@ -483,7 +514,8 @@ On VMEC++'s circular tokamak ($R_0=6$, $a=2$) with $\iota=0.9-0.64s$, which is
 $1/2$ at $s=0.625$, and a $(1,1)$ boundary ripple of amplitude $0.03$, toroidal
 coupling drives a $(2,1)$ harmonic of the radial force on the rational surface.
 Its certified value, the rectangle rule for the integral of $r_s\cos(2u-v)$ on
-a $64\times32$ grid of angles, enclosed by \code{dharm\_correct} over every state
+a $64\times32$ grid of angles, in T$^2$ like $r_s$, against $1.2\times10^3$~T$^2$
+for the integral of $B^2$ over the angles there, enclosed by \code{dharm\_correct} over every state
 within a relative $10^{-12}$ of the converged coefficients, lies between
 $6.1\times10^{-5}$ and $9.1\times10^{-5}$ at 65, 129 and 257 surfaces
 (Figure~\ref{fig:conv}c) and is linear in the ripple. From 65 to 129 surfaces it
@@ -498,7 +530,10 @@ current sheet and which~\cite{lazerson2016} studied in VMEC; three-dimensional
 equilibria with current sheets and stepped pressure
 exist~\cite{bruno1996,enciso2025}. Two limits apply.
 Three resolutions show a harmonic falling far more slowly than the scheme's
-order; they do not decide whether it tends to a nonzero limit. And the box is a
+order; they do not decide whether it tends to a nonzero limit, and the
+enclosures widen about fourfold per doubling, from 1.3 to 22 per cent of the
+value, as second radial differences amplify the box's fixed relative width by
+$h^{-2}$. And the box is a
 box around the converged state: near a rational surface the linearized operator
 is nearly singular, so the box need not contain the exact discrete solution,
 and the collocated Newton test that would certify one passes on that surface at
@@ -509,10 +544,10 @@ $1.47\times10^{-5}$ in the covariant poloidal field at ripple $0.03$, as in the
 equilibria of~\cite{loizu2015}, and with the rational surface inside a relaxed
 volume SPEC's field-line tracing finds a $(2,1)$ island whose width grows from
 $0.107$ to $0.170$ in the volume's radial coordinate as the ripple goes from
-$0.0075$ to $0.03$.
+$0.0075$ to $0.03$, as the ripple to the power 0.33.
 
 \paragraph{Free-boundary balance.}
-At a free-boundary equilibrium $p+B^2/2$ is continuous across the plasma
+At a free-boundary equilibrium $\mu_0p+B^2/2$ is continuous across the plasma
 boundary, where outside it is the pressure of the full vacuum field. VMEC++
 computes that field with NESTOR~\cite{merkel1986,hirshman1986}, and BIEST's
 virtual-casing field~\cite{malhotra2019,malhotra2020} gives it independently.
@@ -523,8 +558,9 @@ Neither answer is certified, so every statement below holds for the vacuum
 fields of that segment and for the true one only if it lies there. On the
 CTH-like test case the largest jump on NESTOR's grid is enclosed in
 $[7.556,7.561]$, $[7.201,7.206]$, $[6.433,6.437]$, $[5.636,5.640]$ and
-$[4.9647,4.9673]\times10^{-4}$ at 25, 49, 97, 193 and 385 surfaces, for every
-$t$. Each enclosure lies below the one before it, so the jump falls under radial
+$[4.9647,4.9673]\times10^{-4}$~T$^2$ at 25, 49, 97, 193 and 385 surfaces, for
+every $t$, where $B^2/2$ averages $0.18$~T$^2$ on the boundary. Each enclosure
+lies below the one before it, so the jump falls under radial
 refinement, but only by 1.05 to 1.14 per doubling. VMEC imposes the balance
 through the Fourier harmonics it retains, and in floating point the jump on
 NESTOR's grid lies almost wholly beyond them: at 49 surfaces its part in the
@@ -614,16 +650,18 @@ force operator that the development states as a hypothesis and does not prove.
 Its verdicts enter VMEC++ as regression tests whose tolerances are the certified
 enclosures. Landreman's explicit three-dimensional equilibria with nested
 surfaces~\cite{landreman2026} would let the same certificates measure a
-solver's error against a true equilibrium instead of a manufactured one.
+solver's error against a true equilibrium instead of a manufactured one; a
+floating-point comparison of VMEC++ with them is proposed upstream~\cite{pr912}.
 
 \paragraph{Availability.}
 The development, the certificate generators and the script that writes
 Figure~\ref{fig:conv} are at \link{https://github.com/CharlesCNorton/stellarocq},
-commit \code{3d5d386}; \code{make all} builds the proofs and the checker,
-\code{make audit} prints the assumptions of every theorem named here, and the
-release \code{checker-3d5d386} carries the same checker linked statically for
-x86\_64 Linux. The VMEC++ tests that carry the certified values are on the
-branch of~\cite{branch}.
+commit \code{1ce73cc}; \code{make all} builds the proofs and the checker,
+\code{make audit} prints the assumptions of every theorem named here, the
+release \code{checker-1ce73cc} carries the same checker linked statically for
+x86\_64 Linux, and each generator's documentation gives the commands of its
+result. The VMEC++ tests that carry the certified values are on the branch
+of~\cite{branch}.
 
 \begin{thebibliography}{99}\small\raggedright
 \setlength{\itemsep}{1pt}
@@ -861,6 +899,10 @@ Plasmas} \textbf{27}, 102513 (2020).
 \bibitem{landreman2026}
 M.~Landreman, Analytic toroidal 3D MHD equilibria and steady Euler flows with
 invariant surfaces, arXiv:2609.26742 (2026).
+
+\bibitem{pr912}
+Check VMEC++ against exact three-dimensional MHD equilibria in CI,
+\link{https://github.com/proximafusion/vmecpp/pull/912}.
 
 \end{thebibliography}
 
