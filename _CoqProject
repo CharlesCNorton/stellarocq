@@ -12,7 +12,10 @@ theories/Identities.v
 theories/Symmetry.v
 theories/Energy.v
 theories/Quad.v
+theories/Cover2.v
+theories/Integrate.v
 theories/Mercier.v
+theories/MercierRun.v
 theories/Kantorovich.v
 theories/Wide.v
 theories/Newton.v

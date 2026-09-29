@@ -131,7 +131,7 @@ CELLS = [
          worst=1.177794e+00),
     Case("cell/cth_quasitwo", "wout_cth_like_fixed_bdy.nc",
          "--cells --node 12 --nu 64 --nv 16 --surface --quasisym-two",
-         tighten=True, worst=2.528551e-07, published="Quasisymmetry"),
+         tighten=True, worst=2.526032e-07, published="Quasisymmetry"),
     Case("cell/qh_quasitwo", "wout_nfp4_QH_ns50.nc",
          "--cells --node 25 --nu 64 --nv 16 --surface --quasisym-two",
          tighten=True, worst=1.611466e-05, published="Quasisymmetry"),
@@ -225,9 +225,13 @@ REFUSALS = [
 
 
 # The criterion over a profile rather than one surface, which is where it says
-# something about an equilibrium rather than about a flux surface.
+# something about an equilibrium rather than about a flux surface. On the
+# Solov'ev equilibrium the geodesic term is a difference of two numbers that
+# agree to about ten digits, so no enclosure decides the criterion at any
+# surface; what the case checks is that every surface runs and carries its
+# sensitivity columns.
 PROFILE = [
-    ("mercier/solovev_profile", "wout_solovev.nc", 4, 128, 3),
+    ("mercier/solovev_profile", "wout_solovev.nc", 4, 128, 0),
 ]
 
 
@@ -398,18 +402,24 @@ CORRESPOND = [
      "--cells --node 22 --nu 32 --quasisym-two", False),
 ]
 
-# The Mercier criterion, assembled inside the checker by theories/Mercier.v.
-# Each case runs the four coverings, hands the enclosures to `main --mercier`,
-# and compares the verdict and the assembled terms with the wout's own D*
-# arrays. The file's number has to lie inside the certified enclosure of every
-# term, which is the statement the assembly makes, and the verdict has to be
-# the one recorded.
+# The Mercier criterion of one surface in one run, theories/MercierRun.v. Each
+# case writes the four coverings and runs `main --mercier-run`, which
+# integrates them over the angular torus and assembles the terms, and compares
+# the verdict and the terms with the wout's own D* arrays. The verdict, read
+# off DMerc's enclosure, has to be the one recorded. Where the case brackets,
+# the file's number has to lie inside the certified enclosure of every term;
+# where it does not, the file's DMerc has to have the other sign, which is
+# the disagreement the case records.
 MERCIER = [
-    # flat iota and finite pressure: the well decides it
-    ("mercier/solovev_node22", "wout_solovev.nc", 22, 256, "UNSTABLE"),
+    # flat iota and finite pressure: the well is certified, and the geodesic
+    # term cancels to about ten digits, beyond any enclosure
+    ("mercier/solovev_node22", "wout_solovev.nc", 22, 256, "OPEN", True),
     # strong shear, no pressure, non-stellarator-symmetric: DShear, DCurr and
     # DGeod all contribute and DWell is zero
-    ("mercier/up_down_asym_node8", "wout_up_down_asym.nc", 8, 512, "STABLE"),
+    ("mercier/up_down_asym_node8", "wout_up_down_asym.nc", 8, 512, "STABLE", True),
+    # the paper's case at s = 0.125 of 17 surfaces: unstable where the file
+    # reads stable
+    ("mercier/up_down_asym_node2", "wout_up_down_asym.nc", 2, 2048, "UNSTABLE", False),
 ]
 
 
@@ -435,6 +445,7 @@ ALL = POINT + CELLS + INTEGRALS + RADIAL + TAYLORFILE
 
 # The cases whose time is the checker's over thousands of cells, longest first.
 HEAVY = [
+    "mercier/up_down_asym_node2",
     "radial/spline_pieces", "radial/axis_piece", "mercier/solovev_profile",
     "modes/cth_like_rises", "modes/li383_rises", "cancel/cma",
     "mercier/up_down_asym_node8", "mercier/solovev_node22",
@@ -513,7 +524,7 @@ def check_case(c, data, main, python, tmp):
     return "ok", got
 
 
-def check_mercier(name, wout, node, nu, expect, main, python):
+def check_mercier(name, wout, node, nu, expect, bracket, main, python):
     """The assembled criterion against the wout's own Mercier arrays."""
     if not wout.exists():
         return "skip", f"{wout.name} absent"
@@ -538,6 +549,14 @@ def check_mercier(name, wout, node, nu, expect, main, python):
         m = re.search(r"  " + label + r"\s+([0-9.e+-]+)\n", out)
         if m:
             theirs[label] = float(m.group(1))
+    if not bracket:
+        # the case records a disagreement: the file's DMerc has the other sign
+        fm = theirs.get("DMerc")
+        if fm is None:
+            return "fail", "no DMerc of the file"
+        if (got == "UNSTABLE" and fm <= 0) or (got == "STABLE" and fm >= 0):
+            return "fail", f"{got}, and the file's DMerc {fm:.6e} agrees"
+        return "ok", f"{got} where the file's DMerc is {fm:+.6e}"
     for label, v in theirs.items():
         lo, hi = terms[label]
         # the enclosures are of the reconstruction's own criterion, and V''
@@ -1069,43 +1088,47 @@ def check_mutation(name, wout, gen_args, mutate, reason, python, tmp):
     return "ok", f"caught at the {reason}, the original passes"
 
 
-def check_patch_surface(main):
-    """The post-extraction patch touched what it says and nothing else.
+def check_stub_surface(main):
+    """The classical reals are stubbed where Extract.v says and nowhere else.
 
-    gen/patch_extract.py replaces the bodies of the spec-only classical-real
-    constants with a poison value. That patch is part of the audit surface, so
-    the built extraction is checked to carry exactly those stubs and no other
-    unreachable body.
+    theories/Extract.v extracts the axiom behind Rocq's classical reals and
+    the reals 0 and 1 built from it as values that fail when consulted, so
+    nothing of them runs when the checker starts. The built extraction is
+    checked to carry exactly those three stubs, and otherwise only the
+    branches extraction marks as absurd inside the classical-real layer.
     """
     extract = pathlib.Path(main).resolve().parent.parent.parent
-    if not extract.exists():
-        return "skip", "no extraction directory"
-    poison = "assert false (* spec-only: classical real *)"
+    if not (extract / "Rdefinitions.ml").exists():
+        return "skip", "no extraction beside the checker"
+    expected = {("ClassicalDedekindReals.ml", "sig_forall_dec"),
+                ("Rdefinitions.ml", "coq_R0"), ("Rdefinitions.ml", "coq_R1")}
     # the modules of the classical-real layer, which the checker never enters
     spec_only = {"ClassicalDedekindReals.ml", "Rdefinitions.ml",
                  "ConstructiveCauchyReals.ml", "ConstructiveRcomplete.ml",
                  "ConstructiveEpsilon.ml"}
-    stubs, absurd, stray = [], [], []
+    stub = re.compile(r"\s*let (\w+) = (\(Obj\.magic )?\(fun _ -> assert false\)\)?\s*$")
+    stubs, absurd, stray = set(), [], []
     for f in sorted(extract.glob("*.ml")):
         for i, line in enumerate(f.read_text(errors="replace").splitlines()):
-            if poison in line:
-                stubs.append(f"{f.name}:{i + 1}")
-            elif "assert false" in line:
+            if "assert false" not in line:
+                continue
+            m = stub.match(line)
+            if m:
+                stubs.add((f.name, m.group(1)))
+            elif f.name in spec_only and "absurd case" in line:
                 # extraction writes one of these for a branch it has proven
                 # cannot be taken
-                if f.name in spec_only and "absurd case" in line:
-                    absurd.append(f"{f.name}:{i + 1}")
-                else:
-                    stray.append(f"{f.name}:{i + 1}")
-    if not stubs:
-        return "skip", "the extraction is not patched"
+                absurd.append(f"{f.name}:{i + 1}")
+            else:
+                stray.append(f"{f.name}:{i + 1}")
     if stray:
         return "fail", f"an unexplained assert false at {stray[0]}"
-    outside = [x for x in stubs if x.split(":")[0] not in spec_only]
-    if outside:
-        return "fail", f"a stub outside the classical-real layer at {outside[0]}"
-    return "ok", (f"{len(stubs)} stubbed bodies and {len(absurd)} absurd "
-                  f"branches, all inside the classical-real layer")
+    if stubs != expected:
+        extra = sorted(stubs - expected)
+        missing = sorted(expected - stubs)
+        return "fail", f"stubs {extra} beyond Extract.v, {missing} absent"
+    return "ok", (f"{len(stubs)} stubs and {len(absurd)} absurd branches, all "
+                  f"inside the classical-real layer")
 
 
 def check_certfile_widths(tmp):
@@ -1553,9 +1576,11 @@ def main():
     for name, cert, run_args, expect in STANDALONE:
         add(name, lambda name=name, cert=cert, run_args=run_args, expect=expect:
             standalone(name, cert, run_args, expect))
-    for name, wout, node, nu, expect in MERCIER:
-        add(name, lambda name=name, wout=wout, node=node, nu=nu, expect=expect:
-            check_mercier(name, data / wout, node, nu, expect, a.main, a.python))
+    for name, wout, node, nu, expect, bracket in MERCIER:
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, expect=expect,
+            bracket=bracket:
+            check_mercier(name, data / wout, node, nu, expect, bracket, a.main,
+                          a.python))
     for name, made_from, checked_against, gen_args, agree in CORRESPOND:
         add(name, lambda name=name, made_from=made_from, checked_against=checked_against,
             gen_args=gen_args, agree=agree:
@@ -1632,7 +1657,7 @@ def main():
                            a.python, tmp))
     add("reference/spline_pair", check_spline_agreement)
     add("reader/bound_widths", lambda: check_certfile_widths(tmp))
-    add("audit/patch_surface", lambda: check_patch_surface(a.main))
+    add("audit/stub_surface", lambda: check_stub_surface(a.main))
     for name, wout, node, gen_args, radius in REFERENCE:
         add(name, lambda name=name, wout=wout, node=node, gen_args=gen_args,
             radius=radius:

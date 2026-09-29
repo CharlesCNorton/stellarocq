@@ -177,15 +177,17 @@ enough to put them outside the theorem.
 
 A verdict over the radius and the angles speaks about the rectangle the cells
 span, so it requires the cells to cover it. The checker decides that with
-`Cover.covers` along every slab between consecutive edges of the first slot,
-and with no width in one slot along every line of it, so a gap in one slot or a
-hole that both projections hide makes the verdict INVALID. A certificate that
-varies another slot, such as a Fourier coefficient's, keeps a verdict about each
-cell. `--integrate` sums a rule over the cells, so it asks more: the cells of
-each node have to partition its range, each tile exactly once. With width in
-both slots they have to be the lattice of one width in each slot; with none in
-the second, each plane's cells have to abut one after another across the whole
-range, in the order the angle list cycles through the planes.
+`Cover2.cover2`, column by column: the cells' extents in the first slot cover
+its range, and the cells of each column cover the second slot's
+(`cells_cover_rect`); with no width in one slot, the cells cover every line
+they lie on (`cells_cover_lines`). A gap in one slot or a hole that both
+projections hide makes the verdict INVALID. A certificate that varies another
+slot, such as a Fourier coefficient's, keeps a verdict about each cell.
+`--integrate` integrates over a lattice the checker lays out itself:
+`Integrate.integ2` over NU by NV cells of one width in each slot, and
+`Integrate.integ1` over a run of abutting cells in each plane
+(`integ2_correct`, `integ1_correct`). The driver reads the lattice's extent off
+the file's cells and refuses cells that are not one.
 
 ## Node blocks
 
@@ -419,7 +421,33 @@ line then names three more global slots, the source of the three components.
 A zero of that system is the discrete solution of a problem whose right-hand
 side is the source, and [gen/mms_colloc.py](gen/mms_colloc.py) writes it for a
 manufactured solution, with the continuum residual of the mapping as the
-source.
+source. A `PARAM` mantissa may be of any length: that file carries every datum
+of the problem at 120 bits.
+
+## The Mercier run
+
+`main --mercier-run FILE` computes the Mercier criterion of one surface from
+four cell certificates of it:
+
+```
+STELLAROCQ-MERCRUN
+NODE <b>                   the node block of the surface in each file
+A <path>                   OUTPUT mercier-a
+B <path>                   OUTPUT mercier-b
+G <path>                   OUTPUT radial-geometry
+S <path>                   OUTPUT radial-shear
+PHIPS <m> <e>              the wout's phips
+SIGNGS <m> <e>             the wout's signgs
+```
+
+Each file's cells have to be a lattice from 0 in the two angle slots, `SLOTS
+1 2`, reaching past `2 pi` in each. `MercierRun.merc_run` integrates each
+file's three components over exactly `[0, 2 pi]` in both angles
+(`Integrate.integ2_torus`) and evaluates DShear, DCurr, DWell, DGeod, DStable
+and DMerc of `mercier.f90` at those integrals and the two numbers
+(`merc_run_correct`); a verdict is DMerc's enclosure against a margin
+(`merc_unstable`, `merc_stable`). [gen/mercier.py](gen/mercier.py) writes the
+four files and the run file from a wout.
 
 ## Certificates over a box of states
 

@@ -808,8 +808,13 @@ def tile(width, n, e, scale=1.0):
     would leave the cells a fraction of an ulp apart, which is enough to put
     them outside the theorem even though it is far too small to matter
     numerically.
+
+    d is 64 units above the least that covers the width, so the run passes
+    the width by at least 128 n units: Integrate.integ2_torus decides that it
+    does against its own enclosure of 2 pi, which is a few units wide at the
+    angles' exponent.
     """
-    d = int(np.ceil(width / (2.0 * n) / 2.0**e))
+    d = int(np.ceil(width / (2.0 * n) / 2.0**e)) + 64
     return [(2 * k + 1) * d for k in range(n)], max(1, int(round(d * scale)))
 
 

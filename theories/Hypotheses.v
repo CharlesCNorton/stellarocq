@@ -33,10 +33,16 @@
     statement is worse than unproven, since the inverse is genuinely unbounded
     at rational surfaces, which is what makes islands.
 
-    The encoded physics is read by people. [Print Assumptions] audits the
-    theorems, and Physics.v is definitional: that its expression trees are the
-    ideal-MHD residual is a claim about the encoding, checked by review and by
-    the float reference of proto/continuum_ref.py, not by the kernel.
+    The encoded physics is proven, not read. Physics.v is definitional, and
+    [Continuum.continuum_force_coords] and
+    [Residuals.continuum_force_asym_coords] prove that its expression trees at
+    a free radius are the covariant components of mu0 (J x B - grad p) of the
+    reconstructed field, with the curl written in the coordinates, and
+    [Continuum.continuum_force] and [Residuals.continuum_force_asym] the same
+    through any Cartesian field that agrees with it along the coordinate
+    lines; [Residuals.node_residual] and [Residuals.node_residual_asym] prove
+    that at a node they are VMEC's rule on the half-point fields. What stays
+    with people is the reading of those statements.
 
     The obstruction is about the reconstructed form. [check_ccert_lower]
     proves no field of the certified form balances in a cell. Varying a

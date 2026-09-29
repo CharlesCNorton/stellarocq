@@ -441,6 +441,28 @@ Lemma D_rsn (f : R -> R) (a : R) : is_derive f t0 a ->
   is_derive (fun t => f t * sin (an t)) t0 (a * sin (an t0) + f t0 * (cos (an t0) * dan)).
 Proof. intros H. apply (D_mul f (fun t => sin (an t))); [exact H | apply D_sin, Dan]. Qed.
 
+(** The Cartesian components of the field along the line, differentiated by
+    the product rule. *)
+Definition d_B1 := d_bu * l_eu1 t0 + l_bu t0 * d_eu1 + (d_bv * l_ev1 t0 + l_bv t0 * d_ev1).
+Definition d_B2 := d_bu * l_eu2 t0 + l_bu t0 * d_eu2 + (d_bv * l_ev2 t0 + l_bv t0 * d_ev2).
+Definition d_B3 := d_bu * l_eu3 t0 + l_bu t0 * dzu + (d_bv * l_ev3 t0 + l_bv t0 * dzv).
+
+Lemma D_B : is_derive l_B1 t0 d_B1 /\ is_derive l_B2 t0 d_B2 /\ is_derive l_B3 t0 d_B3.
+Proof.
+  refine (conj _ (conj _ _)).
+  - apply (D_add (fun t => l_bu t * l_eu1 t) (fun t => l_bv t * l_ev1 t)).
+    + apply (D_mul l_bu l_eu1); [exact D_bu | apply D_rc, Dru].
+    + apply (D_mul l_bv l_ev1); [exact D_bv |].
+      apply (D_sub (fun t => rv t * cos (an t)) (fun t => r t * sin (an t))); [apply D_rc, Drv | apply D_rsn, Dr].
+  - apply (D_add (fun t => l_bu t * l_eu2 t) (fun t => l_bv t * l_ev2 t)).
+    + apply (D_mul l_bu l_eu2); [exact D_bu | apply D_rsn, Dru].
+    + apply (D_mul l_bv l_ev2); [exact D_bv |].
+      apply (D_add (fun t => rv t * sin (an t)) (fun t => r t * cos (an t))); [apply D_rsn, Drv | apply D_rc, Dr].
+  - apply (D_add (fun t => l_bu t * l_eu3 t) (fun t => l_bv t * l_ev3 t)).
+    + apply (D_mul l_bu l_eu3); [exact D_bu | exact Dzu].
+    + apply (D_mul l_bv l_ev3); [exact D_bv | exact Dzv].
+Qed.
+
 (** A field G on R^3, differentiable at the point with derivative rows
     (a11 a12 a13), (a21 a22 a23), (a31 a32 a33), and a function E_i along
     the line: the derivative of G . E along the path is (A x') . E + G . E'. *)
@@ -596,6 +618,106 @@ Lemma curl_identity
   dot3 c1 c2 c3 eu1 eu2 eu3 = - ((B_v_u - B_u_v) * bv) /\
   dot3 c1 c2 c3 ev1 ev2 ev3 = (B_v_u - B_u_v) * bu.
 Proof. cbv zeta. unfold dot3. repeat split; ring. Qed.
+
+(** * The force in the coordinates *)
+
+(** [force_law] reads the curl off a Cartesian field G that agrees with the
+    reconstructed field along the three coordinate lines. The same force is
+    written here with no such field. In the orthonormal frame
+    (e_R, e_phi, e_Z) at the toroidal angle of the point, the coordinate
+    vectors e_s, e_u, e_v, their derivatives along the coordinate lines, and
+    the field B = B^u e_u + B^v e_v with its derivatives d_j B along the lines
+    are formulas in the jet. grad s, grad u and grad v are the dual basis,
+    e_u x e_v / sqrt(g) and its two cyclic companions, and the curl is
+    sum_j grad x^j x d_j B: the derivative of the field along the coordinate
+    lines carried through the inverse of the Jacobian matrix, which is the
+    curl in coordinates. [force_coords] states that the three formulas of
+    [full_point_b] are the components along e_s, e_u and e_v of
+    (curl B) x B - mu0 p' grad s. *)
+
+Record vec := V { vx : R ; vy : R ; vz : R }.
+
+Definition vdot (a b : vec) : R := vx a * vx b + vy a * vy b + vz a * vz b.
+Definition vcross (a b : vec) : vec :=
+  V (vy a * vz b - vz a * vy b) (vz a * vx b - vx a * vz b) (vx a * vy b - vy a * vx b).
+Definition vadd (a b : vec) : vec := V (vx a + vx b) (vy a + vy b) (vz a + vz b).
+Definition vscale (k : R) (a : vec) : vec := V (k * vx a) (k * vy a) (k * vz a).
+
+Section Coordinates.
+Variable j : jet.
+
+(** The coordinate vectors at the point. *)
+Definition c_es := V (jRs j) 0 (jZs j).
+Definition c_eu := V (jRu j) 0 (jZu j).
+Definition c_ev := V (jRv j) (jR j) (jZv j).
+
+(** Their derivatives along the coordinate lines, d_j e_i = d_i e_j. The frame
+    turns with the toroidal angle: d_v e_R = e_phi and d_v e_phi = - e_R. *)
+Definition c_esu := V (jRsu j) 0 (jZsu j).
+Definition c_esv := V (jRsv j) (jRs j) (jZsv j).
+Definition c_euu := V (jRuu j) 0 (jZuu j).
+Definition c_euv := V (jRuv j) (jRu j) (jZuv j).
+Definition c_evv := V (jRvv j - jR j) (2 * jRv j) (jZvv j).
+
+(** The field, and its derivatives along the lines by the product rule. *)
+Definition c_B := vadd (vscale (f_Bu j) c_eu) (vscale (f_Bv j) c_ev).
+Definition c_dB (bu' bv' : R) (eu' ev' : vec) : vec :=
+  vadd (vadd (vscale bu' c_eu) (vscale (f_Bu j) eu')) (vadd (vscale bv' c_ev) (vscale (f_Bv j) ev')).
+Definition c_Bs := c_dB (f_Bu_s j) (f_Bv_s j) c_esu c_esv.
+Definition c_Bu := c_dB (f_Bu_u j) (f_Bv_u j) c_euu c_euv.
+Definition c_Bv := c_dB (f_Bu_v j) (f_Bv_v j) c_euv c_evv.
+
+(** The dual basis. *)
+Definition c_gs := vscale (/ f_sqrtg j) (vcross c_eu c_ev).
+Definition c_gu := vscale (/ f_sqrtg j) (vcross c_ev c_es).
+Definition c_gv := vscale (/ f_sqrtg j) (vcross c_es c_eu).
+
+(** The curl in the coordinates, and the force. *)
+Definition c_curl := vadd (vadd (vcross c_gs c_Bs) (vcross c_gu c_Bu)) (vcross c_gv c_Bv).
+Definition c_force := vadd (vcross c_curl c_B) (vscale (- jmu0pp j) c_gs).
+
+(** The derivatives of the covariant components the formulas carry are those
+    of B . e_i along the lines. *)
+Lemma cov_coords :
+  f_B_s_u j = vdot c_Bu c_es + vdot c_B c_esu /\
+  f_B_u_s j = vdot c_Bs c_eu + vdot c_B c_esu /\
+  f_B_s_v j = vdot c_Bv c_es + vdot c_B c_esv /\
+  f_B_v_s j = vdot c_Bs c_ev + vdot c_B c_esv /\
+  f_B_u_v j = vdot c_Bv c_eu + vdot c_B c_euv /\
+  f_B_v_u j = vdot c_Bu c_ev + vdot c_B c_euv.
+Proof.
+  unfold f_B_s_u, f_B_u_s, f_B_s_v, f_B_v_s, f_B_u_v, f_B_v_u, f_dcov,
+    f_guu, f_guv, f_gvv, f_gsu, f_gsv, f_guu_s, f_guv_s, f_gvv_s, f_gsu_u, f_gsu_v, f_gsv_u,
+    f_gsv_v, f_guu_v, f_guv_u, f_guv_v, f_gvv_u,
+    c_Bs, c_Bu, c_Bv, c_dB, c_B, c_es, c_eu, c_ev, c_esu, c_esv, c_euu, c_euv, c_evv,
+    vdot, vadd, vscale.
+  cbn [vx vy vz].
+  refine (conj _ (conj _ (conj _ (conj _ (conj _ _))))); ring.
+Qed.
+
+(** e_s . (e_u x e_v) is the Jacobian. *)
+Lemma triple_coords : vdot (vcross c_eu c_ev) c_es = f_sqrtg j.
+Proof.
+  unfold vdot, vcross, c_es, c_eu, c_ev, f_sqrtg, f_tau. cbn [vx vy vz]. ring.
+Qed.
+
+Theorem force_coords :
+  f_sqrtg j <> 0 ->
+  vdot c_force c_es = cres_s j /\ vdot c_force c_eu = cres_u j /\ vdot c_force c_ev = cres_v j.
+Proof.
+  intros Hsg.
+  destruct cov_coords as (Csu & Cus & Csv & Cvs & Cuv & Cvu).
+  unfold cres_s, cres_u, cres_v, f_mu0Js.
+  rewrite Csu, Cus, Csv, Cvs, Cuv, Cvu.
+  unfold c_force, c_curl, c_gs, c_gu, c_gv, c_Bs, c_Bu, c_Bv, c_dB, c_B,
+    c_es, c_eu, c_ev, c_esu, c_esv, c_euu, c_euv, c_evv, vdot, vcross, vadd, vscale.
+  cbn [vx vy vz].
+  unfold f_sqrtg, f_tau in *.
+  destruct (Rmult_neq_0_reg _ _ Hsg) as [HR Ht].
+  refine (conj _ (conj _ _)); field; repeat split; assumption.
+Qed.
+
+End Coordinates.
 
 (** * The force law *)
 
@@ -817,6 +939,61 @@ Proof.
   - rewrite <- Hs. ring.
   - rewrite <- Hu. ring.
   - rewrite <- Hv. ring.
+Qed.
+
+(** The frame at the toroidal angle of the point, turned into the Cartesian
+    frame. *)
+Definition rotx (w : vec) : R := cos v0 * vx w - sin v0 * vy w.
+Definition roty (w : vec) : R := sin v0 * vx w + cos v0 * vy w.
+
+Ltac close_line := unfold d_B1, d_B2, d_B3, d_bu, d_bv, d_sg, d_tau, d_eu1, d_eu2, d_ev1, d_ev2,
+  l_bu, l_bv, l_sg, l_eu1, l_eu2, l_eu3, l_ev1, l_ev2, l_ev3,
+  rotx, roty, c_Bs, c_Bu, c_Bv, c_dB, c_eu, c_ev, c_esu, c_esv, c_euu, c_euv, c_evv, vadd, vscale,
+  f_Bu, f_Bv, f_Bu_s, f_Bv_s, f_Bu_u, f_Bv_u, f_Bu_v, f_Bv_v, f_dB, f_g2, f_bu_num, f_bv_num,
+  f_g_s, f_g_u, f_g_v, f_tau_s, f_tau_u, f_tau_v, f_sqrtg, f_tau, jet0;
+  cbn [vx vy vz jR jRs jRu jRv jRss jRsu jRsv jRuu jRuv jRvv jZs jZu jZv jZss jZsu jZsv jZuu jZuv
+       jZvv jLu jLv jLsu jLsv jLuu jLuv jLvv jiota jiotap jphip jmu0pp];
+  cbv beta; field; repeat split; first [exact Hsg_R | exact Hsg_tau | (unfold sqrtg in Hsg; exact Hsg)].
+
+Ltac fit H W := match type of H with is_derive _ _ ?X => replace W with X; [exact H | close_line] end.
+
+(** The derivatives of the field along the three coordinate lines, in the
+    Cartesian frame, are [c_Bs], [c_Bu] and [c_Bv] of the jet, turned by the
+    toroidal angle. *)
+Lemma lines_coords :
+  (is_derive (fun t => Bc1 t u0 v0) s0 (rotx (c_Bs jet0)) /\
+   is_derive (fun t => Bc2 t u0 v0) s0 (roty (c_Bs jet0)) /\
+   is_derive (fun t => Bc3 t u0 v0) s0 (vz (c_Bs jet0))) /\
+  (is_derive (fun t => Bc1 s0 t v0) u0 (rotx (c_Bu jet0)) /\
+   is_derive (fun t => Bc2 s0 t v0) u0 (roty (c_Bu jet0)) /\
+   is_derive (fun t => Bc3 s0 t v0) u0 (vz (c_Bu jet0))) /\
+  (is_derive (fun t => Bc1 s0 u0 t) v0 (rotx (c_Bv jet0)) /\
+   is_derive (fun t => Bc2 s0 u0 t) v0 (roty (c_Bv jet0)) /\
+   is_derive (fun t => Bc3 s0 u0 t) v0 (vz (c_Bv jet0))).
+Proof.
+  destruct (D_B _ _ _ _ _ _ _ _ _ _ _ phip s0 _ _ _ _ _ _ _ _ _ _ _
+              (proj1 HR) (proj1 HRs) (proj1 HRu) (proj1 HRv) (proj1 HZs) (proj1 HZu) (proj1 HZv)
+              (proj1 HLu) (proj1 HLv) Hiota (D_const v0 s0) Hsg) as (S1 & S2 & S3).
+  destruct (D_B _ _ _ _ _ _ _ _ _ _ _ phip u0 _ _ _ _ _ _ _ _ _ _ _
+              (proj1 (proj2 HR)) (proj1 (proj2 HRs)) (proj1 (proj2 HRu)) (proj1 (proj2 HRv))
+              (proj1 (proj2 HZs)) (proj1 (proj2 HZu)) (proj1 (proj2 HZv))
+              (proj1 (proj2 HLu)) (proj1 (proj2 HLv)) (D_const (iota s0) u0) (D_const v0 u0) Hsg)
+    as (U1 & U2 & U3).
+  destruct (D_B _ _ _ _ _ _ _ _ _ _ _ phip v0 _ _ _ _ _ _ _ _ _ _ _
+              (proj2 (proj2 HR)) (proj2 (proj2 HRs)) (proj2 (proj2 HRu)) (proj2 (proj2 HRv))
+              (proj2 (proj2 HZs)) (proj2 (proj2 HZu)) (proj2 (proj2 HZv))
+              (proj2 (proj2 HLu)) (proj2 (proj2 HLv)) (D_const (iota s0) v0) (D_idR v0) Hsg)
+    as (V1 & V2 & V3).
+  refine (conj (conj _ (conj _ _)) (conj (conj _ (conj _ _)) (conj _ (conj _ _)))).
+  - fit S1 (rotx (c_Bs jet0)).
+  - fit S2 (roty (c_Bs jet0)).
+  - fit S3 (vz (c_Bs jet0)).
+  - fit U1 (rotx (c_Bu jet0)).
+  - fit U2 (roty (c_Bu jet0)).
+  - fit U3 (vz (c_Bu jet0)).
+  - fit V1 (rotx (c_Bv jet0)).
+  - fit V2 (roty (c_Bv jet0)).
+  - fit V3 (vz (c_Bv jet0)).
 Qed.
 
 Theorem force_law :

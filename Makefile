@@ -1,4 +1,4 @@
-# Stellarocq: proofs -> extraction -> patched OCaml -> checker binary.
+# Stellarocq: proofs -> extraction -> checker binary.
 #
 # Needs the opam switch described in README.md active, and COQRUN_STUBS
 # pointing at rocq-runtime's C stubs archive if it is not at the default
@@ -46,7 +46,6 @@ extract: proofs
 	rocq compile -R ../theories Stellarocq ../theories/Extract.v
 	cp $(KERNEL)/uint63.ml $(KERNEL)/float64.ml \
 	   $(KERNEL)/float64_common.ml extract/
-	python3 gen/patch_extract.py extract
 	cp driver/main.ml driver/dune driver/dune-project extract/
 
 checker: extract
@@ -79,7 +78,6 @@ esc: proofs
 	rm -f esc/_ext/KLohner.mli
 	cp $(KERNEL)/uint63.ml $(KERNEL)/float64.ml $(KERNEL)/float64_common.ml esc/_ext/
 	python3 kam/stub_reals.py esc/_ext
-	python3 gen/patch_extract.py esc/_ext
 	cp esc/main.ml kam/par.ml esc/dune esc/_ext/
 	cd esc/_ext && printf '(lang dune 3.0)\n' > dune-project && dune build ./main.exe
 	@echo "escape checker: esc/_ext/_build/default/main.exe"

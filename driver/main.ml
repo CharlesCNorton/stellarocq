@@ -41,6 +41,22 @@ let z_of_int64 (n : int64) : coq_Z =
   else if Int64.compare n 0L > 0 then Zpos (pos_of_int64 n)
   else Zneg (pos_of_int64 (Int64.neg n))
 
+(* Extracted integer from a decimal string of any length, for the mantissas
+   that do not fit an int64. *)
+let z_of_string (s : string) : coq_Z =
+  let n = String.length s in
+  let neg = n > 0 && s.[0] = '-' in
+  let start = if n > 0 && (s.[0] = '-' || s.[0] = '+') then 1 else 0 in
+  if start >= n then invalid_arg ("z_of_string " ^ s);
+  let ten = z_of_int64 10L in
+  let acc = ref Z0 in
+  for i = start to n - 1 do
+    let c = s.[i] in
+    if c < '0' || c > '9' then invalid_arg ("z_of_string " ^ s);
+    acc := BinInt.Z.add (BinInt.Z.mul !acc ten) (z_of_int64 (Int64.of_int (Char.code c - 48)))
+  done;
+  if neg then BinInt.Z.opp !acc else !acc
+
 (* Approximate float of an extracted integer. *)
 let rec float_of_pos (p : positive) : float =
   match p with
@@ -672,209 +688,207 @@ let rewrite_filtered src dst (lines : string array) (keep : bool array) =
   done;
   close_out oc
 
-(* The integral of each component over the angles the cells cover, node by
-   node, from the per-cell midpoint rules.
+(* The integral of each component over the cells of each node, computed by the
+   extracted Integrate.integ2 and Integrate.integ1 (theories/Integrate.v,
+   integ2_correct and integ1_correct). They lay out the cells themselves,
+   enclose the second derivatives of the three components over each cell,
+   read a bound off each enclosure and check it there, evaluate the components
+   at each centre, and add the midpoint rules and their errors with Cell.isum;
+   the result is scaled from mantissa units by the same Epow2 the checker reads
+   an exponent with.
 
-   With the toroidal half-width zero the cells tile a curve and the rule is
-   the one-dimensional one: Quad.midpoint_sharp per cell, Quad.tiling_encloses
-   for the sum, so the total lies within 2 sum(M2) h^3 of 2 h sum(v), with v
-   the value at the centre of each cell and M2 a bound on the second angular
-   derivative over it.
+   With width in the second slot a node's cells are a lattice, and the integral
+   is over the rectangle it tiles (Quad.tiling2_encloses). Without it each
+   toroidal plane is a run of cells along the first slot, and the integral is
+   over that run (Quad.tiling_var_encloses). The lattice, or the runs, are read
+   off the file here and handed to the integrator, which integrates over what
+   it is handed; the cells are required to be exactly that lattice or those
+   runs, each cell once, so that the range reported is the range the file's
+   cells span. Nodes are split over forked workers, and the parent prints their
+   reports in node order. *)
 
-   With both half-widths positive the cells tile a patch of the surface and
-   the rule is the iterated one: Quad.cell_iterated_encloses per cell,
-   Quad.tiling2_encloses for the sum, so the total lies within
-   4 sum(Muu hu^3 hv + Mvv hu hv^3) of 4 hu hv sum(v). The two directions are
-   separated before either is estimated, so the cost is one more derivative
-   environment per cell and no mixed partial.
-
-   Value and error are both accumulated in the verified interval arithmetic,
-   so the rounding of the sums is enclosed rather than ignored. Work is in
-   mantissa units of the angle slots, and the result is scaled to radians at
-   the end. Cells are split over forked shards whose partial sums round-trip
-   through seventeen significant digits, which is exact for a double. *)
-
-let ival (x : float) : Expr.I.coq_type = Float.Ibnd (x, x)
 let ilo (i : Expr.I.coq_type) =
   match i with Float.Inan -> neg_infinity | Float.Ibnd (a, _) -> a
 let ihi (i : Expr.I.coq_type) =
   match i with Float.Inan -> infinity | Float.Ibnd (_, b) -> b
 
-let integrate_cells prec
-    (cell_of : int -> Cell.ccert * Cell.ccell * int64 * int64)
-    (xu : int) (xv : int) (nnodes : int) (nangles : int) (nplanes : int)
-    (eu : int64) (ev : int64) (jobs : int) (tmp : string)
-    (labels : string list) =
-  let ncells = nnodes * nangles in
-  let two = Expr.I.fromZ prec (z_of_int64 2L) in
-  let four = Expr.I.fromZ prec (z_of_int64 4L) in
-  (* A cell with toroidal width covers a patch of the surface, so every cell
-     of a node belongs to the same integral; one with none covers a curve at
-     a fixed toroidal plane, and the planes stay apart. *)
-  let two_d = let (_, _, _, dv0) = cell_of 0 in Int64.compare dv0 0L > 0 in
-  let np = if two_d then 1 else nplanes in
-  let width = 3 * nnodes * np in
-  (* Each cell's contribution is kept and handed to Cell.isum, which is the
-     summation theories/Cell.v proves encloses the sum of whatever the terms
-     enclose. The loop used to add them itself and correspond to Quad.rsum by
-     inspection; now the correspondence is a call.
+(* The extents of one cell in the two slots: mantissa, exponent and half-width
+   of each. *)
+type icell = { mu : int64 ; eu : int64 ; du : int64 ;
+               mv : int64 ; ev : int64 ; dv : int64 }
 
-     A sharded run adds twice, once inside each shard and once over the shard
-     totals, and both are isum. The list a single isum walks is therefore the
-     shard's cells rather than the covering's, so the association is the
-     split's; what makes that sound is that isum_correct is about whatever
-     reals the terms enclose, and a sum of reals is the same however it is
-     grouped. *)
-  let shard lo hi =
-    let av = Array.make width [] in
-    let ae = Array.make width [] in
-    for k = lo to hi - 1 do
-      let group =
-        (k / nangles) * np
-        + (if two_d then 0 else (k mod nangles) mod np) in
-      let (c, cl, du, dv) = cell_of k in
-      let ctx = ctx_for xu xv nangles k c cl in
-      let ms = cl.Cell.cc_pt.Checker.pt_ms in
-      let r3 = ctx.nc_r3 in
-      let binds = r3.Physics.r_binds in
-      let len = ctx.nc_len in
-      let box = Cell.box_ienv xu xv prec ms cl.Cell.cc_du cl.Cell.cc_dv in
-      let env0 = Expr.iextend prec (Checker.ienv_of prec ms) binds in
-      let env_ddu = Expr.iextend prec box (Lazy.force ctx.nc_ddu) in
-      let env_ddv =
-        if two_d then Expr.iextend prec box (Lazy.force ctx.nc_ddv)
-        else Expr.eempty in
-      let hu = ival (Int64.to_float du) in
-      let hv = ival (Int64.to_float dv) in
-      let hu3 = Expr.I.mul prec hu (Expr.I.mul prec hu hu) in
-      let hv3 = Expr.I.mul prec hv (Expr.I.mul prec hv hv) in
-      let mul3 a b c = Expr.I.mul prec a (Expr.I.mul prec b c) in
-      Stdlib.List.iteri (fun i r ->
-          match Cell.slot_of r with
-          | None -> ()
-          | Some n ->
-              let j = 3 * group + i in
-              (* An enclosure that runs to infinity carries no bound, and
-                 accumulating it would poison the whole sum, so it stops the
-                 run where it happens rather than at the report. *)
-              let need name x =
-                if x <> x || Stdlib.abs_float x = infinity then begin
-                  Printf.eprintf
-                    "cell %d, component %d: the %s enclosure over the box is \
-                     unbounded, so no quadrature error follows. Refine the \
-                     cells (--nu, --nv).\n%!" k i name;
-                  exit 3
-                end;
-                x in
-              let v = Expr.ieval prec env0 r in
-              ignore (need "value" (ilo v)); ignore (need "value" (ihi v));
-              let m2u =
-                ival (need "second u derivative"
-                        (mag (Expr.ieval prec env_ddu (Expr.Evar (n + 2 * len))))) in
-              if two_d then begin
-                let m2v =
-                  ival (need "second v derivative"
-                          (mag (Expr.ieval prec env_ddv (Expr.Evar (n + 2 * len))))) in
-                av.(j) <-
-                  mul3 four (Expr.I.mul prec hu hv) v :: av.(j);
-                ae.(j) <-
-                  Expr.I.add prec
-                    (mul3 four m2u (Expr.I.mul prec hu3 hv))
-                    (mul3 four m2v (Expr.I.mul prec hu hv3)) :: ae.(j)
-              end else begin
-                av.(j) <-
-                  Expr.I.mul prec (Expr.I.mul prec two hu) v :: av.(j);
-                ae.(j) <-
-                  Expr.I.mul prec (Expr.I.mul prec two m2u) hu3 :: ae.(j)
-              end)
-        [ r3.Physics.r_s; r3.Physics.r_u; r3.Physics.r_v ]
-    done;
-    let sv = Array.map (fun l -> Cell.isum prec l) av in
-    let se = Array.map (fun l -> Cell.isum prec l) ae in
-    (sv, se) in
-  let n = max 1 (min jobs (max 1 ncells)) in
-  let sv = Array.make width Expr.I.zero in
-  let se = Array.make width Expr.I.zero in
-  if n = 1 then begin
-    let (a, b) = shard 0 ncells in
-    Array.blit a 0 sv 0 width; Array.blit b 0 se 0 width
-  end else begin
+(* How a node's cells are integrated: a lattice of nu by nv cells whose first
+   starts at (au, av) with half-widths (hu, hv), or one run of cells along the
+   first slot for each plane of the second, as its mantissa and the centres
+   and half-widths of the run. *)
+type iplan =
+  | Rect of int64 * int64 * int * int64 * int64 * int
+  | Runs of (int64 * (int64 * int64) list) list
+
+let plan_of (pt : Checker.cpoint) xu xv (cells : icell array) =
+  let gap =
+    "the cells leave a gap or overlap: they are not a lattice of abutting \
+     cells, each once" in
+  let c0 = cells.(0) in
+  let all f = Array.for_all f cells in
+  let uniq l = Stdlib.List.sort_uniq compare l in
+  (* the centres a + h, a + 3 h, a + 5 h, ... *)
+  let lattice a h l =
+    Stdlib.List.for_all (fun (i, m) ->
+        Int64.equal m (Int64.add a (Int64.mul (Int64.of_int (2 * i + 1)) h)))
+      (Stdlib.List.mapi (fun i m -> (i, m)) l) in
+  let es = pt.Checker.pt_es in
+  if not (all (fun c -> Int64.equal c.eu c0.eu && Int64.equal c.ev c0.ev)
+          && BinInt.Z.eqb (nth_z es xu) (z_of_int64 c0.eu)
+          && BinInt.Z.eqb (nth_z es xv) (z_of_int64 c0.ev)) then
+    Error "the cells are written at different exponents, so they are not one lattice"
+  else if Int64.compare c0.dv 0L > 0 then begin
+    let hu = c0.du and hv = c0.dv in
+    let us = uniq (Array.to_list (Array.map (fun c -> c.mu) cells)) in
+    let vs = uniq (Array.to_list (Array.map (fun c -> c.mv) cells)) in
+    let pairs = uniq (Array.to_list (Array.map (fun c -> (c.mu, c.mv)) cells)) in
+    let n = Array.length cells in
+    let nu = Stdlib.List.length us and nv = Stdlib.List.length vs in
+    let au = Int64.sub (Stdlib.List.hd us) hu and av = Int64.sub (Stdlib.List.hd vs) hv in
+    if all (fun c -> Int64.equal c.du hu && Int64.equal c.dv hv)
+       && Int64.compare hu 0L > 0
+       && lattice au hu us && lattice av hv vs
+       && Stdlib.List.length pairs = n && nu * nv = n
+    then Ok (Rect (au, hu, nu, av, hv, nv))
+    else Error gap
+  end else if all (fun c -> Int64.equal c.dv 0L) then begin
+    let planes = uniq (Array.to_list (Array.map (fun c -> c.mv) cells)) in
+    let runs =
+      Stdlib.List.map (fun p ->
+          (p, Stdlib.List.sort compare
+                (Stdlib.List.filter_map (fun c ->
+                     if Int64.equal c.mv p then Some (c.mu, c.du) else None)
+                   (Array.to_list cells)))) planes in
+    let ends run =
+      let (c, h) = Stdlib.List.hd run in
+      let (c', h') = Stdlib.List.nth run (Stdlib.List.length run - 1) in
+      (Int64.sub c h, Int64.add c' h') in
+    let rec abut = function
+      | (c1, h1) :: ((c2, h2) :: _ as rest) ->
+          Int64.equal (Int64.add c1 h1) (Int64.sub c2 h2) && abut rest
+      | _ -> true in
+    let span = ends (snd (Stdlib.List.hd runs)) in
+    if Stdlib.List.for_all (fun (_, run) ->
+           abut run && ends run = span
+           && Stdlib.List.for_all (fun (_, h) -> Int64.compare h 0L > 0) run) runs
+    then Ok (Runs runs)
+    else Error gap
+  end else Error gap
+
+(* One node's report, as the lines to print. *)
+let integrate_node prec cfg modes xu xv (pt : Checker.cpoint) plan labels b =
+  let es = pt.Checker.pt_es and ms = pt.Checker.pt_ms in
+  let z = z_of_int64 in
+  let expo slot = int_of_float (float_of_z (nth_z es slot)) in
+  let fl m e = Stdlib.ldexp (Int64.to_float m) e in
+  let unbounded =
+    "an enclosure over one of its cells is unbounded, or no bound read off it \
+     passes its check. Refine the cells (--nu, --nv)." in
+  let lines unit_ outs =
+    Stdlib.List.concat
+      (Stdlib.List.mapi (fun i nm ->
+           let (o, e) =
+             match nth_list outs i with
+             | Some p -> p
+             | None -> (Expr.I.nai, Expr.I.nai) in
+           (* the same endpoints in hexadecimal, which round-trips exactly, so
+              what a later stage reads is what this run established *)
+           [ Printf.sprintf "    %-12s [%.9e, %.9e] %s, quadrature error at most %.3e"
+               nm (ilo o) (ihi o) unit_ (ihi e);
+             Printf.sprintf "    %-12s exact  %h %h" nm (ilo o) (ihi o) ])
+         labels) in
+  match plan with
+  | Rect (au, hu, nu, av, hv, nv) ->
+      (match Integrate.integ2 xu xv prec es ms cfg modes (z au) (z hu) nu
+               (z av) (z hv) nv with
+       | None -> Error unbounded
+       | Some outs ->
+           let eu = expo xu and ev = expo xv in
+           let bu = Int64.add au (Int64.mul (Int64.of_int (2 * nu)) hu) in
+           let bv = Int64.add av (Int64.mul (Int64.of_int (2 * nv)) hv) in
+           Ok (Printf.sprintf "  node %d:" b
+               :: Printf.sprintf "    over [%.9f, %.9f] x [%.9f, %.9f], %d by %d cells"
+                    (fl au eu) (fl bu eu) (fl av ev) (fl bv ev) nu nv
+               :: lines "rad^2" outs))
+  | Runs runs ->
+      let one_plane = (Stdlib.List.length runs = 1) in
+      let eu = expo xu and ev = expo xv in
+      let rec go p acc = function
+        | [] -> Ok (Stdlib.List.rev acc)
+        | (cv, run) :: rest ->
+            (match Integrate.integ1 xu xv prec es ms cfg modes (z cv)
+                     (Stdlib.List.map (fun (c, h) -> (z c, z h)) run) with
+             | None -> Error unbounded
+             | Some outs ->
+                 let (c, h) = Stdlib.List.hd run in
+                 let (c', h') = Stdlib.List.nth run (Stdlib.List.length run - 1) in
+                 let block =
+                   (if one_plane then Printf.sprintf "  node %d:" b
+                    else Printf.sprintf "  node %d, plane %d:" b p)
+                   :: Printf.sprintf "    over [%.9f, %.9f] at %.9f, %d cells"
+                        (fl (Int64.sub c h) eu) (fl (Int64.add c' h') eu) (fl cv ev)
+                        (Stdlib.List.length run)
+                   :: lines "rad" outs in
+                 go (p + 1) (Stdlib.List.rev_append block acc) rest) in
+      go 0 [] runs
+
+let integrate_nodes prec cfg modes xu xv
+    (nodes : (Checker.cpoint * icell array) array) (jobs : int) (tmp : string)
+    (labels : string list) =
+  let nb = Array.length nodes in
+  (* what each node's cells are is settled before any work is split *)
+  let plans =
+    Array.mapi (fun b (pt, cells) ->
+        match plan_of pt xu xv cells with
+        | Ok p -> p
+        | Error msg ->
+            Printf.eprintf
+              "node %d: %s, so their sum is not an integral over the range they span\n%!"
+              b msg;
+            exit 3) nodes in
+  let run lo hi oc =
+    for b = lo to hi - 1 do
+      match integrate_node prec cfg modes xu xv (fst nodes.(b)) plans.(b) labels b with
+      | Ok ls -> Stdlib.List.iter (fun l -> output_string oc (l ^ "\n")) ls; flush oc
+      | Error msg -> Printf.eprintf "node %d: %s\n%!" b msg; exit 3
+    done in
+  let n = max 1 (min jobs nb) in
+  if n = 1 then run 0 nb stdout
+  else begin
+    flush stdout;
     let part i = Printf.sprintf "%s.int%d" tmp i in
+    let range i = (i * nb / n, (i + 1) * nb / n) in
     let pids =
       Stdlib.List.init n (fun i ->
           match Unix.fork () with
           | 0 ->
-              let lo = i * ncells / n and hi = (i + 1) * ncells / n in
-              let (a, b) = shard lo hi in
+              let (lo, hi) = range i in
               let oc = open_out (part i) in
-              for j = 0 to width - 1 do
-                (* hexadecimal floats round-trip exactly *)
-                Printf.fprintf oc "%h %h %h %h\n"
-                  (ilo a.(j)) (ihi a.(j)) (ilo b.(j)) (ihi b.(j))
-              done;
-              close_out oc; exit 0
+              run lo hi oc; close_out oc; exit 0
           | pid -> pid) in
-    Stdlib.List.iter (fun pid ->
-        match snd (Unix.waitpid [] pid) with
-        | Unix.WEXITED 0 -> ()
-        | _ -> prerr_endline "an integration shard failed"; exit 3) pids;
-    (* The shard totals are summed by Cell.isum as well, not by a loop of
-       additions written here. Read at two levels, isum_correct covers the
-       whole chain: each shard's isum encloses the sum of the contributions
-       of its own cells, and the isum over the shard totals encloses the sum
-       of those sums, which is the total because addition of reals does not
-       care how the shards were cut. *)
-    let pv = Array.make width [] in
-    let pe = Array.make width [] in
+    let ok =
+      Stdlib.List.fold_left (fun acc pid ->
+          match snd (Unix.waitpid [] pid) with
+          | Unix.WEXITED 0 -> acc
+          | _ -> false) true pids in
+    if not ok then begin
+      for i = 0 to n - 1 do
+        if Sys.file_exists (part i) then Sys.remove (part i)
+      done;
+      prerr_endline "an integration worker failed";
+      exit 3
+    end;
     for i = 0 to n - 1 do
       let ic = open_in (part i) in
-      for j = 0 to width - 1 do
-        Scanf.sscanf (input_line ic) "%h %h %h %h"
-          (fun a b c d ->
-             pv.(j) <- Float.Ibnd (a, b) :: pv.(j);
-             pe.(j) <- Float.Ibnd (c, d) :: pe.(j))
-      done;
+      (try while true do print_endline (input_line ic) done with End_of_file -> ());
       close_in ic; Sys.remove (part i)
-    done;
-    for j = 0 to width - 1 do
-      sv.(j) <- Cell.isum prec pv.(j);
-      se.(j) <- Cell.isum prec pe.(j)
     done
-  end;
-  (* Work is in mantissa units of the angle slots, and the result is in
-     radians, so the sum has to be widened by the quadrature error and scaled
-     by a power of two. Doing either in ordinary floating point rounds in an
-     unknown direction, and a rounded-in endpoint is a narrower interval than
-     the one the theorem established, so both steps run in the same interval
-     arithmetic as everything else: the error becomes a symmetric interval
-     built from the exact stored endpoint, and the power of two is the same
-     Epow2 the checker reads an exponent with. *)
-  let kexp = if two_d then Int64.add eu ev else eu in
-  let scl = Expr.ieval prec Expr.eempty (Expr.Epow2 (z_of_int64 kexp)) in
-  let scale = 2.0 ** Int64.to_float kexp in
-  let unit = if two_d then "rad^2" else "rad" in
-  for node = 0 to nnodes - 1 do
-    for plane = 0 to np - 1 do
-      if np = 1 then Printf.printf "  node %d:\n%!" node
-      else Printf.printf "  node %d, plane %d:\n%!" node plane;
-      Stdlib.List.iteri (fun i nm ->
-          let j = 3 * (node * np + plane) + i in
-          let e = ihi se.(j) in
-          (* negating a float is exact, so this interval is the error bound
-             read symmetrically and nothing is lost building it *)
-          let err = Float.Ibnd (-. e, e) in
-          let out =
-            Expr.I.mul prec (Expr.I.add prec sv.(j) err) scl in
-          let lo = ilo out and hi = ihi out in
-          Printf.printf
-            "    %-12s [%.9e, %.9e] %s, quadrature error at most %.3e\n%!"
-            nm lo hi unit (e *. scale);
-          (* the same endpoints in hexadecimal, which round-trips exactly,
-             so what a later stage reads is what this run established *)
-          Printf.printf "    %-12s exact  %h %h\n%!" nm lo hi)
-        labels
-    done
-  done
+  end
 
 (* ---- the Mercier criterion ---------------------------------------------- *)
 
@@ -1064,7 +1078,9 @@ let run_newton path mode =
     if name = "colloc" then begin
       expect "NPARAM"; let q = Int64.to_int (i64 ()) in
       expect "PARAM";
-      Stdlib.List.init q (fun _ -> let m = z () in let e = z () in (m, e))
+      (* a parameter's mantissa may be wider than an int64: the data of a
+         manufactured problem are carried at 120 bits *)
+      Stdlib.List.init q (fun _ -> let m = z_of_string (tok ()) in let e = z () in (m, e))
     end else [] in
   expect "R"; let r64 = i64 () in let r = z_of_int64 r64 in
   expect "K"; let kn = z () in let kq = z () in
@@ -2147,8 +2163,462 @@ let run_bt src =
 (* A dyadic rational m * 2^e. *)
 type dy = { m : int64 ; e : int64 }
 
+(* One node block of a certificate: its radius, the radii of its three nodes
+   and two half points, the transform, the R, Z and lambda coefficients, the
+   antisymmetric and stream-function blocks, the cell bounds, and its own
+   half-width and pressure coefficients when it carries them. *)
+type pnode =
+  dy * dy array * dy array * dy array * dy array * dy array * dy array * dy array
+  * (int array * int array * int array) array * int64 option * dy array option
+
+(* A certificate as read from its file. *)
+type pcert = {
+  p_cells_mode : bool ; p_prec : int64 ; p_lasym : bool ; p_prof : Physics.pprofile ;
+  p_xu : int ; p_xv : int ; p_slot3_file : (int * int64) option ; p_taylor_file : bool ;
+  p_n_bound : int ; p_out : Physics.rout ; p_cfg : Physics.pconfig ; p_nk : int ;
+  p_modes : (int64 * int64) array ; p_phip : dy ; p_am : dy array ; p_eps : dy array ;
+  p_na : int ; p_angles : (dy * dy * int64 * int64) array ; p_nb : int ;
+  p_node_at : int -> pnode ;
+  p_env_of : pnode -> (dy * dy * int64 * int64) -> Checker.cpoint ;
+  p_coq_modes : (coq_Z * coq_Z) list }
+
+(* The bound lines of a cell, as the extracted records. *)
+let mk_cb (a : int array) =
+  let z i = z_of_int64 (Int64.of_int a.(i)) in
+  { Cell.cb_N0 = z 0; Cell.cb_q0 = z 1;
+    Cell.cb_NDu = z 2; Cell.cb_qDu = z 3;
+    Cell.cb_NDv = z 4; Cell.cb_qDv = z 5;
+    Cell.cb_Nc = z 6; Cell.cb_qc = z 7 }
+(* the third slot's derivative bound, when the file carries one *)
+let mk_w (a : int array) =
+  (z_of_int64 (Int64.of_int a.(8)), z_of_int64 (Int64.of_int a.(9)))
+(* a Taylor bound line: value, first and second derivative in the first
+   slot, the mean-value step in the second, and the cell bound *)
+let mk_tb (a : int array) =
+  let z i = z_of_int64 (Int64.of_int a.(i)) in
+  { Cell.tb_N0 = z 0; Cell.tb_q0 = z 1;
+    Cell.tb_Nu = z 2; Cell.tb_qu = z 3;
+    Cell.tb_Nuu = z 4; Cell.tb_quu = z 5;
+    Cell.tb_Nv = z 6; Cell.tb_qv = z 7;
+    Cell.tb_Nc = z 8; Cell.tb_qc = z 9 }
+
+(* Read a point or cell certificate. *)
+let parse_cert (src : string) : pcert =
+  let toks = tokens_of_file src in
+  let p = ref 0 in
+  let tok () = let t = toks.(!p) in incr p; t in
+  let expect w = let t = tok () in
+    if t <> w then (Printf.eprintf "expected %s, got %s (tok %d)\n" w t !p; exit 2) in
+  let int64 () = Int64.of_string (tok ()) in
+  let dyadic () = let m = int64 () in let e = int64 () in { m; e } in
+
+  let cells_mode = (toks.(0) = "STELLAROCQ-CCERT") in
+  expect (if cells_mode then "STELLAROCQ-CCERT" else "STELLAROCQ-CERT");
+  expect "PREC"; let prec = int64 () in
+  if Int64.compare prec 2L < 0 then (prerr_endline "PREC must be at least 2"; exit 2);
+  (* Whether the reconstruction carries the antisymmetric half, and which
+     closed form the pressure takes. Both fix the shape of the environment
+     and of the residual, so they are read before anything numeric. *)
+  expect "LASYM"; let lasym = (tok () = "1") in
+  expect "PROFILE";
+  let prof =
+    match tok () with
+    | "POWER" -> Physics.PPower
+    | "TWOPOWER" ->
+        let p = Int64.to_int (int64 ()) in
+        let q = Int64.to_int (int64 ()) in Physics.PTwoPower (p, q)
+    | "CUBIC" -> Physics.PCubic
+    | "RATIONAL" ->
+        let a = Int64.to_int (int64 ()) in
+        let b = Int64.to_int (int64 ()) in Physics.PRational (a, b)
+    | "GAUSSTRUNC" -> Physics.PGaussTrunc
+    | "TWOPOWERGS" ->
+        let p = Int64.to_int (int64 ()) in
+        let q = Int64.to_int (int64 ()) in
+        let g = Int64.to_int (int64 ()) in Physics.PTwoPowerGs (p, q, g)
+    | "PEDESTAL" -> Physics.PPedestal
+    | "TWOLORENTZ" ->
+        let p = Int64.to_int (int64 ()) in
+        let q = Int64.to_int (int64 ()) in
+        let r = Int64.to_int (int64 ()) in
+        let t = Int64.to_int (int64 ()) in Physics.PTwoLorentz (p, q, r, t)
+    | s -> Printf.eprintf "unknown PROFILE %s\n" s; exit 2 in
+  (* the two input slots a cell ranges over; 1 and 2 are the angles *)
+  expect "SLOTS";
+  let xu = Int64.to_int (int64 ()) in
+  let xv = Int64.to_int (int64 ()) in
+  (* A third varied slot carried by the file rather than by the command line.
+     With it a cell certificate is checked by Cell.check_ccert3, and what the
+     run establishes is a bound at every point of a cell in three coordinates
+     at once. Each bound line then carries two more numbers, the bound on the
+     third derivative of that component. *)
+  let slot3_file =
+    if !p < Array.length toks && toks.(!p) = "SLOT3" then begin
+      ignore (tok ());
+      let w = Int64.to_int (int64 ()) in
+      let dw = int64 () in
+      Some (w, dw)
+    end else None in
+  (* A TAYLOR line marks a certificate whose first varied slot is charged
+     against its derivative at the centre, so every bound line carries ten
+     numbers rather than eight: N0 q0 Nu qu Nuu quu Nv qv Nc qc. "--tighten
+     --taylor" writes such a file and an ordinary run of it establishes it
+     with Cell.check_ccert_t, the way a SLOT3 file is checked by
+     check_ccert3. *)
+  let taylor_file =
+    if !p < Array.length toks && toks.(!p) = "TAYLOR"
+    then (ignore (tok ()); true) else false in
+  (* Both markers widen a bound line to ten numbers and the two tens mean
+     different things: a third slot appends its own derivative pair after the
+     cell bound, a Taylor line puts a first and second derivative before it.
+     A file carrying both says nothing about which its ten are, so it is
+     refused rather than read as one of them. *)
+  (if slot3_file <> None && taylor_file then begin
+     prerr_endline
+       "this file carries both SLOT3 and TAYLOR, whose bound lines are the \
+        same width and different fields; one or the other";
+     exit 2
+   end);
+  let n_bound =
+    match slot3_file with Some _ -> 10 | None -> if taylor_file then 10 else 8 in
+  (* What the three components carry: the residual, the residual times one
+     angular kernel, or the integrands of the flux-surface averages. *)
+  expect "OUTPUT";
+  let out =
+    match tok () with
+    | "residual" -> Physics.RResidual
+    | "geometry" -> Physics.RGeometry
+    | "mercier-a" -> Physics.RMercierA
+    | "mercier-b" -> Physics.RMercierB
+    | "radial" -> Physics.RRadial
+    | "radial-geometry" -> Physics.RRadialGeom
+    | "radial-shear" -> Physics.RRadialShear
+    | "radial-axis" -> Physics.RRadialAxis
+    | "terms" -> Physics.RTerms
+    | "radial-terms" -> Physics.RRadialTerms
+    | "current-terms" -> Physics.RJsTerms
+    | "radial-current-terms" -> Physics.RRadialJsTerms
+    | "quasisym" -> Physics.RQuasiSym
+    | "quasisym-two" -> Physics.RQuasiTwo
+    | "covariant" ->
+        let hm = int64 () in
+        let hn = int64 () in
+        Physics.RCovHarm (z_of_int64 hm, z_of_int64 hn)
+    | "covariant-sin" ->
+        let hm = int64 () in
+        let hn = int64 () in
+        Physics.RCovHarmS (z_of_int64 hm, z_of_int64 hn)
+    | "stream-defect" -> Physics.RStreamDefect
+    | "boozer" ->
+        let hm = int64 () in
+        let hn = int64 () in
+        Physics.RBoozer (z_of_int64 hm, z_of_int64 hn)
+    | "harmonic" ->
+        let hm = int64 () in
+        let hn = int64 () in
+        Physics.RHarmonic (z_of_int64 hm, z_of_int64 hn)
+    | s -> prerr_endline ("unknown OUTPUT " ^ s); exit 2 in
+  let cfg =
+    { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
+      Physics.pc_out = out } in
+  expect "MODES";
+  let nk = Int64.to_int (int64 ()) in
+  let modes = Array.init nk (fun _ -> let m = int64 () in let n = int64 () in (m, n)) in
+  expect "PHIP"; let phip = dyadic () in
+  expect "AM"; expect "21";
+  let am = Array.init 21 (fun _ -> dyadic ()) in
+  let eps =
+    if cells_mode then [||]
+    else begin
+      expect "EPS_S"; let a = dyadic () in
+      expect "EPS_U"; let b = dyadic () in
+      expect "EPS_V"; let c = dyadic () in
+      [| a; b; c |]
+    end in
+  expect "NANGLES";
+  let na = Int64.to_int (int64 ()) in
+  (* in cell mode each angle carries the half-widths of its cell, in units of
+     the mantissa of that angle *)
+  let angles = Array.init na (fun _ ->
+      let u = dyadic () in let v = dyadic () in
+      let du = if cells_mode then int64 () else 0L in
+      let dv = if cells_mode then int64 () else 0L in
+      (u, v, du, dv)) in
+  expect "NNODES";
+  let nb = Int64.to_int (int64 ()) in
+  (* The bounds of every cell are held as unboxed ints and turned into the
+     extracted record only for the cell being checked. A coq_Z is a boxed
+     binary-positive tree, so converting a whole certificate up front costs
+     gigabytes at the cell counts a volume covering needs, and the forked
+     workers each pay for it again as the collector touches the pages. *)
+  let cbounds () = Array.init n_bound (fun _ -> Int64.to_int (int64 ())) in
+  (* Everything a node block fixes. Consecutive radial cells of one node
+     differ only in their radius and half-width, so a block may say SAME and
+     take the coefficients of the one before it, which is what keeps a volume
+     certificate from repeating the same few thousand numbers once per cell. *)
+  let nodes = Array.make nb None in
+  for i = 0 to nb - 1 do
+    expect "NODE";
+    let same = (!p < Array.length toks && toks.(!p) = "SAME") in
+    if same then ignore (tok ());
+    expect "S"; let s = dyadic () in
+    (* A node may carry its own half-width for the first varied slot. The
+       angle list is shared by every node, so without this every radial cell
+       is the same width, and the bound over a plasma is set near the axis
+       while the resolvable region is left coarser than it need be. *)
+    let node_du =
+      if !p < Array.length toks && toks.(!p) = "DU"
+      then (ignore (tok ()); Some (int64 ()))
+      else None in
+    (* A node may also carry its own pressure coefficients. A piecewise
+       profile is one cubic on each piece, so a covering that crosses a knot
+       needs the piece to change with the node rather than once for the file.
+       Absent, the file's own AM block is used. *)
+    let node_am =
+      if !p < Array.length toks && toks.(!p) = "AMLOCAL"
+      then begin
+        ignore (tok ()); expect "21";
+        Some (Array.init 21 (fun _ -> dyadic ()))
+      end else None in
+    let (snodes, shalf, iota, rn, zn, ln, anti) =
+      if same then begin
+        if i = 0 then (prerr_endline "the first NODE cannot be SAME"; exit 2);
+        match nodes.(i - 1) with
+        | None -> prerr_endline "no previous node"; exit 2
+        | Some (_, sn, sh, io, rn, zn, ln, an, _, _, _) ->
+            (sn, sh, io, rn, zn, ln, an)
+      end else begin
+        expect "SNODES"; let snodes = Array.init 3 (fun _ -> dyadic ()) in
+        expect "SHALF"; let shalf = Array.init 2 (fun _ -> dyadic ()) in
+        expect "IOTA";  let iota  = Array.init 2 (fun _ -> dyadic ()) in
+        expect "RNODES"; let rn = Array.init (3*nk) (fun _ -> dyadic ()) in
+        expect "ZNODES"; let zn = Array.init (3*nk) (fun _ -> dyadic ()) in
+        expect "LHALF"; let ln = Array.init (2*nk) (fun _ -> dyadic ()) in
+        let anti =
+          if not lasym then [||]
+          else begin
+            expect "RNODES_A";
+            let rna = Array.init (3*nk) (fun _ -> dyadic ()) in
+            expect "ZNODES_A";
+            let zna = Array.init (3*nk) (fun _ -> dyadic ()) in
+            expect "LHALF_A";
+            let lna = Array.init (2*nk) (fun _ -> dyadic ()) in
+            Array.concat [rna; zna; lna]
+          end in
+        (snodes, shalf, iota, rn, zn, ln, anti)
+      end in
+    (* An output that reads a Boozer stream function carries one more block:
+       its coefficients, then the two flux functions I and G. The
+       reconstruction never computes it, so it is data the certificate carries
+       and whose defect a stream-defect covering bounds. *)
+    let wblock =
+      if !p < Array.length toks && toks.(!p) = "WCOEF"
+      then begin
+        ignore (tok ());
+        let m = Int64.to_int (int64 ()) in
+        if m <> nk then
+          (prerr_endline "WCOEF count differs from MODES"; exit 2);
+        Array.init (nk + 2) (fun _ -> dyadic ())
+      end else [||] in
+    (* the flux function a two-term quasisymmetry certificate claims the
+       ratio equals; one number, read the way the stream function block is *)
+    let f0block =
+      if !p < Array.length toks && toks.(!p) = "FZERO"
+      then (ignore (tok ()); [| dyadic () |])
+      else [||] in
+    let bounds =
+      if cells_mode then begin
+        expect "CELLS";
+        let m = Int64.to_int (int64 ()) in
+        if m <> na then
+          (prerr_endline "CELLS count differs from NANGLES"; exit 2);
+        Array.init m (fun _ ->
+            let bs = cbounds () in
+            let bu = cbounds () in
+            let bv = cbounds () in
+            (bs, bu, bv))
+      end else [||] in
+    nodes.(i) <-
+      Some (s, snodes, shalf, iota, rn, zn, ln,
+            Array.append anti (Array.append wblock f0block),
+            bounds, node_du, node_am)
+  done;
+  let node_at i =
+    match nodes.(i) with
+    | Some n -> n
+    | None -> prerr_endline "a node block is missing"; exit 2 in
+
+  (* ---- expand into per-point environments ------------------------------ *)
+  (* Environment of one point, in the slot order of Physics.v. *)
+  let env_of (s, snodes, shalf, iota, rn, zn, ln, anti, _, _, node_am)
+        (u, v, _, _) =
+    let am = match node_am with Some a -> a | None -> am in
+    let entries =
+      Array.concat [
+        [| s; u; v; phip |];
+        snodes; shalf; iota; am; rn; zn; ln; anti ] in
+    let ms = Array.to_list (Array.map (fun d -> z_of_int64 d.m) entries) in
+    let es = Array.to_list (Array.map (fun d -> z_of_int64 d.e) entries) in
+    { Checker.pt_ms = ms; Checker.pt_es = es }
+  in
+  let coq_modes =
+    Array.to_list (Array.map (fun (m, n) -> (z_of_int64 m, z_of_int64 n)) modes) in
+  (* The order env_of concatenates its blocks in has to be the order
+     Physics.v allocates against. Nothing inside the proof ties slot 32 to
+     the first rmnc coefficient: the theorem quantifies over whatever
+     mantissas it is handed, so a block written at the wrong offset certifies
+     a different object and still passes. The offsets the concatenation
+     produces are computed from the block sizes and read against the
+     extracted constants, so a change on either side stops the run. *)
+  let () =
+    let off_R = 4 + 3 + 2 + 2 + 21 in
+    let off_Z = off_R + 3 * nk in
+    let off_L = off_Z + 3 * nk in
+    let off_Ra = off_L + 2 * nk in
+    let off_Za = off_Ra + 3 * nk in
+    let off_La = off_Za + 3 * nk in
+    let off_W = if lasym then off_La + 2 * nk else off_Ra in
+    let expect name got want =
+      if got <> want then begin
+        Printf.eprintf
+          "the %s block is written at slot %d and Physics.v reads it at %d\n%!"
+          name got want;
+        exit 2
+      end in
+    expect "R cosine" off_R (Physics.base_R nk);
+    expect "Z sine" off_Z (Physics.base_Z nk);
+    expect "lambda sine" off_L (Physics.base_L nk);
+    if lasym then begin
+      expect "R sine" off_Ra (Physics.base_Ra nk);
+      expect "Z cosine" off_Za (Physics.base_Za nk);
+      expect "lambda cosine" off_La (Physics.base_La nk)
+    end;
+    expect "stream function" off_W (Physics.base_W lasym nk) in
+  { p_cells_mode = cells_mode; p_prec = prec; p_lasym = lasym; p_prof = prof;
+    p_xu = xu; p_xv = xv; p_slot3_file = slot3_file; p_taylor_file = taylor_file;
+    p_n_bound = n_bound; p_out = out; p_cfg = cfg; p_nk = nk; p_modes = modes;
+    p_phip = phip; p_am = am; p_eps = eps; p_na = na; p_angles = angles; p_nb = nb;
+    p_node_at = node_at; p_env_of = env_of; p_coq_modes = coq_modes }
+
+(* ---- the Mercier criterion in one run ----------------------------------- *)
+
+(* "--mercier-run FILE" reads the four coverings of one surface and the two
+   numbers of the wout the criterion also needs, and hands them to the
+   extracted MercierRun.merc_run, which integrates each covering's integrands
+   over the angular torus itself and assembles DShear, DCurr, DWell, DGeod
+   and DMerc from those integrals. The file is
+
+     STELLAROCQ-MERCRUN
+     NODE b
+     A <covering with OUTPUT mercier-a>
+     B <covering with OUTPUT mercier-b>
+     G <covering with OUTPUT radial-geometry>
+     S <covering with OUTPUT radial-shear>
+     PHIPS m e
+     SIGNGS m e
+
+   with b the node block of the surface in each covering. What the run takes
+   from a covering's cells is the extent of the lattice they form from 0 in
+   both angles; the integration lays out its own cells. *)
+let run_mercier_run path =
+  let t = tokens_of_file path in
+  let p = ref 0 in
+  let tok () = let x = t.(!p) in incr p; x in
+  let expect w =
+    let x = tok () in
+    if x <> w then (Printf.eprintf "expected %s, got %s\n" w x; exit 2) in
+  let i64 () = Int64.of_string (tok ()) in
+  expect "STELLAROCQ-MERCRUN";
+  expect "NODE"; let b = Int64.to_int (i64 ()) in
+  let file tag = expect tag; tok () in
+  let fa = file "A" in let fb = file "B" in let fg = file "G" in let fs = file "S" in
+  expect "PHIPS"; let phm = i64 () in let phe = i64 () in
+  expect "SIGNGS"; let sgm = i64 () in let sge = i64 () in
+  let z = z_of_int64 in
+  let block name f =
+    let pc = parse_cert f in
+    if not pc.p_cells_mode || pc.p_xu <> 1 || pc.p_xv <> 2 then begin
+      Printf.eprintf "%s: a covering of the two angles, slots 1 and 2, is needed\n%!" name;
+      exit 2
+    end;
+    if b < 0 || b >= pc.p_nb then (Printf.eprintf "%s: no node %d\n%!" name b; exit 2);
+    let node = pc.p_node_at b in
+    let (_, _, _, _, _, _, _, _, _, ndu, _) = node in
+    if ndu <> None then begin
+      Printf.eprintf "%s: node %d carries its own half-width\n%!" name b; exit 2
+    end;
+    let pt = pc.p_env_of node pc.p_angles.(0) in
+    let cells =
+      Array.map (fun ((u : dy), (v : dy), du, dv) ->
+          { mu = u.m; eu = u.e; du; mv = v.m; ev = v.e; dv }) pc.p_angles in
+    match plan_of pt 1 2 cells with
+    | Ok (Rect (au, hu, nu, av, hv, nv)) when Int64.equal au 0L && Int64.equal av 0L ->
+        (pc, { MercierRun.bk_es = pt.Checker.pt_es; MercierRun.bk_ms = pt.Checker.pt_ms;
+               MercierRun.bk_cfg = pc.p_cfg; MercierRun.bk_modes = pc.p_coq_modes;
+               MercierRun.bk_hu = z hu; MercierRun.bk_NU = nu;
+               MercierRun.bk_hv = z hv; MercierRun.bk_NV = nv })
+    | _ ->
+        Printf.eprintf "%s: the cells are not a lattice from 0 in both angles\n%!" name;
+        exit 2 in
+  let (pa, ba) = block "A" fa in
+  let (_, bb) = block "B" fb in
+  let (_, bg) = block "G" fg in
+  let (_, bs) = block "S" fs in
+  let prec =
+    Cell.cprec_of { Cell.cc_prec = z pa.p_prec; Cell.cc_cfg = pa.p_cfg;
+                    Cell.cc_modes = []; Cell.cc_cells = [] } in
+  Printf.printf
+    "the Mercier criterion at node %d from four coverings, each integrated over the \
+     angular torus, precision %Ld bits\n%!" b pa.p_prec;
+  match MercierRun.merc_run prec ba bb bg bs (z phm) (z phe) (z sgm) (z sge) with
+  | None ->
+      (* which covering, run on its own *)
+      Stdlib.List.iter (fun (nm, bk) ->
+          match MercierRun.torus prec bk with
+          | Some _ -> ()
+          | None ->
+              Printf.eprintf
+                "covering %s does not pass: an enclosure over one of its cells is \
+                 unbounded, or its lattice does not reach past a period ending \
+                 inside its last cell\n%!" nm)
+        [ ("A", ba); ("B", bb); ("G", bg); ("S", bs) ];
+      exit 3
+  | Some (ins, is) ->
+      (* the ten numbers the terms are evaluated at, in Mercier.v's slot order:
+         the eight torus integrals, then phips and signgs *)
+      Stdlib.List.iteri (fun i nm ->
+          let x = match nth_list ins i with Some x -> x | None -> Expr.I.nai in
+          Printf.printf "  %-8s [%+.9e, %+.9e]\n%!" nm (ilo x) (ihi x))
+        [ "tpp"; "tbb"; "tjb"; "tjj"; "V''"; "mu0 p'"; "iota'"; "I'"; "phips"; "signgs" ];
+      let term i = match nth_list is i with Some x -> x | None -> Expr.I.nai in
+      Stdlib.List.iteri (fun i nm ->
+          let x = term i in
+          Printf.printf "  %-7s [%+.6e, %+.6e]\n" nm (ilo x) (ihi x);
+          Printf.printf "  %-7s exact  %h %h\n%!" nm (ilo x) (ihi x))
+        [ "DShear"; "DCurr"; "DWell"; "DGeod"; "DStable"; "DMerc" ];
+      (* a verdict is DMerc's own enclosure against a margin the extracted
+         check accepts: MercierRun.merc_unstable and merc_stable *)
+      let dm = term 5 in
+      let shrink check start =
+        let rec go (m, q) k =
+          if k > 200 || Int64.compare m 1L < 0 then None
+          else if check (z m) (z q) then Some (m, q)
+          else go (Int64.sub m (Int64.add 1L (Int64.div m 4096L)), q) (k + 1) in
+        go start 0 in
+      let value (m, q) = Int64.to_float m *. (2.0 ** Int64.to_float q) in
+      if ihi dm < 0.0 then begin
+        match shrink (MercierRun.below prec dm) (dyadic_le (-. (ihi dm))) with
+        | Some mq -> Printf.printf "verdict: UNSTABLE   DMerc <= %.6e on this surface\n%!" (-. (value mq))
+        | None -> Printf.printf "verdict: OPEN   no margin was accepted\n%!"
+      end else if ilo dm > 0.0 then begin
+        match shrink (MercierRun.above prec dm) (dyadic_le (ilo dm)) with
+        | Some mq -> Printf.printf "verdict: STABLE   DMerc >= %.6e on this surface\n%!" (value mq)
+        | None -> Printf.printf "verdict: OPEN   no margin was accepted\n%!"
+      end else
+        Printf.printf "verdict: OPEN   the enclosure of DMerc straddles zero\n%!"
+
 (* Parse the certificate, expand nodes into points, run the checker. *)
-let () =
+let main () =
   (* "--lower" reverses the test: instead of proving every component small,
      prove some component at least the claimed size, which says the field is
      not in force balance there by that margin. It combines with --tighten,
@@ -2202,6 +2672,16 @@ let () =
        (if flag = "--newton" then `Check
         else if flag = "--newton-eval" then `Eval
         else if flag = "--newton-centre" then `Centre else `Stability);
+     exit 0
+   end);
+  (* "--mercier-run FILE" computes the criterion of one surface from its four
+     coverings in one run. *)
+  (if has "--mercier-run" then begin
+     let rec find = function
+       | "--mercier-run" :: f :: _ -> f
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--mercier-run needs a file"; exit 2 in
+     run_mercier_run (find args);
      exit 0
    end);
   (* "--mercier FILE" assembles the criterion from the enclosures a covering
@@ -2354,315 +2834,15 @@ let () =
     exit 2 in
   let src = match positional with s :: _ -> s | [] -> usage () in
   let dst = match positional with _ :: d :: _ -> d | _ -> if tighten then usage () else "" in
-  let toks = tokens_of_file src in
-  let p = ref 0 in
-  let tok () = let t = toks.(!p) in incr p; t in
-  let expect w = let t = tok () in
-    if t <> w then (Printf.eprintf "expected %s, got %s (tok %d)\n" w t !p; exit 2) in
-  let int64 () = Int64.of_string (tok ()) in
-  let dyadic () = let m = int64 () in let e = int64 () in { m; e } in
-
-  let cells_mode = (toks.(0) = "STELLAROCQ-CCERT") in
-  expect (if cells_mode then "STELLAROCQ-CCERT" else "STELLAROCQ-CERT");
-  expect "PREC"; let prec = int64 () in
-  if Int64.compare prec 2L < 0 then (prerr_endline "PREC must be at least 2"; exit 2);
-  (* Whether the reconstruction carries the antisymmetric half, and which
-     closed form the pressure takes. Both fix the shape of the environment
-     and of the residual, so they are read before anything numeric. *)
-  expect "LASYM"; let lasym = (tok () = "1") in
-  expect "PROFILE";
-  let prof =
-    match tok () with
-    | "POWER" -> Physics.PPower
-    | "TWOPOWER" ->
-        let p = Int64.to_int (int64 ()) in
-        let q = Int64.to_int (int64 ()) in Physics.PTwoPower (p, q)
-    | "CUBIC" -> Physics.PCubic
-    | "RATIONAL" ->
-        let a = Int64.to_int (int64 ()) in
-        let b = Int64.to_int (int64 ()) in Physics.PRational (a, b)
-    | "GAUSSTRUNC" -> Physics.PGaussTrunc
-    | "TWOPOWERGS" ->
-        let p = Int64.to_int (int64 ()) in
-        let q = Int64.to_int (int64 ()) in
-        let g = Int64.to_int (int64 ()) in Physics.PTwoPowerGs (p, q, g)
-    | "PEDESTAL" -> Physics.PPedestal
-    | "TWOLORENTZ" ->
-        let p = Int64.to_int (int64 ()) in
-        let q = Int64.to_int (int64 ()) in
-        let r = Int64.to_int (int64 ()) in
-        let t = Int64.to_int (int64 ()) in Physics.PTwoLorentz (p, q, r, t)
-    | s -> Printf.eprintf "unknown PROFILE %s
-" s; exit 2 in
-  (* What the three components carry: the residual, the residual times one
-     angular kernel, or the integrands of the flux-surface averages. *)
-  (* the two input slots a cell ranges over; 1 and 2 are the angles *)
-  expect "SLOTS";
-  let xu = Int64.to_int (int64 ()) in
-  let xv = Int64.to_int (int64 ()) in
-  (* A third varied slot carried by the file rather than by the command line.
-     With it a cell certificate is checked by Cell.check_ccert3, and what the
-     run establishes is a bound at every point of a cell in three coordinates
-     at once. Each bound line then carries two more numbers, the bound on the
-     third derivative of that component. *)
-  let slot3_file =
-    if !p < Array.length toks && toks.(!p) = "SLOT3" then begin
-      ignore (tok ());
-      let w = Int64.to_int (int64 ()) in
-      let dw = int64 () in
-      Some (w, dw)
-    end else None in
-  (* A TAYLOR line marks a certificate whose first varied slot is charged
-     against its derivative at the centre, so every bound line carries ten
-     numbers rather than eight: N0 q0 Nu qu Nuu quu Nv qv Nc qc. "--tighten
-     --taylor" writes such a file and an ordinary run of it establishes it
-     with Cell.check_ccert_t, the way a SLOT3 file is checked by
-     check_ccert3. *)
-  let taylor_file =
-    if !p < Array.length toks && toks.(!p) = "TAYLOR"
-    then (ignore (tok ()); true) else false in
-  (* Both markers widen a bound line to ten numbers and the two tens mean
-     different things: a third slot appends its own derivative pair after the
-     cell bound, a Taylor line puts a first and second derivative before it.
-     A file carrying both says nothing about which its ten are, so it is
-     refused rather than read as one of them. *)
-  (if slot3_file <> None && taylor_file then begin
-     prerr_endline
-       "this file carries both SLOT3 and TAYLOR, whose bound lines are the \
-        same width and different fields; one or the other";
-     exit 2
-   end);
-  let n_bound =
-    match slot3_file with Some _ -> 10 | None -> if taylor_file then 10 else 8 in
-  expect "OUTPUT";
-  let out =
-    match tok () with
-    | "residual" -> Physics.RResidual
-    | "geometry" -> Physics.RGeometry
-    | "mercier-a" -> Physics.RMercierA
-    | "mercier-b" -> Physics.RMercierB
-    | "radial" -> Physics.RRadial
-    | "radial-geometry" -> Physics.RRadialGeom
-    | "radial-shear" -> Physics.RRadialShear
-    | "radial-axis" -> Physics.RRadialAxis
-    | "terms" -> Physics.RTerms
-    | "radial-terms" -> Physics.RRadialTerms
-    | "current-terms" -> Physics.RJsTerms
-    | "radial-current-terms" -> Physics.RRadialJsTerms
-    | "quasisym" -> Physics.RQuasiSym
-    | "quasisym-two" -> Physics.RQuasiTwo
-    | "covariant" ->
-        let hm = int64 () in
-        let hn = int64 () in
-        Physics.RCovHarm (z_of_int64 hm, z_of_int64 hn)
-    | "covariant-sin" ->
-        let hm = int64 () in
-        let hn = int64 () in
-        Physics.RCovHarmS (z_of_int64 hm, z_of_int64 hn)
-    | "stream-defect" -> Physics.RStreamDefect
-    | "boozer" ->
-        let hm = int64 () in
-        let hn = int64 () in
-        Physics.RBoozer (z_of_int64 hm, z_of_int64 hn)
-    | "harmonic" ->
-        let hm = int64 () in
-        let hn = int64 () in
-        Physics.RHarmonic (z_of_int64 hm, z_of_int64 hn)
-    | s -> prerr_endline ("unknown OUTPUT " ^ s); exit 2 in
-  let cfg =
-    { Physics.pc_lasym = lasym; Physics.pc_prof = prof;
-      Physics.pc_out = out } in
-  expect "MODES";
-  let nk = Int64.to_int (int64 ()) in
-  let modes = Array.init nk (fun _ -> let m = int64 () in let n = int64 () in (m, n)) in
-  expect "PHIP"; let phip = dyadic () in
-  expect "AM"; expect "21";
-  let am = Array.init 21 (fun _ -> dyadic ()) in
-  let eps =
-    if cells_mode then [||]
-    else begin
-      expect "EPS_S"; let a = dyadic () in
-      expect "EPS_U"; let b = dyadic () in
-      expect "EPS_V"; let c = dyadic () in
-      [| a; b; c |]
-    end in
-  expect "NANGLES";
-  let na = Int64.to_int (int64 ()) in
-  (* in cell mode each angle carries the half-widths of its cell, in units of
-     the mantissa of that angle *)
-  let angles = Array.init na (fun _ ->
-      let u = dyadic () in let v = dyadic () in
-      let du = if cells_mode then int64 () else 0L in
-      let dv = if cells_mode then int64 () else 0L in
-      (u, v, du, dv)) in
-  expect "NNODES";
-  let nb = Int64.to_int (int64 ()) in
-  (* The bounds of every cell are held as unboxed ints and turned into the
-     extracted record only for the cell being checked. A coq_Z is a boxed
-     binary-positive tree, so converting a whole certificate up front costs
-     gigabytes at the cell counts a volume covering needs, and the forked
-     workers each pay for it again as the collector touches the pages. *)
-  let cbounds () = Array.init n_bound (fun _ -> Int64.to_int (int64 ())) in
-  let mk_cb (a : int array) =
-    let z i = z_of_int64 (Int64.of_int a.(i)) in
-    { Cell.cb_N0 = z 0; Cell.cb_q0 = z 1;
-      Cell.cb_NDu = z 2; Cell.cb_qDu = z 3;
-      Cell.cb_NDv = z 4; Cell.cb_qDv = z 5;
-      Cell.cb_Nc = z 6; Cell.cb_qc = z 7 } in
-  (* the third slot's derivative bound, when the file carries one *)
-  let mk_w (a : int array) =
-    (z_of_int64 (Int64.of_int a.(8)), z_of_int64 (Int64.of_int a.(9))) in
-  (* a Taylor bound line: value, first and second derivative in the first
-     slot, the mean-value step in the second, and the cell bound *)
-  let mk_tb (a : int array) =
-    let z i = z_of_int64 (Int64.of_int a.(i)) in
-    { Cell.tb_N0 = z 0; Cell.tb_q0 = z 1;
-      Cell.tb_Nu = z 2; Cell.tb_qu = z 3;
-      Cell.tb_Nuu = z 4; Cell.tb_quu = z 5;
-      Cell.tb_Nv = z 6; Cell.tb_qv = z 7;
-      Cell.tb_Nc = z 8; Cell.tb_qc = z 9 } in
-  (* Everything a node block fixes. Consecutive radial cells of one node
-     differ only in their radius and half-width, so a block may say SAME and
-     take the coefficients of the one before it, which is what keeps a volume
-     certificate from repeating the same few thousand numbers once per cell. *)
-  let nodes = Array.make nb None in
-  for i = 0 to nb - 1 do
-    expect "NODE";
-    let same = (!p < Array.length toks && toks.(!p) = "SAME") in
-    if same then ignore (tok ());
-    expect "S"; let s = dyadic () in
-    (* A node may carry its own half-width for the first varied slot. The
-       angle list is shared by every node, so without this every radial cell
-       is the same width, and the bound over a plasma is set near the axis
-       while the resolvable region is left coarser than it need be. *)
-    let node_du =
-      if !p < Array.length toks && toks.(!p) = "DU"
-      then (ignore (tok ()); Some (int64 ()))
-      else None in
-    (* A node may also carry its own pressure coefficients. A piecewise
-       profile is one cubic on each piece, so a covering that crosses a knot
-       needs the piece to change with the node rather than once for the file.
-       Absent, the file's own AM block is used. *)
-    let node_am =
-      if !p < Array.length toks && toks.(!p) = "AMLOCAL"
-      then begin
-        ignore (tok ()); expect "21";
-        Some (Array.init 21 (fun _ -> dyadic ()))
-      end else None in
-    let (snodes, shalf, iota, rn, zn, ln, anti) =
-      if same then begin
-        if i = 0 then (prerr_endline "the first NODE cannot be SAME"; exit 2);
-        match nodes.(i - 1) with
-        | None -> prerr_endline "no previous node"; exit 2
-        | Some (_, sn, sh, io, rn, zn, ln, an, _, _, _) ->
-            (sn, sh, io, rn, zn, ln, an)
-      end else begin
-        expect "SNODES"; let snodes = Array.init 3 (fun _ -> dyadic ()) in
-        expect "SHALF"; let shalf = Array.init 2 (fun _ -> dyadic ()) in
-        expect "IOTA";  let iota  = Array.init 2 (fun _ -> dyadic ()) in
-        expect "RNODES"; let rn = Array.init (3*nk) (fun _ -> dyadic ()) in
-        expect "ZNODES"; let zn = Array.init (3*nk) (fun _ -> dyadic ()) in
-        expect "LHALF"; let ln = Array.init (2*nk) (fun _ -> dyadic ()) in
-        let anti =
-          if not lasym then [||]
-          else begin
-            expect "RNODES_A";
-            let rna = Array.init (3*nk) (fun _ -> dyadic ()) in
-            expect "ZNODES_A";
-            let zna = Array.init (3*nk) (fun _ -> dyadic ()) in
-            expect "LHALF_A";
-            let lna = Array.init (2*nk) (fun _ -> dyadic ()) in
-            Array.concat [rna; zna; lna]
-          end in
-        (snodes, shalf, iota, rn, zn, ln, anti)
-      end in
-    (* An output that reads a Boozer stream function carries one more block:
-       its coefficients, then the two flux functions I and G. The
-       reconstruction never computes it, so it is data the certificate carries
-       and whose defect a stream-defect covering bounds. *)
-    let wblock =
-      if !p < Array.length toks && toks.(!p) = "WCOEF"
-      then begin
-        ignore (tok ());
-        let m = Int64.to_int (int64 ()) in
-        if m <> nk then
-          (prerr_endline "WCOEF count differs from MODES"; exit 2);
-        Array.init (nk + 2) (fun _ -> dyadic ())
-      end else [||] in
-    (* the flux function a two-term quasisymmetry certificate claims the
-       ratio equals; one number, read the way the stream function block is *)
-    let f0block =
-      if !p < Array.length toks && toks.(!p) = "FZERO"
-      then (ignore (tok ()); [| dyadic () |])
-      else [||] in
-    let bounds =
-      if cells_mode then begin
-        expect "CELLS";
-        let m = Int64.to_int (int64 ()) in
-        if m <> na then
-          (prerr_endline "CELLS count differs from NANGLES"; exit 2);
-        Array.init m (fun _ ->
-            let bs = cbounds () in
-            let bu = cbounds () in
-            let bv = cbounds () in
-            (bs, bu, bv))
-      end else [||] in
-    nodes.(i) <-
-      Some (s, snodes, shalf, iota, rn, zn, ln,
-            Array.append anti (Array.append wblock f0block),
-            bounds, node_du, node_am)
-  done;
-  let node_at i =
-    match nodes.(i) with
-    | Some n -> n
-    | None -> prerr_endline "a node block is missing"; exit 2 in
-
-  (* ---- expand into per-point environments ------------------------------ *)
-  (* Environment of one point, in the slot order of Physics.v. *)
-  let env_of (s, snodes, shalf, iota, rn, zn, ln, anti, _, _, node_am)
-        (u, v, _, _) =
-    let am = match node_am with Some a -> a | None -> am in
-    let entries =
-      Array.concat [
-        [| s; u; v; phip |];
-        snodes; shalf; iota; am; rn; zn; ln; anti ] in
-    let ms = Array.to_list (Array.map (fun d -> z_of_int64 d.m) entries) in
-    let es = Array.to_list (Array.map (fun d -> z_of_int64 d.e) entries) in
-    { Checker.pt_ms = ms; Checker.pt_es = es }
-  in
-  let coq_modes =
-    Array.to_list (Array.map (fun (m, n) -> (z_of_int64 m, z_of_int64 n)) modes) in
-  (* The order env_of concatenates its blocks in has to be the order
-     Physics.v allocates against. Nothing inside the proof ties slot 32 to
-     the first rmnc coefficient: the theorem quantifies over whatever
-     mantissas it is handed, so a block written at the wrong offset certifies
-     a different object and still passes. The offsets the concatenation
-     produces are computed from the block sizes and read against the
-     extracted constants, so a change on either side stops the run. *)
-  let () =
-    let off_R = 4 + 3 + 2 + 2 + 21 in
-    let off_Z = off_R + 3 * nk in
-    let off_L = off_Z + 3 * nk in
-    let off_Ra = off_L + 2 * nk in
-    let off_Za = off_Ra + 3 * nk in
-    let off_La = off_Za + 3 * nk in
-    let off_W = if lasym then off_La + 2 * nk else off_Ra in
-    let expect name got want =
-      if got <> want then begin
-        Printf.eprintf
-          "the %s block is written at slot %d and Physics.v reads it at %d\n%!"
-          name got want;
-        exit 2
-      end in
-    expect "R cosine" off_R (Physics.base_R nk);
-    expect "Z sine" off_Z (Physics.base_Z nk);
-    expect "lambda sine" off_L (Physics.base_L nk);
-    if lasym then begin
-      expect "R sine" off_Ra (Physics.base_Ra nk);
-      expect "Z cosine" off_Za (Physics.base_Za nk);
-      expect "lambda cosine" off_La (Physics.base_La nk)
-    end;
-    expect "stream function" off_W (Physics.base_W lasym nk) in
+  let pc = parse_cert src in
+  let cells_mode = pc.p_cells_mode and prec = pc.p_prec and lasym = pc.p_lasym
+  and prof = pc.p_prof and xu = pc.p_xu and xv = pc.p_xv
+  and slot3_file = pc.p_slot3_file and taylor_file = pc.p_taylor_file
+  and n_bound = pc.p_n_bound and out = pc.p_out and cfg = pc.p_cfg and nk = pc.p_nk
+  and modes = pc.p_modes and phip = pc.p_phip and am = pc.p_am and eps = pc.p_eps
+  and na = pc.p_na and angles = pc.p_angles and nb = pc.p_nb
+  and node_at = pc.p_node_at and env_of = pc.p_env_of
+  and coq_modes = pc.p_coq_modes in
   let ncells = nb * na in
   let n = min (jobs ()) (max 1 ncells) in
   (* Approximate float value of a dyadic, for display only. *)
@@ -3022,83 +3202,65 @@ let () =
     end;
     !good in
   let names = [| "radius"; "poloidal angle"; "toroidal angle" |] in
-  (* The rectangle the cells span, decided in integers by Cover.covers. With
-     width in both slots, every slab between consecutive edges of the first
-     slot has to be covered in the second by the cells that span the slab, so
-     a hole that each slot's own projection hides is found. With no width in
-     one slot the cells lie on lines of it, and each line has to be covered in
-     the other. A plain verdict over the radius and the angles speaks about
-     that rectangle, so it requires the covering. *)
-  let axis_pairs slot =
-    let over = ref false and bad = ref false in
-    let fine = ref None in
-    for k = 0 to ncells - 1 do
-      match slot_dyadic k slot with
-      | Some d ->
-          (match !fine with
-           | None -> fine := Some d.e
-           | Some e -> if Int64.compare d.e e < 0 then fine := Some d.e)
-      | None -> ()
-    done;
-    let fine = match !fine with Some e -> e | None -> 0L in
-    let rescale m e =
-      let sh = Int64.to_int (Int64.sub e fine) in
-      if sh <= 0 then m
-      else if sh >= 63 then (over := true; m)
-      else
-        let v = Int64.shift_left m sh in
-        if Int64.equal (Int64.shift_right v sh) m then v else (over := true; m) in
-    let a = Array.init ncells (fun k ->
-        match slot_dyadic k slot, slot_width k slot with
-        | Some d, Some w -> (rescale d.m d.e, rescale w d.e)
-        | _ -> bad := true; (0L, 0L)) in
-    if !over || !bad then None else Some a in
-  let covers_sorted lo hi l =
-    let l = Stdlib.List.sort
-              (fun (c1, d1) (c2, d2) ->
-                 compare (Int64.sub c1 d1, c1, d1) (Int64.sub c2 d2, c2, d2)) l in
-    Cover.covers (z_of_int64 lo) (z_of_int64 hi)
-      (Stdlib.List.map (fun (c, d) -> (z_of_int64 c, z_of_int64 d)) l) in
-  let covering_2d au av =
-    let lo a = Array.fold_left (fun acc (c, d) -> min acc (Int64.sub c d)) Int64.max_int a in
-    let hi a = Array.fold_left (fun acc (c, d) -> max acc (Int64.add c d)) Int64.min_int a in
-    let flat a = Array.for_all (fun (_, d) -> Int64.equal d 0L) a in
-    let lines along across =
-      let keys = Stdlib.List.sort_uniq compare (Array.to_list (Array.map fst across)) in
-      Stdlib.List.for_all (fun key ->
-          let l = ref [] in
-          Array.iteri (fun k (c, _) -> if Int64.equal c key then l := along.(k) :: !l) across;
-          covers_sorted (lo along) (hi along) !l) keys in
-    if flat au && flat av then true
-    else if flat av then lines au av
-    else if flat au then lines av au
-    else begin
-      let edges = Stdlib.List.sort_uniq compare
-                    (Stdlib.List.concat_map (fun (c, d) -> [Int64.sub c d; Int64.add c d])
-                       (Array.to_list au)) in
-      let vlo = lo av and vhi = hi av in
-      let rec slabs = function
-        | a :: (b :: _ as rest) ->
-            let l = ref [] in
-            Array.iteri (fun k (c, d) ->
-                if Int64.compare (Int64.sub c d) a <= 0 && Int64.compare (Int64.add c d) b >= 0
-                then l := av.(k) :: !l) au;
-            covers_sorted vlo vhi !l && slabs rest
-        | _ -> true in
-      slabs edges
-    end in
+  (* The rectangle the cells span, decided by the extracted Cover2 over each
+     cell's own extents. With width in both slots, Cover2.cover2 gathers the
+     cells into columns of one extent in the first slot and checks that the
+     columns cover its range and the cells of each column the range of the
+     second (Cover2.cells_cover_rect). With no width in one slot the cells lie
+     on lines of it, and Cover2.cover_lines checks that each line is covered
+     in the other (cells_cover_lines, cells_cover_lines_vu). The order of the
+     cells is chosen here, and an order that does not list a column together
+     or a list in ascending order makes the check fail. A plain verdict over
+     the radius and the angles speaks about that rectangle, so it requires the
+     covering. *)
+  let zcmp a b =
+    match BinInt.Z.compare a b with
+    | Datatypes.Lt -> -1 | Datatypes.Eq -> 0 | Datatypes.Gt -> 1 in
+  let rec zcmps a b =
+    match a, b with
+    | x :: xs, y :: ys -> let c = zcmp x y in if c <> 0 then c else zcmps xs ys
+    | [], [] -> 0
+    | [], _ -> -1
+    | _, [] -> 1 in
+  (* the list sorted by a key computed once per entry *)
+  let keyed key l =
+    Stdlib.List.map snd
+      (Stdlib.List.stable_sort (fun (ka, _) (kb, _) -> zcmps ka kb)
+         (Stdlib.List.map (fun p -> (key p, p)) l)) in
   let covered =
     if cells_mode && not tighten && not integrate then begin
       Stdlib.List.iter
         (fun sl -> if sl >= 0 && sl <= 2 then ignore (covering_report sl names.(sl)))
         [xu; xv];
       if xu >= 0 && xu <= 2 && xv >= 0 && xv <= 2 then begin
-        let c = match axis_pairs xu, axis_pairs xv with
-          | Some au, Some av -> covering_2d au av
-          | _ -> false in
-        Printf.printf "  %s\n%!"
-          (if c then "the cells cover the rectangle they span, slab by slab"
-           else "the cells leave a hole in the rectangle they span");
+        (* each cell's extents, read off the cell itself; the cells are built
+           one at a time and only their extents kept *)
+        let exts =
+          Stdlib.List.init ncells (fun k ->
+              let (cl, _, _) = cell_at k in Cover2.cell_exts xu xv cl) in
+        let flat side = Stdlib.List.for_all (fun p -> (side p).Cover2.x_d = Z0) exts in
+        let flat_u = flat fst and flat_v = flat snd in
+        let lines cs =
+          let fu = Cover2.fu_of cs and fv = Cover2.fv_of cs in
+          Cover2.cover_lines
+            (keyed (fun p -> [Cover2.mid_at fv (snd p); Cover2.lo_at fu (fst p)]) cs) in
+        let (c, what) =
+          if flat_u && flat_v then
+            (true, "the cells are points, so the verdict speaks about each of them")
+          else if flat_v then
+            (lines exts, "every line the cells lie on is covered along it")
+          else if flat_u then
+            (* Cover2.cell_exts_vu, the two extents of each cell exchanged *)
+            (lines (Stdlib.List.map (fun (a, b) -> (b, a)) exts),
+             "every line the cells lie on is covered along it")
+          else begin
+            let fu = Cover2.fu_of exts and fv = Cover2.fv_of exts in
+            (Cover2.cover2
+               (keyed (fun p -> [Cover2.lo_at fu (fst p); Cover2.hi_at fu (fst p);
+                                 Cover2.lo_at fv (snd p)]) exts),
+             "the cells cover the rectangle they span, column by column")
+          end in
+        Printf.printf "  %s\n%!" (if c then what else "the cells leave a hole in what they span");
         c
       end else begin
         Printf.printf
@@ -3382,120 +3544,30 @@ let () =
         "stellarocq checker: %d modes, %d nodes x %d cells = %d cells, precision %Ld bits, %d workers\n%!"
         nk nb na ncells prec n;
       if integrate then begin
-        (* An integral over cells is the sum of theorems about them, and
-           which theorem depends on the covering. Quad.tiling_var_encloses
-           sums cells that tile a range, each with its own width, which is
-           what a covering by curves is. Quad.tiling2_encloses sums a
-           rectangle of cells of one width in each angle, which is what a
-           surface covering is, and it does need the widths uniform. Both
-           need the cells to tile, and neither is assumed here. *)
-        let (_, _, du0, dv0) = angles.(0) in
-        if Int64.compare dv0 0L > 0 then
-          Array.iter (fun (_, _, du, dv) ->
-              if Int64.compare du du0 <> 0 || Int64.compare dv dv0 <> 0
-              then begin
-                prerr_endline
-                  "this covers a surface, and the rule for one is a rectangle \
-                   of cells of a common width in each angle; these differ";
-                exit 3
-              end) angles;
-        Stdlib.List.iter
-          (fun sl ->
-             if sl >= 0 && sl <= 2 then begin
-               let ok = covering_report sl names.(sl) in
-               (* the toroidal angle of a covering by curves has no width at
-                  all, and the run reports one integral per plane rather than
-                  one over the surface, which is a different statement and an
-                  honest one *)
-               if not ok && not (sl = xv && Int64.compare dv0 0L = 0) then begin
-                 prerr_endline
-                   "the cells leave a gap, so their sum is not an integral \
-                    over the range they claim";
-                 exit 3
-               end
-             end)
-          [xu; xv];
+        (* An integral is the extracted Integrate.integ2 over the lattice a
+           node's cells form, or Integrate.integ1 over the run of cells of
+           each plane; the lattice and the runs are read off the file by
+           integrate_nodes, which refuses cells that are neither. *)
+        if not (xu >= 0 && xu <= 2 && xv >= 0 && xv <= 2) then begin
+          prerr_endline "an integral ranges over the radius or the angles, slots 0, 1 and 2";
+          exit 2
+        end;
+        let icell_at k =
+          match slot_dyadic k xu, slot_dyadic k xv, slot_width k xu, slot_width k xv with
+          | Some u, Some v, Some du, Some dv ->
+              { mu = u.m; eu = u.e; du; mv = v.m; ev = v.e; dv }
+          | _ -> prerr_endline "a cell carries no extent in a varied slot"; exit 2 in
+        let nodes =
+          Array.init nb (fun b ->
+              let (cl, _, _) = cell_at (b * na) in
+              (cl.Cell.cc_pt, Array.init na (fun a -> icell_at (b * na + a)))) in
+        let (_, _, _, dv0) = angles.(0) in
         Printf.printf
           "integrating each component over the %s the %d cells cover\n%!"
           (if Int64.compare dv0 0L > 0 then "surface patch" else "angles")
           ncells;
-        let (u0, v0, _, _) = angles.(0) in
-        (* the angle list runs v fastest, so the leading run of entries
-           sharing the first u counts the toroidal planes *)
-        let nplanes =
-          let c = ref 1 in
-          (try
-             while !c < na do
-               let (u, _, _, _) = angles.(!c) in
-               if u.m <> u0.m || u.e <> u0.e then raise Exit;
-               incr c
-             done
-           with Exit -> ());
-          !c in
-        (* A sum over cells is an integral when the cells of each node
-           partition its range: a repeated cell counts twice and a missing one
-           not at all, and both can leave every projection covered. With
-           width in the second slot the rule is Quad.tiling2_encloses over a
-           rectangle of one width in each slot, so a node's cells have to be
-           exactly the lattice of those widths, each once. Without it each
-           plane is summed on its own (Quad.tiling_var_encloses) in the order
-           the angle list cycles through its planes, so the cells of a plane
-           have to share its toroidal angle and abut one after another across
-           the whole range of the first slot. *)
-        let partition =
-          match axis_pairs xu, axis_pairs xv with
-          | None, _ | _, None -> false
-          | Some au, Some av ->
-              let two_d = let (_, _, dvc) = cell_at 0 in Int64.compare dvc 0L > 0 in
-              let lo_all = Array.fold_left (fun acc (c, d) -> min acc (Int64.sub c d)) Int64.max_int au in
-              let hi_all = Array.fold_left (fun acc (c, d) -> max acc (Int64.add c d)) Int64.min_int au in
-              let rec steps w = function
-                | a :: (b :: _ as rest) ->
-                    Int64.equal (Int64.sub b a) (Int64.add w w) && steps w rest
-                | _ -> true in
-              let rec abut = function
-                | (_, h1) :: ((l2, _) :: _ as rest) -> Int64.equal h1 l2 && abut rest
-                | _ -> true in
-              let node_ok b =
-                let ks = Stdlib.List.init na (fun i -> b * na + i) in
-                if two_d then begin
-                  let wu = snd au.(b * na) and wv = snd av.(b * na) in
-                  let us = Stdlib.List.sort_uniq compare (Stdlib.List.map (fun k -> fst au.(k)) ks) in
-                  let vs = Stdlib.List.sort_uniq compare (Stdlib.List.map (fun k -> fst av.(k)) ks) in
-                  let pairs = Stdlib.List.sort_uniq compare
-                                (Stdlib.List.map (fun k -> (fst au.(k), fst av.(k))) ks) in
-                  Stdlib.List.for_all
-                    (fun k -> Int64.equal (snd au.(k)) wu && Int64.equal (snd av.(k)) wv) ks
-                  && steps wu us && steps wv vs
-                  && Stdlib.List.length pairs = na
-                  && Stdlib.List.length us * Stdlib.List.length vs = na
-                end else
-                  Stdlib.List.for_all (fun p ->
-                      match Stdlib.List.filter (fun k -> (k - b * na) mod nplanes = p) ks with
-                      | [] -> false
-                      | (k0 :: _) as kp ->
-                          let vp = fst av.(k0) in
-                          let iv = Stdlib.List.sort compare
-                                     (Stdlib.List.map (fun k ->
-                                          (Int64.sub (fst au.(k)) (snd au.(k)),
-                                           Int64.add (fst au.(k)) (snd au.(k)))) kp) in
-                          Stdlib.List.for_all (fun k -> Int64.equal (fst av.(k)) vp) kp
-                          && abut iv
-                          && Int64.equal (fst (Stdlib.List.hd iv)) lo_all
-                          && Int64.equal (snd (Stdlib.List.nth iv (Stdlib.List.length iv - 1))) hi_all)
-                    (Stdlib.List.init nplanes (fun p -> p)) in
-              Stdlib.List.for_all node_ok (Stdlib.List.init nb (fun b -> b)) in
-        if not partition then begin
-          prerr_endline
-            "the cells of a node are not a partition of its range: a cell is \
-             missing, repeated or out of place, so their sum is not an \
-             integral over it";
-          exit 3
-        end;
         let prec0 = Cell.cprec_of (let (cl, _, _) = cell_at 0 in ccert_of cl) in
-        integrate_cells prec0
-          (fun k -> let (cl, du, dv) = cell_at k in (ccert_of cl, cl, du, dv))
-          xu xv nb na nplanes u0.e v0.e n src
+        integrate_nodes prec0 cfg coq_modes xu xv nodes n src
           (match out with
            | Physics.RGeometry -> [ "sqrt(g)"; "sqrt(g) B^2"; "B_u" ]
            | Physics.RMercierA -> [ "tpp"; "tbb"; "tjb" ]
@@ -3784,3 +3856,10 @@ let () =
   Printf.printf "verdict: %s   (%.1f s)\n%!"
     (if ok then "VALID" else "INVALID") (t1 -. t0);
   exit (if ok then 0 else 1)
+
+(* A certificate the parser cannot read, such as a truncated file, ends the
+   run with its error on stderr and exit status 2, and no verdict. *)
+let () =
+  try main () with e ->
+    Printf.eprintf "error: %s\n%!" (Printexc.to_string e);
+    exit 2

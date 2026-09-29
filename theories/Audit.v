@@ -92,9 +92,25 @@ Print Assumptions AuditBracket.lcfs_bracket.
 
 From Stellarocq Require Import Force Continuum.
 Print Assumptions force_law.
+Print Assumptions force_coords.
+Print Assumptions lines_coords.
 Print Assumptions continuum_force.
+Print Assumptions continuum_force_coords.
 
 From Stellarocq Require Import Residuals.
 Print Assumptions continuum_force_asym.
+Print Assumptions continuum_force_asym_coords.
 Print Assumptions node_residual.
 Print Assumptions node_residual_asym.
+
+From Stellarocq Require Import Cover2 Integrate MercierRun.
+Print Assumptions cells_cover_rect.
+Print Assumptions cells_cover_lines.
+Print Assumptions cells_cover_lines_vu.
+Print Assumptions integ2_correct.
+Print Assumptions integ1_correct.
+Print Assumptions torus_strips.
+Print Assumptions integ2_torus_correct.
+Print Assumptions merc_run_correct.
+Print Assumptions merc_unstable.
+Print Assumptions merc_stable.

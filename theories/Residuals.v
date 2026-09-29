@@ -1114,3 +1114,142 @@ Proof.
   - etransitivity; [exact Ru |]. f_equal. symmetry. exact Fu.
   - etransitivity; [exact Rv |]. f_equal. symmetry. exact Fv.
 Qed.
+
+(** The same in the coordinates, with no Cartesian field: the outputs are the
+    components along e_s, e_u and e_v of (curl B) x B - mu0 p' grad s, the
+    curl sum_j grad x^j x d_j B ([Force.force_coords]), and d_j B, turned
+    into the Cartesian frame, is the derivative of the reconstructed field
+    along the coordinate line j ([Force.lines_coords]). *)
+Theorem continuum_force_asym_coords (exps : list Z) (prof : pprofile) (modes : list (Z * Z)) (env : env ExtendedR)
+    (wm : nat) (sa sj sb shm shp s0 u0 v0 phip im ip pp : R) (yR yZ yL yRa yZa yLa : nat -> nat -> R) :
+  let K := length modes in
+  let r := residual exps (PConfig true prof RRadial) modes in
+  well_formed wm (r_binds r) = true ->
+  let E := xextend env (r_binds r) in
+  xeval E (slot_s_a exps) = Xreal sa -> xeval E (slot_s_j exps) = Xreal sj -> xeval E (slot_s_b exps) = Xreal sb ->
+  xeval E (slot_s_hm exps) = Xreal shm -> xeval E (slot_s_hp exps) = Xreal shp ->
+  xeval E (vS exps) = Xreal s0 -> xeval E (vU exps) = Xreal u0 -> xeval E (vV exps) = Xreal v0 ->
+  xeval E (vPhip exps) = Xreal phip ->
+  xeval E (slot_iota_m exps) = Xreal im -> xeval E (slot_iota_p exps) = Xreal ip ->
+  xeval E (pprime exps prof) = Xreal pp ->
+  (forall row j, (row < 3)%nat -> (j < K)%nat -> xeval E (slot_node exps (base_R K) K row j) = Xreal (yR row j)) ->
+  (forall row j, (row < 3)%nat -> (j < K)%nat -> xeval E (slot_node exps (base_Z K) K row j) = Xreal (yZ row j)) ->
+  (forall row j, (row < 2)%nat -> (j < K)%nat -> xeval E (slot_node exps (base_L K) K row j) = Xreal (yL row j)) ->
+  (forall row j, (row < 3)%nat -> (j < K)%nat -> xeval E (slot_node exps (base_Ra K) K row j) = Xreal (yRa row j)) ->
+  (forall row j, (row < 3)%nat -> (j < K)%nat -> xeval E (slot_node exps (base_Za K) K row j) = Xreal (yZa row j)) ->
+  (forall row j, (row < 2)%nat -> (j < K)%nat -> xeval E (slot_node exps (base_La K) K row j) = Xreal (yLa row j)) ->
+  (0 < sa)%R -> (0 < sj)%R -> (0 < sb)%R -> (0 < shm)%R -> (0 < shp)%R -> (0 < s0)%R ->
+  (sj - sa <> 0)%R -> (sb - sj <> 0)%R -> (shp - shm <> 0)%R ->
+  let tR := rterms sa sj sb shm shp yR modes in
+  let tZ := rterms sa sj sb shm shp yZ modes in
+  let tL := lterms shm shp yL modes in
+  let tRa := rterms sa sj sb shm shp yRa modes in
+  let tZa := rterms sa sj sb shm shp yZa modes in
+  let tLa := lterms shm shp yLa modes in
+  let FR := fun s u v => (Series.S0 true tR s u v + Series.S0 false tRa s u v)%R in
+  let FRs := fun s u v => (S_s true tR s u v + S_s false tRa s u v)%R in
+  let FRu := fun s u v => (S_u true tR s u v + S_u false tRa s u v)%R in
+  let FRv := fun s u v => (S_v true tR s u v + S_v false tRa s u v)%R in
+  let FZs := fun s u v => (S_s false tZ s u v + S_s true tZa s u v)%R in
+  let FZu := fun s u v => (S_u false tZ s u v + S_u true tZa s u v)%R in
+  let FZv := fun s u v => (S_v false tZ s u v + S_v true tZa s u v)%R in
+  let FLu := fun s u v => (S_u false tL s u v + S_u true tLa s u v)%R in
+  let FLv := fun s u v => (S_v false tL s u v + S_v true tLa s u v)%R in
+  let iota := iotaf shm shp im ip in
+  sqrtg FR FRs FRu FZs FZu s0 u0 v0 <> 0%R ->
+  let J := jet0 FR FRs FRu FRv FZs FZu FZv FLu FLv iota phip mu0r s0 u0 v0
+             (S_ss true tR s0 u0 v0 + S_ss false tRa s0 u0 v0)%R (S_su true tR s0 u0 v0 + S_su false tRa s0 u0 v0)%R
+             (S_sv true tR s0 u0 v0 + S_sv false tRa s0 u0 v0)%R (S_uu true tR s0 u0 v0 + S_uu false tRa s0 u0 v0)%R
+             (S_uv true tR s0 u0 v0 + S_uv false tRa s0 u0 v0)%R (S_vv true tR s0 u0 v0 + S_vv false tRa s0 u0 v0)%R
+             (S_ss false tZ s0 u0 v0 + S_ss true tZa s0 u0 v0)%R (S_su false tZ s0 u0 v0 + S_su true tZa s0 u0 v0)%R
+             (S_sv false tZ s0 u0 v0 + S_sv true tZa s0 u0 v0)%R (S_uu false tZ s0 u0 v0 + S_uu true tZa s0 u0 v0)%R
+             (S_uv false tZ s0 u0 v0 + S_uv true tZa s0 u0 v0)%R (S_vv false tZ s0 u0 v0 + S_vv true tZa s0 u0 v0)%R
+             (S_su false tL s0 u0 v0 + S_su true tLa s0 u0 v0)%R (S_sv false tL s0 u0 v0 + S_sv true tLa s0 u0 v0)%R
+             (S_uu false tL s0 u0 v0 + S_uu true tLa s0 u0 v0)%R (S_uv false tL s0 u0 v0 + S_uv true tLa s0 u0 v0)%R
+             (S_vv false tL s0 u0 v0 + S_vv true tLa s0 u0 v0)%R
+             ((ip - im) * (1 / (shp - shm)))%R pp in
+  let B1 := Bc1 FR FRs FRu FRv FZs FZu FLu FLv iota phip in
+  let B2 := Bc2 FR FRs FRu FRv FZs FZu FLu FLv iota phip in
+  let B3 := Bc3 FR FRs FRu FZs FZu FZv FLu FLv iota phip in
+  (xeval E (r_s r) = Xreal (vdot (c_force J) (c_es J)) /\
+   xeval E (r_u r) = Xreal (vdot (c_force J) (c_eu J)) /\
+   xeval E (r_v r) = Xreal (vdot (c_force J) (c_ev J))) /\
+  (is_derive (fun t => B1 t u0 v0) s0 (rotx v0 (c_Bs J)) /\
+   is_derive (fun t => B2 t u0 v0) s0 (roty v0 (c_Bs J)) /\
+   is_derive (fun t => B3 t u0 v0) s0 (vz (c_Bs J))) /\
+  (is_derive (fun t => B1 s0 t v0) u0 (rotx v0 (c_Bu J)) /\
+   is_derive (fun t => B2 s0 t v0) u0 (roty v0 (c_Bu J)) /\
+   is_derive (fun t => B3 s0 t v0) u0 (vz (c_Bu J))) /\
+  (is_derive (fun t => B1 s0 u0 t) v0 (rotx v0 (c_Bv J)) /\
+   is_derive (fun t => B2 s0 u0 t) v0 (roty v0 (c_Bv J)) /\
+   is_derive (fun t => B3 s0 u0 t) v0 (vz (c_Bv J))).
+Proof.
+  intros K r Hwf E Hsa Hsj Hsb Hshm Hshp Hs Hu Hv Hph Him Hip Hpp HyR HyZ HyL HyRa HyZa HyLa
+         Pa Pj Pb Phm Php Ps Daj Djb Dh
+         tR tZ tL tRa tZa tLa FR FRs FRu FRv FZs FZu FZv FLu FLv iota Hsg J B1 B2 B3.
+  set (FP := full_point_b exps (Builder (base_scratch_of true RRadial K) []) true modes K prof RRadial).
+  assert (HFP : FP = (fst FP, r)) by (change r with (snd FP); apply surjective_pairing).
+  pose proof (fp_residual_asym exps prof modes (Builder (base_scratch_of true RRadial K) []) env wm (fst FP) r
+                sa sj sb shm shp s0 u0 v0 phip im ip pp yR yZ yL yRa yZa yLa HFP Hwf
+                Hsa Hsj Hsb Hshm Hshp Hs Hu Hv Hph Him Hip Hpp HyR HyZ HyL HyRa HyZa HyLa
+                Pa Pj Pb Phm Php Ps Daj Djb Dh Hsg) as (Rs & Ru & Rv).
+  destruct (force_coords J Hsg) as (Fs & Fu & Fv).
+  split; [refine (conj _ (conj _ _)) |].
+  - etransitivity; [exact Rs |]. f_equal. symmetry. exact Fs.
+  - etransitivity; [exact Ru |]. f_equal. symmetry. exact Fu.
+  - etransitivity; [exact Rv |]. f_equal. symmetry. exact Fv.
+  - (* the reconstruction's derivatives along the three coordinate lines *)
+    assert (C1R := rterms_d1 sa sj sb shm shp yR modes s0 Dh).
+    assert (C2R := rterms_d2 sa sj sb shm shp yR modes s0 Dh).
+    assert (C1Z := rterms_d1 sa sj sb shm shp yZ modes s0 Dh).
+    assert (C2Z := rterms_d2 sa sj sb shm shp yZ modes s0 Dh).
+    assert (C1A := rterms_d1 sa sj sb shm shp yRa modes s0 Dh).
+    assert (C2A := rterms_d2 sa sj sb shm shp yRa modes s0 Dh).
+    assert (C1B := rterms_d1 sa sj sb shm shp yZa modes s0 Dh).
+    assert (C2B := rterms_d2 sa sj sb shm shp yZa modes s0 Dh).
+    assert (C1L := lterms_d1 shm shp yL modes s0 Ps).
+    assert (C1M := lterms_d1 shm shp yLa modes s0 Ps).
+    destruct (table_s true tR s0 C1R u0 v0) as (TRs1 & TRs2 & TRs3).
+    destruct (table_s false tRa s0 C1A u0 v0) as (TAs1 & TAs2 & TAs3).
+    destruct (table_s false tZ s0 C1Z u0 v0) as (TZs1 & TZs2 & TZs3).
+    destruct (table_s true tZa s0 C1B u0 v0) as (TBs1 & TBs2 & TBs3).
+    destruct (table_s false tL s0 C1L u0 v0) as (TLs1 & TLs2 & TLs3).
+    destruct (table_s true tLa s0 C1M u0 v0) as (TMs1 & TMs2 & TMs3).
+    pose proof (table_ss true tR s0 C2R u0 v0) as TRss.
+    pose proof (table_ss false tRa s0 C2A u0 v0) as TAss.
+    pose proof (table_ss false tZ s0 C2Z u0 v0) as TZss.
+    pose proof (table_ss true tZa s0 C2B u0 v0) as TBss.
+    destruct (table_u true tR s0 u0 v0) as (TRu1 & TRu2 & TRu3 & TRu4).
+    destruct (table_u false tRa s0 u0 v0) as (TAu1 & TAu2 & TAu3 & TAu4).
+    destruct (table_u false tZ s0 u0 v0) as (TZu1 & TZu2 & TZu3 & TZu4).
+    destruct (table_u true tZa s0 u0 v0) as (TBu1 & TBu2 & TBu3 & TBu4).
+    destruct (table_u false tL s0 u0 v0) as (TLu1 & TLu2 & TLu3 & TLu4).
+    destruct (table_u true tLa s0 u0 v0) as (TMu1 & TMu2 & TMu3 & TMu4).
+    destruct (table_v true tR s0 u0 v0) as (TRv1 & TRv2 & TRv3 & TRv4).
+    destruct (table_v false tRa s0 u0 v0) as (TAv1 & TAv2 & TAv3 & TAv4).
+    destruct (table_v false tZ s0 u0 v0) as (TZv1 & TZv2 & TZv3 & TZv4).
+    destruct (table_v true tZa s0 u0 v0) as (TBv1 & TBv2 & TBv3 & TBv4).
+    destruct (table_v false tL s0 u0 v0) as (TLv1 & TLv2 & TLv3 & TLv4).
+    destruct (table_v true tLa s0 u0 v0) as (TMv1 & TMv2 & TMv3 & TMv4).
+    exact (lines_coords FR FRs FRu FRv FZs FZu FZv FLu FLv iota phip mu0r s0 u0 v0
+             (S_ss true tR s0 u0 v0 + S_ss false tRa s0 u0 v0)%R (S_su true tR s0 u0 v0 + S_su false tRa s0 u0 v0)%R
+             (S_sv true tR s0 u0 v0 + S_sv false tRa s0 u0 v0)%R (S_uu true tR s0 u0 v0 + S_uu false tRa s0 u0 v0)%R
+             (S_uv true tR s0 u0 v0 + S_uv false tRa s0 u0 v0)%R (S_vv true tR s0 u0 v0 + S_vv false tRa s0 u0 v0)%R
+             (S_ss false tZ s0 u0 v0 + S_ss true tZa s0 u0 v0)%R (S_su false tZ s0 u0 v0 + S_su true tZa s0 u0 v0)%R
+             (S_sv false tZ s0 u0 v0 + S_sv true tZa s0 u0 v0)%R (S_uu false tZ s0 u0 v0 + S_uu true tZa s0 u0 v0)%R
+             (S_uv false tZ s0 u0 v0 + S_uv true tZa s0 u0 v0)%R (S_vv false tZ s0 u0 v0 + S_vv true tZa s0 u0 v0)%R
+             (S_su false tL s0 u0 v0 + S_su true tLa s0 u0 v0)%R (S_sv false tL s0 u0 v0 + S_sv true tLa s0 u0 v0)%R
+             (S_uu false tL s0 u0 v0 + S_uu true tLa s0 u0 v0)%R (S_uv false tL s0 u0 v0 + S_uv true tLa s0 u0 v0)%R
+             (S_vv false tL s0 u0 v0 + S_vv true tLa s0 u0 v0)%R
+             ((ip - im) * (1 / (shp - shm)))%R pp
+             (conj (D_add _ _ _ _ _ TRs1 TAs1) (conj (D_add _ _ _ _ _ TRu1 TAu1) (D_add _ _ _ _ _ TRv1 TAv1)))
+             (conj (D_add _ _ _ _ _ TRss TAss) (conj (D_add _ _ _ _ _ TRu2 TAu2) (D_add _ _ _ _ _ TRv2 TAv2)))
+             (conj (D_add _ _ _ _ _ TRs2 TAs2) (conj (D_add _ _ _ _ _ TRu3 TAu3) (D_add _ _ _ _ _ TRv3 TAv3)))
+             (conj (D_add _ _ _ _ _ TRs3 TAs3) (conj (D_add _ _ _ _ _ TRu4 TAu4) (D_add _ _ _ _ _ TRv4 TAv4)))
+             (conj (D_add _ _ _ _ _ TZss TBss) (conj (D_add _ _ _ _ _ TZu2 TBu2) (D_add _ _ _ _ _ TZv2 TBv2)))
+             (conj (D_add _ _ _ _ _ TZs2 TBs2) (conj (D_add _ _ _ _ _ TZu3 TBu3) (D_add _ _ _ _ _ TZv3 TBv3)))
+             (conj (D_add _ _ _ _ _ TZs3 TBs3) (conj (D_add _ _ _ _ _ TZu4 TBu4) (D_add _ _ _ _ _ TZv4 TBv4)))
+             (conj (D_add _ _ _ _ _ TLs2 TMs2) (conj (D_add _ _ _ _ _ TLu3 TMu3) (D_add _ _ _ _ _ TLv3 TMv3)))
+             (conj (D_add _ _ _ _ _ TLs3 TMs3) (conj (D_add _ _ _ _ _ TLu4 TMu4) (D_add _ _ _ _ _ TLv4 TMv4)))
+             (iotaf_d shm shp im ip s0) Hsg).
+Qed.

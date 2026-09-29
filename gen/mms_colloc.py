@@ -14,6 +14,14 @@ with the two outermost rows held at the mapping, is the discrete solution of
 the manufactured problem, and x_h - x* its discretization error, x* the
 mapping sampled on the nodes.
 
+Every datum of the problem, the coefficients it holds fixed, lambda, the
+transform, phip, the pressure coefficients and the sources, is the mapping's
+own value at HP_DPS digits, with mu0 = 4 pi 1e-7 as Physics.v has it, carried
+as a dyadic with a 120-bit mantissa; x* is read the same way. The certified
+problem is then the manufactured one to about 1e-35 rather than the problem
+its binary64 rounding defines, which lies up to 1e-14 away in x_h.
+`--binary64` writes the binary64 data alone.
+
 Two certificates per resolution, both on Colloc.v's assembled system:
 
   exist   centred at the discrete solution with a radius a few units of its
@@ -69,6 +77,38 @@ def dyadic(x):
     return (mi, e)
 
 
+HP_BITS = 120
+HP_DPS = 60
+
+
+def hp(x):
+    """An mpmath real rounded to the nearest m 2^e with |m| < 2^HP_BITS, as
+    the exact pair (m, e)."""
+    import mpmath  # noqa: PLC0415
+
+    x = mpmath.mpf(x)
+    if x == 0:
+        return (0, 0)
+    e = int(mpmath.floor(mpmath.log(abs(x), 2))) - (HP_BITS - 1)
+    m = int(mpmath.nint(x * mpmath.mpf(2) ** (-e)))
+    while m % 2 == 0:
+        m //= 2
+        e += 1
+    return (m, e)
+
+
+def dyadic_of(x):
+    """(m, e) of a float, or of a pair already (m, e)."""
+    if isinstance(x, (list, tuple)):
+        return (int(x[0]), int(x[1]))
+    return dyadic(x)
+
+
+def frac(me):
+    m, e = me
+    return Fraction(m) * Fraction(2) ** e
+
+
 def down(q):
     """The largest float at or below the rational q."""
     f = float(q)
@@ -121,6 +161,125 @@ def coefficient_rows(mms, case, svals, nfp, modes):
         out[key] = np.array([[c[key][idx[mn], j] for mn in modes]
                              for j in range(len(svals))])
     return out
+
+
+def coefficient_rows_hp(mms, case, svals, modes):
+    """The same rows at HP_DPS digits, as exact (m, e) pairs: the mapping's
+    sympy expressions read at the exact radii, with the parameters the exact
+    binary64 numbers the example carries."""
+    import mpmath  # noqa: PLC0415
+    import sympy as sp  # noqa: PLC0415
+
+    nfp = case.nfp
+    phip = case.sign_jacobian * mpmath.mpf(case.phiedge) / (2 * mpmath.pi)
+    prod = {}
+    for (kind, m, n), expr in case.mode_table().items():
+        f = sp.lambdify(mms.S, expr, "mpmath")
+        vals = [mpmath.mpf(f(mpmath.mpf(s.numerator) / s.denominator)) for s in svals]
+        if mms.BASIS[kind][0] == "L":
+            vals = [v / phip for v in vals]
+        prod[(kind, m, n)] = vals
+
+    def p(kind, m, q):
+        return prod.get((kind, m, q), [mpmath.mpf(0)] * len(svals))
+
+    out = {k: [] for k in ("rmnc", "zmns", "lmns", "rmns", "zmnc", "lmnc")}
+    for m, nn in modes:
+        n = nn // nfp
+        q = abs(n)
+        if m == 0:
+            col = {"rmnc": p("rcc", 0, q), "zmns": [-x for x in p("zcs", 0, q)],
+                   "lmns": [-x for x in p("lcs", 0, q)], "rmns": [-x for x in p("rcs", 0, q)],
+                   "zmnc": p("zcc", 0, q), "lmnc": p("lcc", 0, q)}
+        elif n == 0:
+            col = {"rmnc": p("rcc", m, 0), "zmns": p("zsc", m, 0), "lmns": p("lsc", m, 0),
+                   "rmns": p("rsc", m, 0), "zmnc": p("zcc", m, 0), "lmnc": p("lcc", m, 0)}
+        else:
+            sg = 1 if n > 0 else -1
+            half = mpmath.mpf(1) / 2
+
+            def comb(a, b, t):
+                return [half * (x + t * y) for x, y in zip(p(a, m, q), p(b, m, q))]
+
+            col = {"rmnc": comb("rcc", "rss", sg), "zmns": comb("zsc", "zcs", -sg),
+                   "lmns": comb("lsc", "lcs", -sg), "rmns": comb("rsc", "rcs", -sg),
+                   "zmnc": comb("zcc", "zss", sg), "lmnc": comb("lcc", "lss", sg)}
+        for k in out:
+            out[k].append(col[k])
+    # rows by radius, columns by mode, as coefficient_rows returns them
+    return {k: [[hp(v[j]) for v in out[k]] for j in range(len(svals))] for k in out}
+
+
+class ContinuumHP:
+    """The continuum field and residual of a mapping at HP_DPS digits, with
+    complex steps in mpmath and mu0 = 4 pi 1e-7 as Physics.v has it."""
+
+    def __init__(self, mms, case):
+        import mpmath  # noqa: PLC0415
+        import sympy as sp  # noqa: PLC0415
+
+        self.mp = mpmath
+        self.nfp = case.nfp
+        self.phip = case.sign_jacobian * mpmath.mpf(case.phiedge) / (2 * mpmath.pi)
+        self.iota = [mpmath.mpf(c) for c in case.iota_coeff]
+        self.am = [mpmath.mpf(c) for c in case.am]
+        self.pres_scale = mpmath.mpf(case.pres_scale)
+        self.mu0 = 4 * mpmath.pi / 10**7
+        R, Z, L = case.expressions()
+        self.fn = {}
+        for name, expr in (("R", R), ("Z", Z), ("L", L)):
+            for key in ("", "s", "u", "v"):
+                e = expr
+                for ch in key:
+                    if ch == "s":
+                        e = sp.diff(e, mms.S)
+                    elif ch == "u":
+                        e = sp.diff(e, mms.U)
+                    else:
+                        e = self.nfp * sp.diff(e, mms.W)
+                self.fn[name + "|" + key] = sp.lambdify((mms.S, mms.U, mms.W), e, "mpmath")
+
+    def cov(self, s, u, v):
+        q = lambda name, key: self.fn[name + "|" + key](s, u, v * self.nfp)  # noqa: E731
+        R, Rs, Ru, Rv = (q("R", k) for k in ("", "s", "u", "v"))
+        Zs, Zu, Zv = (q("Z", k) for k in ("s", "u", "v"))
+        Lu, Lv = q("L", "u"), q("L", "v")
+        g = R * (Ru * Zs - Rs * Zu)
+        chip = self.phip * sum(c * s**i for i, c in enumerate(self.iota))
+        Bu = (chip - Lv) / g
+        Bv = (self.phip + Lu) / g
+        guu, guv = Ru**2 + Zu**2, Ru * Rv + Zu * Zv
+        gvv = Rv**2 + Zv**2 + R**2
+        gsu, gsv = Rs * Ru + Zs * Zu, Rs * Rv + Zs * Zv
+        return {"Bu": Bu, "Bv": Bv, "B_u": guu * Bu + guv * Bv,
+                "B_v": guv * Bu + gvv * Bv, "B_s": gsu * Bu + gsv * Bv}
+
+    def mu0_dpds(self, s):
+        return self.mu0 * self.pres_scale * sum(
+            i * c * s ** (i - 1) for i, c in enumerate(self.am) if i > 0)
+
+    def _steps(self, s, u, v):
+        mp = self.mp
+        h = mp.mpf(10) ** (-(HP_DPS // 2))
+        s, u, v = mp.mpf(s), mp.mpf(u), mp.mpf(v)
+        return (h, self.cov(s, u, v), self.cov(mp.mpc(s, h), u, v),
+                self.cov(s, mp.mpc(u, h), v), self.cov(s, u, mp.mpc(v, h)))
+
+    def rs(self, s, u, v):
+        """(d_v B_s - d_s B_v) B^v - (d_s B_u - d_u B_s) B^u - mu0 p'."""
+        mp = self.mp
+        h, q, ds, du, dv = self._steps(s, u, v)
+        d = lambda z, k: mp.im(z[k]) / h  # noqa: E731
+        re = {k: mp.re(x) for k, x in q.items()}
+        return ((d(dv, "B_s") - d(ds, "B_v")) * re["Bv"]
+                - (d(ds, "B_u") - d(du, "B_s")) * re["Bu"] - self.mu0_dpds(mp.mpf(s)))
+
+    def ru(self, s, u, v):
+        """- mu0 sqrt(g) J^s B^v, with mu0 sqrt(g) J^s = d_u B_v - d_v B_u."""
+        mp = self.mp
+        h, q, _, du, dv = self._steps(s, u, v)
+        js = mp.im(du["B_v"]) / h - mp.im(dv["B_u"]) / h
+        return -js * mp.re(q["Bv"])
 
 
 def select_points(points, funcs, count):
@@ -223,6 +382,39 @@ class Continuum:
         return -js * np.real(q["Bv"])
 
 
+def data_hp(mms, case, ns, sf, rows, ps, pu, modes):
+    """Every datum of the discrete problem at HP_DPS digits, as exact pairs
+    (m, e): the coefficients on the nodes and lambda on the half points, the
+    transform on the half points, phip, the pressure coefficients and the
+    sources, so that the certified problem is the manufactured one rather than
+    its binary64 rounding."""
+    import mpmath  # noqa: PLC0415
+
+    mpmath.mp.dps = HP_DPS
+    sfq = [Fraction(j, ns - 1) for j in range(ns)]
+    if any(Fraction(float(x)) != q for x, q in zip(sf, sfq)):
+        raise SystemExit("the radii are not the exact j/(ns - 1) in binary64")
+    shq = [(sfq[j] + sfq[j + 1]) / 2 for j in range(ns - 1)]
+
+    def mpq(q):
+        return mpmath.mpf(q.numerator) / q.denominator
+
+    full = coefficient_rows_hp(mms, case, sfq, modes)
+    half = coefficient_rows_hp(mms, case, shq, modes)
+    cont = ContinuumHP(mms, case)
+    iota = [hp(sum(mpmath.mpf(c) * mpq(s) ** i for i, c in enumerate(case.iota_coeff)))
+            for s in shq]
+    am = [Fraction(case.pres_scale) * Fraction(c) for c in case.am]
+    am = [(q.numerator, -(q.denominator.bit_length() - 1)) for q in am]
+    am += [(0, 0)] * (N_AM - len(am))
+    src_s = [[hp(cont.rs(mpq(sfq[j]), u, v)) for u, v in ps] for j in rows]
+    src_u = [[hp(cont.ru(mpq(shq[j]), u, v)) for u, v in pu] for j in rows]
+    return {"rmnc": full["rmnc"], "zmns": full["zmns"], "rmns": full["rmns"],
+            "zmnc": full["zmnc"], "lmns": half["lmns"], "lmnc": half["lmnc"],
+            "iota_half": iota, "phip": hp(cont.phip), "am": am,
+            "src_s": src_s, "src_u": src_u}
+
+
 def cmd_data(a):
     sys.path.insert(0, a.examples)
     import manufactured_solution as mms  # noqa: PLC0415
@@ -263,6 +455,8 @@ def cmd_data(a):
             "rows": rows, "points_s": ps, "points_u": pu,
             "cond_s": cs, "cond_u": cu, "src_s": src_s, "src_u": src_u,
         }
+        if a.hp:
+            d["hp"] = data_hp(mms, case, ns, sf, rows, ps, pu, modes)
         path = out / f"{a.case}_ns{ns}{a.tag}.json"
         path.write_text(json.dumps(d))
         print(f"{path.name}: {len(rows)} unknown rows, {len(ps)} + {len(pu)} "
@@ -319,6 +513,17 @@ class Problem:
                 self.points.append((j, 1, u, v, d["src_u"][r][i]))
         if len(self.points) != self.n:
             raise SystemExit(f"{len(self.points)} points against {self.n} unknowns")
+        # the same data at HP_DPS digits, as exact pairs, when the file has
+        # them: the certificates carry these, and x* is read from them
+        self.hp = d.get("hp")
+        if self.hp is not None:
+            h = self.hp
+            self.hcoef = {"R": h["rmnc"], "Z": h["zmns"], "Ra": h["rmns"], "Za": h["zmnc"]}
+            self.xstar_hp = [tuple(self.hcoef[b][j][k]) for j, b, k in self.unknowns]
+            self.src_hp = []
+            for r in range(len(self.rows)):
+                self.src_hp += [tuple(x) for x in h["src_s"][r]]
+                self.src_hp += [tuple(x) for x in h["src_u"][r]]
 
     def with_x(self, x):
         c = {b: self.coef[b].astype(complex) for b in self.coef}
@@ -456,19 +661,24 @@ class Layout:
         self.uidx = {u: i for i, u in enumerate(pb.unknowns)}
 
     def param(self, x):
-        me = dyadic(x)
+        me = dyadic_of(x)
         if me not in self.pidx:
             self.pidx[me] = self.pb.n + len(self.params)
             self.params.append(me)
         return self.pidx[me]
 
-    def sigma(self, j, comp, u, v, f):
+    def sigma(self, i, j, comp, u, v, f):
+        """The slots of point i, row j: the data at HP_DPS digits when the
+        problem carries them, and its binary64 data otherwise."""
         pb, d, K = self.pb, self.pb.d, self.pb.K
-        s = [self.param(pb.sf[j]), self.param(u), self.param(v), self.param(d["phip"])]
+        h = pb.hp
+        s = [self.param(pb.sf[j]), self.param(u), self.param(v),
+             self.param(h["phip"] if h else d["phip"])]
         s += [self.param(x) for x in pb.sf[j - 1:j + 2]]
         s += [self.param(x) for x in pb.sh[j - 1:j + 1]]
-        s += [self.param(x) for x in d["iota_half"][j - 1:j + 1]]
-        s += [self.param(a) for a in d["am"]]
+        s += [self.param(x) for x in (h["iota_half"] if h else d["iota_half"])[j - 1:j + 1]]
+        s += [self.param(a) for a in (h["am"] if h else d["am"])]
+        coef = pb.hcoef if h else pb.coef
 
         def block(blk):
             out = []
@@ -481,23 +691,26 @@ class Layout:
                     elif blk == "Za" and k in pb.tied and tie in self.uidx:
                         out.append(self.uidx[tie])  # the gauge: Z_c(1, n) = R_s(1, n)
                     else:
-                        out.append(self.param(pb.coef[blk][rr, k]))
+                        out.append(self.param(coef[blk][rr][k]))
             return out
 
+        lam = h["lmns"] if h else pb.lam
         s += block("R") + block("Z")
-        s += [self.param(pb.lam[rr, k]) for rr in (j - 1, j) for k in range(K)]
+        s += [self.param(lam[rr][k]) for rr in (j - 1, j) for k in range(K)]
         if pb.lasym:
+            lama = h["lmnc"] if h else pb.lama
             s += block("Ra") + block("Za")
-            s += [self.param(pb.lama[rr, k]) for rr in (j - 1, j) for k in range(K)]
+            s += [self.param(lama[rr][k]) for rr in (j - 1, j) for k in range(K)]
         src = [0.0, 0.0, 0.0]
-        src[comp] = f
+        src[comp] = pb.src_hp[i] if h else f
         s += [self.param(x) for x in src]
         return s
 
 
 def write_cert(path, pb, lay, centre, r, K, M, A, B, anorm=None, prec=53):
     n = pb.n
-    pts = [(comp, lay.sigma(j, comp, u, v, f)) for j, comp, u, v, f in pb.points]
+    pts = [(comp, lay.sigma(i, j, comp, u, v, f))
+           for i, (j, comp, u, v, f) in enumerate(pb.points)]
     L = ["STELLAROCQ-NEWTON", f"PREC {prec}", "SYSTEM colloc", f"N {n}",
          "EXP " + " ".join(str(int(e)) for e in lay.exps),
          "CENTRE " + " ".join(str(int(c)) for c in centre),
@@ -633,8 +846,10 @@ def cmd_certs(a):
     # than a float
     xc = np.array([float(Fraction(int(c)) * Fraction(2) ** int(e))
                    for c, e in zip(centre, lay.exps)])
-    dev_exact = [abs(Fraction(int(c)) * Fraction(2) ** int(e) - Fraction(float(xs)))
-                 for c, e, xs in zip(centre, lay.exps, pb.xstar)]
+    xstar = ([frac(me) for me in pb.xstar_hp] if pb.hp is not None
+             else [Fraction(float(xs)) for xs in pb.xstar])
+    dev_exact = [abs(Fraction(int(c)) * Fraction(2) ** int(e) - xs)
+                 for c, e, xs in zip(centre, lay.exps, xstar)]
     print(f"  exist: {v_e}, radius {r} mantissa units, {float((r * D).min()):.3e} to "
           f"{float((r * D).max()):.3e}, K {K:.3e}, {time.time() - t0:.0f} s", flush=True)
     # stability on the same box: in the max norm over mantissas every state
@@ -681,6 +896,10 @@ def main():
     p.add_argument("--gauge", action="store_true",
                    help="fix the m = 1 poloidal gauge of a non-symmetric mapping "
                    "by tying the m = 1 cosine coefficients of Z to the sine ones of R")
+    p.add_argument("--binary64", dest="hp", action="store_false",
+                   help="write the problem's data as binary64 numbers only, rather "
+                   "than beside their values at HP_DPS digits, which the "
+                   "certificates then carry")
     p.set_defaults(fn=cmd_data)
     c = sub.add_parser("certs")
     c.add_argument("data")
