@@ -4,7 +4,7 @@ From Coq Require Import ExtrOcamlBasic ExtrOcamlNatInt.
 From Coq Require Import ExtrOCamlInt63 ExtrOCamlFloats.
 From Stellarocq Require Import Physics Checker Cell Cover Deriv Quad Mercier
      Project Newton Colloc Box Integral TrigExpr Harmonic BoxCell QSFloor Cover2 Integrate
-     MercierRun.
+     MercierRun WideHarm.
 Extraction Language OCaml.
 Set Extraction Output Directory ".".
 
@@ -40,7 +40,7 @@ Separate Extraction check_cert check_cert_lower Cert CPoint check_ccert check_cc
   ICert IBounds check_int int_total rows_check rows_contribs icell_box
   icell_centre icentre ires ibase icomp inu
   RWeighted HCert check_harm harm_total harm_rows harm_struct harm_first
-  hrow hpoint tdeg_binds hres hbase hcomp hprec_of bounded check_dharm
+  hrow hpoint tdeg_binds hres hbase hcomp hprec_of bounded check_dharm wharm_row
   RJump BTCert BTCellC check_btcert check_btcell btcell_comb_e btres btbase
   btprec_of bt_tiles bt_period BPCert BPt check_bpcert check_bpt bpres bpprec_of
   QCert check_qcert qharm_i qharm_vals qcomp_i qres qenv_i qprec REnergy

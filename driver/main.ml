@@ -1358,7 +1358,7 @@ let read_hcert path =
    FILE" reads the same file and establishes it with Harmonic.check_dharm
    instead: no degree bound is asked for, and what the enclosure holds is the
    equispaced rule's discrete harmonic, Harmonic.dharm_correct. *)
-let run_harm ?(discrete = false) src =
+let run_harm ?(discrete = false) ?(wide = 0L) src =
   let c = read_hcert src in
   let prec = Harmonic.hprec_of c in
   let r3 = Harmonic.hres c in
@@ -1394,7 +1394,10 @@ let run_harm ?(discrete = false) src =
             let (lo, hi) = bounds k in
             let oc = open_out (Printf.sprintf "%s%d" tmp k) in
             for l = lo to hi - 1 do
-              let x = Harmonic.hrow prec w su sv eu ev nu nv binds n l in
+              let x =
+                if Int64.compare wide 0L > 0 then
+                  WideHarm.wharm_row (z_of_int64 wide) prec c l
+                else Harmonic.hrow prec w su sv eu ev nu nv binds n l in
               Printf.fprintf oc "%h %h\n" (ilo x) (ihi x)
             done;
             close_out oc; exit 0
@@ -1421,7 +1424,9 @@ let run_harm ?(discrete = false) src =
   Printf.printf "verdict: %s (%.1f s)\n%!" (if ok then "VALID" else "INVALID") (t1 -. t0);
   if ok then begin
     Printf.printf "%s: [%.17e, %.17e]\n"
-      (if discrete then "discrete harmonic" else "integral over the torus")
+      (if Int64.compare wide 0L > 0 then
+         Printf.sprintf "discrete harmonic, rows at %Ld bits" wide
+       else if discrete then "discrete harmonic" else "integral over the torus")
       (ilo total) (ihi total);
     if ilo total > 0.0 then Printf.printf "floor: the integral is at least %.6e\n" (ilo total)
     else if ihi total < 0.0 then Printf.printf "floor: the integral is at most %.6e\n" (ihi total)
@@ -2800,6 +2805,14 @@ let main () =
        | _ :: tl -> find tl
        | [] -> prerr_endline "--bt needs a file"; exit 2 in
      run_bt (find args)
+   end);
+  (if has "--dharm-wide" then begin
+     let rec find = function
+       | "--dharm-wide" :: b :: f :: _ -> (Int64.of_string b, f)
+       | _ :: tl -> find tl
+       | [] -> prerr_endline "--dharm-wide needs BITS and a file"; exit 2 in
+     let (bits, f) = find args in
+     run_harm ~discrete:true ~wide:bits f
    end);
   (if has "--harm" || has "--dharm" then begin
      let flag = if has "--harm" then "--harm" else "--dharm" in

@@ -25,6 +25,7 @@ theories/Integral.v
 theories/TrigPoly.v
 theories/TrigExpr.v
 theories/Harmonic.v
+theories/WideHarm.v
 theories/HalfGrid.v
 theories/VmecKernel.v
 theories/Landreman.v
