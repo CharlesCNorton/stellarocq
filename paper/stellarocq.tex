@@ -89,9 +89,11 @@ zero over a box of states; the free-boundary pressure jump, enclosed for every
 vacuum field between the answers of two independent solvers; the Mercier
 criterion of a coarse equilibrium, whose sign depends on how the radial
 derivatives are taken; and the distance of VMEC++'s field from an exact
-three-dimensional equilibrium. And its certified values are regression tests on a
-branch of VMEC++~\cite{branch}, and its differential testing added tests of
-invariances and of the energy's gradient to VMEC++.
+three-dimensional equilibrium. Its certified values are regression tests on a
+branch of VMEC++~\cite{branch}; its differential testing added tests of
+invariances and of the energy's gradient to VMEC++, and VMEC++'s continuous
+integration now measures its solutions against the exact
+equilibria~\cite{pr912}.
 
 \section{The certified object}\label{sec:object}
 
@@ -773,7 +775,11 @@ free-boundary jump, which reads NESTOR's boundary vacuum field through an option
 proposed upstream~\cite{pr903}. A finite difference of VMEC++'s energy equals
 its unpreconditioned forces contracted with the perturbation, the discrete form
 of \code{energy\_gradient\_is\_force}; VMEC++ now tests this~\cite{pr905}, and
-that the energy Hessian is symmetric and DGeod never positive~\cite{pr904}.
+that the energy Hessian is symmetric and DGeod never positive~\cite{pr904}. Its
+continuous integration now runs VMEC++ on members of both of Landreman's
+families on every change and measures, in floating point, its flux surfaces,
+magnetic axis, field and enclosed current against the exact
+ones~\cite{pr912}.
 Differential tests of VMEC++ for invariances the
 reconstruction satisfies exactly, three of which VMEC++ now runs~\cite{pr875},
 also exposed an orientation test that the poloidal rotation VMEC applies to an
@@ -830,7 +836,8 @@ numbers, whose residual is proven to be the ideal-MHD force. Its verdicts are re
 certified enclosures. Against Landreman's explicit
 equilibria~\cite{landreman2026}, both of whose families the development
 proves to be ideal-MHD equilibria, the same certificates measure a solver's
-error against a true equilibrium rather than a manufactured one.
+error against a true equilibrium rather than a manufactured one, a comparison
+VMEC++ now makes in floating point on every change~\cite{pr912}.
 
 \paragraph{Availability.}
 The development, the certificate generators and the script that writes
@@ -983,6 +990,10 @@ Test that the unpreconditioned force is the gradient of the MHD energy,
 \bibitem{pr904}
 Test that the energy Hessian is symmetric and DGeod is never positive,
 \link{https://github.com/proximafusion/vmecpp/pull/904}.
+
+\bibitem{pr912}
+Check VMEC++ against exact three-dimensional MHD equilibria in CI,
+\link{https://github.com/proximafusion/vmecpp/pull/912}.
 
 \bibitem{pr875}
 Test three invariances of the solver,
