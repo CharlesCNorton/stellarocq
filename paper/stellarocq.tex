@@ -10,6 +10,7 @@
 \ifdefined\pagewidth \pagewidth=8.5in \pageheight=11in \fi
 
 \newcommand{\code}[1]{\texttt{#1}}
+\emergencystretch=3em
 \newcommand{\sqg}{\sqrt{g}}
 \newcommand{\cellA}[1]{\parbox[t]{3.3cm}{\raggedright\strut#1\strut}}
 \newcommand{\cellB}[1]{\parbox[t]{4.4cm}{\raggedright\strut#1\strut}}
@@ -28,31 +29,27 @@
 \maketitle
 
 \begin{abstract}
-The output of a stellarator equilibrium code is a file of floating-point Fourier
-coefficients. Stellarocq states what such a file establishes as machine-checked
-theorems about the magnetic field it defines. The field is reconstructed from
-the exact numbers of a VMEC++ output file by VMEC's half-grid interpolation of
-the surface coefficients. The development proves that the residual it evaluates
-is $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ of that field, and that its
-Jacobian and metric differ from those VMEC forms from the same numbers by exact
-terms of second order in the radial step. Each claim about the field, a bound, a
+A stellarator equilibrium code ends its run with a file of floating-point
+Fourier coefficients, and what that file establishes about the magnetic field
+is judged by the code's own convergence metrics. Stellarocq states it as
+machine-checked theorems. It reconstructs the field from the exact numbers of a
+VMEC++ output file by VMEC's half-grid interpolation, and a Rocq development
+proves that the residual it evaluates is $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla
+p)$ of that field and that the field's Jacobian and metric differ from VMEC's own
+by exact terms of second order in the radial step. Each claim, a bound, a
 Fourier harmonic, a flux-surface integral or a Mercier term, is decided by a
-checker extracted from a Rocq proof that a passing verdict implies the claim.
-The certificates give the error of the half-grid rule on manufactured problems
-to a relative $10^{-12}$, falling by factors of 3.7 to 4.0 per halving of the
-radial step away from the axis. On VMEC++ output they bound away from zero, at
-65 to 1025 surfaces, a harmonic of the force at a rational surface that falls at
-most 1.41-fold per doubling of the surfaces, approaching the square root of the
-radial step, where the axisymmetric harmonics fall about fourfold, and they
-enclose the free-boundary pressure jump for every
-vacuum field whose pressure lies at each point between the answers of NESTOR
-and BIEST. Against one of Landreman's exact three-dimensional equilibria they
-bound the difference between VMEC++'s field and the exact field at every point
-of grids on its flux surfaces, a difference that falls 3.5 to 5.6-fold per
-doubling of the surfaces away from the axis and stops falling at it, and the
-development proves in Rocq that the members of both his families are ideal-MHD
-equilibria. On W7-X they bound the force pointwise and at every retained mode,
-both set by the Fourier truncation, not the radial grid.
+checker extracted from a proof that a passing verdict implies it. On
+manufactured problems the certificates show the half-grid rule converging at
+second order, with the error known to a relative $10^{-12}$. On VMEC++
+equilibria they show a force harmonic at a rational surface falling only as the
+square root of the radial step, the signature of a current sheet; a
+free-boundary pressure jump that radial refinement barely reduces, for every
+vacuum field between the answers of two independent solvers; and a Mercier
+criterion whose sign at coarse resolution depends on how the radial derivatives
+are taken. The development proves both of Landreman's families of exact
+three-dimensional equilibria to be ideal-MHD equilibria, and against one of them
+VMEC++'s field converges at about second order away from the axis. On W7-X the
+certified force is set by the Fourier truncation, not the radial grid.
 \end{abstract}
 
 \section{Introduction}
@@ -67,32 +64,53 @@ such as the Mercier stability terms, all in binary64 floating point.
 
 What such a file establishes about the field it describes is judged by
 convergence metrics internal to the solver and by diagnostics recomputed in
-floating point. Stellarocq states it as a theorem. The object of every statement
-is the field reconstructed from the exact numbers in the file by the solver's
-own interpolation of its surface coefficients, and the development proves how
-the Jacobian and metric of that field differ from the ones the solver forms. A
-claim about that field is decided by a checking function
-written in Rocq~\cite{rocq}, proven to imply the claim when it returns
-\code{true}, and extracted to OCaml~\cite{letouzey2003}; real-number semantics
-and interval arithmetic come from Coquelicot~\cite{coquelicot},
-Flocq~\cite{flocq} and CoqInterval~\cite{melquiond2008}.
+floating point, and those judgements can mislead in ways the file does not
+show. The normalized force residual a run drives below $10^{-12}$ concerns the
+Fourier harmonics the solver retains, while the force of the field the file
+defines can stay near a percent of $B^2$. A Mercier term computed from radial
+differences of the file's profiles can change sign when the differences are
+taken another way. A rational surface can carry a current sheet that the
+solution resolves more slowly than anything else as the radial grid is
+refined. Each of these is a statement about the field the file defines, and
+each can be decided exactly.
+
+Stellarocq decides them as theorems. The object of every statement is the field
+reconstructed from the exact numbers in the file by the solver's own
+interpolation of its surface coefficients, and the development proves how the
+Jacobian and metric of that field differ from the ones the solver forms. A
+claim about that field is decided by a checking function written in
+Rocq~\cite{rocq}, proven to imply the claim when it returns \code{true}, and
+extracted to OCaml~\cite{letouzey2003}; real-number semantics and interval
+arithmetic come from Coquelicot~\cite{coquelicot}, Flocq~\cite{flocq} and
+CoqInterval~\cite{melquiond2008}. A certificate carries the file's numbers and
+the claimed bounds, so anyone can check it again with the released checker.
 
 The development contributes four things. It proves that the residual it
-evaluates is the ideal-MHD force of the reconstructed field and how that
+evaluates is the ideal-MHD force of the reconstructed field, and how that
 field's Jacobian and metric differ from the ones VMEC forms
 (Section~\ref{sec:object}). It supplies checking functions, extracted from Rocq
-together with their soundness theorems, for bounds at points and over cells,
-discrete Fourier harmonics, flux-surface integrals, the Mercier criterion and
-the existence of discrete solutions (Section~\ref{sec:certs}). It applies them to VMEC++ (Section~\ref{sec:results}):
-the error of the half-grid rule on manufactured problems, known to a relative
-$10^{-12}$; a harmonic of the force on a rational surface, bounded away from
-zero over a box of states; the free-boundary pressure jump, enclosed for every
-vacuum field between the answers of two independent solvers; the Mercier
-criterion of a coarse equilibrium, whose sign depends on how the radial
-derivatives are taken; the distance of VMEC++'s field from an exact
-three-dimensional equilibrium; and the force residual of W7-X, which its
-Fourier truncation sets. Its certified values are regression tests on a
-branch of VMEC++~\cite{branch}; its differential testing added tests of
+with their soundness theorems, for bounds at points and over cells, discrete
+Fourier harmonics, flux-surface integrals, the Mercier criterion and the
+existence of discrete solutions (Section~\ref{sec:certs}). It proves that both
+of Landreman's families of explicit three-dimensional fields~\cite{landreman2026}
+are ideal-MHD equilibria, so that a solver's distance from them is a true error.
+And it applies the checkers to VMEC++ (Section~\ref{sec:results}).
+
+The applications give six findings. On manufactured problems the half-grid rule
+converges at second order, with the error known to a relative $10^{-12}$, and
+the stability constant its convergence theorem assumes is measured to converge.
+On a rational surface a harmonic of the force falls only as the square root of
+the radial step, while the non-resonant harmonics fall as its square. At the
+free boundary the pressure jump falls by factors of only 1.05 to 1.14 per
+doubling of the surfaces, for every vacuum field between the answers of two
+independent solvers. At coarse resolution the certified Mercier criterion takes
+either sign, depending on how the radial derivatives are taken. Against
+Landreman's sheared equilibrium VMEC++'s field converges at about second order
+away from the axis, and against his equilibrium with $\iota=2$ it does not
+converge. On W7-X the certified force is set by the Fourier truncation and not
+by the radial grid. Section~\ref{sec:users} draws the consequences for users of
+VMEC. The certified values are regression tests on a branch of
+VMEC++~\cite{branch}, Stellarocq's differential testing added tests of
 invariances and of the energy's gradient to VMEC++, and VMEC++'s continuous
 integration now measures its solutions against the exact
 equilibria~\cite{pr912}.
@@ -193,14 +211,13 @@ Where every node difference in the identity is at most $K|h|$, the two
 Jacobian factors agree to within ${\textstyle\frac14}(Kh)^2(1+s_h^{-1/2})$
 (\code{vmec\_jacobian\_second\_order}). The certified field is the
 reconstruction's, and VMEC's discrete field differs from it by these terms of
-second order in the radial step. Evaluated in floating point on the files of
-Section~\ref{sec:results} (\code{gen/jacobian\_gap.py}), the two Jacobians, and
-so the two $\sqg$ (\code{vmec\_sqrtg\_difference}), differ by at most a relative
-$6.3\times10^{-7}$, $1.7\times10^{-7}$, $4.2\times10^{-8}$, $4.5\times10^{-9}$
-and $1.2\times10^{-9}$ on the surfaces with $s\ge1/4$ of Landreman's sheared
-equilibrium at 13, 25, 50, 100 and 200 surfaces, and by at most
-$1.1\times10^{-6}$ on every half-grid surface whose nodes lie off the axis; on
-the Solov'ev equilibrium the largest is $9.1\times10^{-7}$.
+second order in the radial step. They are small on the files of
+Section~\ref{sec:results}: evaluated in floating point
+(\code{gen/jacobian\_gap.py}), the two Jacobians, and so the two $\sqg$
+(\code{vmec\_sqrtg\_difference}), differ by at most a relative
+$1.1\times10^{-6}$ on every half-grid surface whose nodes lie off the axis, and
+on the surfaces with $s\ge1/4$ of Landreman's sheared equilibrium the difference
+falls from $6.3\times10^{-7}$ at 13 surfaces to $1.2\times10^{-9}$ at 200.
 
 \paragraph{Identities.}
 The representation builds some properties in, and for the reconstruction they
@@ -247,11 +264,9 @@ its derivatives over the rectangle times the half-widths
 (\code{check\_ccert\_correct}); reversed, the same data bounds a component away
 from zero. The bound tightens as the cells shrink, since each derivative
 enclosure is taken over its own cell: on one surface of the Solov'ev
-equilibrium, where the residual reaches $4.1\times10^{-7}$ in floating point, 8,
-32, 128, 512, 2048 and 8192 cells bound it by $2.2\times10^3$, $0.97$,
-$3.4\times10^{-2}$, $2.0\times10^{-3}$, $1.3\times10^{-4}$ and
-$7.7\times10^{-6}$, about sixteen-fold less per fourfold refinement from 128
-cells on, in 0.4 to 13 seconds.
+equilibrium, where the residual reaches $4.1\times10^{-7}$ in floating point,
+the bound falls from $2.2\times10^3$ with 8 cells to $7.7\times10^{-6}$ with
+8192, about sixteen-fold per fourfold refinement from 128 cells on.
 \code{Cover2.v} decides, column by column, that the cells of a verdict cover the
 rectangle they span (\code{cells\_cover\_rect}) or every line they lie on
 (\code{cells\_cover\_lines}). A spectral solution balances forces mode by mode,
@@ -312,6 +327,37 @@ The build pins Rocq 9.1.1 with its
 standard library 9.2.0, CoqInterval 4.11.4, Flocq 4.2.2, Coquelicot 3.4.5,
 MathComp 2.4.0 and OCaml 4.14.2.
 
+\paragraph{Cost.}
+Checking takes seconds to hours on a laptop (Table~\ref{tab:cost}). A point
+certificate evaluates the residual once per point, a cell certificate its
+derivatives over each cell and a harmonic every point of its grid, so the cost
+grows with the number of modes, with the number of points or cells, and with the
+precision: a harmonic whose rows are evaluated at 256 bits in software floating
+point takes hours where the same harmonic in binary64 takes seconds. The checker
+divides a certificate's points, cells or rows among processes.
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{@{}lll@{}}
+\hline
+Check & Size & Time \\
+\hline
+points, free-boundary jump & NESTOR's grid & 0.1--5~s \\
+points, $\mathbf{B}-\mathbf{B}^*$ of Landreman's field & $64\times32$ points & 4--30~s \\
+cells, Solov'ev residual on a surface & 8--8192 cells & up to 16~s \\
+cells, free-boundary jump over the boundary & $512\times128$ cells per period & 48 and 68~min \\
+harmonic over a box of states, binary64 & $64\times32$ points & 3~s \\
+harmonic, rows at 256 bits & $64\times32$ points & 2.0--2.6~h \\
+Mercier criterion & four coverings of 2048 cells & 3~min \\
+Newton existence, 120 or 128 bits & up to 423 unknowns & up to 44~min \\
+stability on the same box & 423 unknowns & 26~min \\
+W7-X points and projection & 4096 points, 288--800 modes & 21~min--2.8~h \\
+\hline
+\end{tabular}
+\caption{Time to check certificates on a laptop (Intel i9-12900H) with four
+worker processes, most of them beside three other checks.}\label{tab:cost}
+\end{table}
+
 \section{Results}\label{sec:results}
 
 Table~\ref{tab:results} collects the certified results with the theorem each
@@ -333,12 +379,13 @@ called certified is an enclosure that a passing verdict proves, rounded outward.
 \cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057043\times10^{-5}$, $7.20667053290\times10^{-6}$, $1.86266877703\times10^{-6}$} \\[2pt]
 \cellA{Solov'ev, 1--3 surfaces} & \cellB{zero of the collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one, in boxes of radius $6.0\times10^{-10}$ to $7.7\times10^{-9}$} \\[2pt]
 \cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state, 65/129/257/513/1025 surfaces, at 256 bits\newline\code{wdharm\_b\_correct}; over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$8.9208$, $8.9310$, $7.4567$, $5.3557$ and 3.8084$\times10^{-5}$~T$^2$, each to a relative $2\times10^{-12}$; over the box $[8.81,9.03]$, $[8.51,9.35]$, $[5.80,9.11]\times10^{-5}$~T$^2$} \\[2pt]
-\cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]\times10^{-4}$~T$^2$, $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
+\cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]$, $[7.201,7.206]$, $[6.433,6.437]$, $[5.636,5.640]$ and $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
 \cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.87$, $1.89$, $1.81$, $1.73$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{the same with the file's centred radial differences\newline\code{merc\_run\_q\_correct}} & \cellC{$[-6.421,-6.366]\times10^{-4}$ and $[1.711,1.875]\times10^{-3}$} \\[2pt]
 \cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.67\times10^{-7}$; $4.35\times10^{-6}$, $1.12\times10^{-7}$, $1.02\times10^{-7}$; $3.34\times10^{-6}$, $2.53\times10^{-8}$, $2.12\times10^{-8}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\[2pt]
+\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{spread of $\psi^*$ about a level set at a $64\times32$ grid of a field period on the outermost node surface\newline\code{check\_bpcert\_correct}} & \cellC{$2.32\times10^{-7}$, $4.95\times10^{-8}$, $1.77\times10^{-8}$, $1.70\times10^{-9}$ and $1.71\times10^{-10}$, where $\psi^*$ is $0.02$ on the boundary} \\[2pt]
 \cellA{W7-X, $\beta=4$ per cent, 49/97/193 surfaces} & \cellB{largest component of $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ at a $64\times64$ grid of a field period on the surfaces $s=1/4$, $1/2$, $3/4$\newline\code{check\_cert\_correct}; the largest of its discrete harmonics at the 288 retained modes\newline\code{harm\_encloses}} & \cellC{at most $7.71$, $7.73$, $7.82\times10^{-2}$~T$^2$; at most $5.49$, $5.49$, $5.46\times10^{-4}$~T$^2$, where $B^2$ is about 7~T$^2$} \\
 \hline
 \end{tabular}
@@ -346,19 +393,15 @@ called certified is an enclosure that a passing verdict proves, rounded outward.
 \end{table}
 
 \paragraph{The order of the half-grid rule.}
-One, two and three surfaces of the Solov'ev equilibrium~\cite{soloviev1968} each
-have exactly one zero of the collocated residual in a box shaped to the
-coefficients, of radius $6.0\times10^{-10}$ to $7.7\times10^{-9}$, around a
-centre that Newton's method moved $1.8\times10^{-6}$ to $3.0\times10^{-6}$ from
-the file's coefficients. \code{HalfGrid.v} proves the node rule second-order
-consistent with the residual of the continuously reconstructed field
-(\code{node\_consistent}) and derives the second-order bound that
-\code{discretization\_is\_consistent} states from consistency and a stability
-hypothesis (\code{lax\_second\_order}); near the axis, where the innermost
-interval is read linearly, the rule is first order in the radial derivatives.
-Manufactured solutions~\cite{roache2002} measure the order. The mappings are
-the $m\le1$ ones of the manufactured-solution test of~\cite{pr784}, with three
-field periods. The three-dimensional one is
+Away from the axis the half-grid rule converges at second order, and on
+manufactured problems its error is known to twelve digits.
+\code{HalfGrid.v} proves the node rule second-order consistent with the
+residual of the continuously reconstructed field (\code{node\_consistent});
+near the axis, where the innermost interval is read linearly, the rule is first
+order in the radial derivatives. Manufactured solutions~\cite{roache2002}
+measure the order. The mappings are the $m\le1$ ones of the
+manufactured-solution test of~\cite{pr784}, with three field periods. The
+three-dimensional one is
 $R=1+p_0s+p_1s^2-0.005\cos3\phi+\sqrt{s}\,\bigl(0.05\cos u+0.005\cos(u-3\phi)\bigr)$
 and $Z=0.005\sin3\phi+\sqrt{s}\,\bigl(0.05\sin u-0.005\sin(u-3\phi)\bigr)$ with
 $p_0=-3.32\times10^{-4}$ and $p_1=-8.06\times10^{-6}$, $\iota=0.42+0.13s$,
@@ -378,21 +421,38 @@ mapping's own value carried to 120 bits. On systems of up to 423 unknowns
 the interval Newton test puts exactly one zero in a box a few units of a 58-bit
 mantissa wide in each unknown, around a centre refined on outputs read at 128
 bits, so the error $\max|x_h-x^*|$ is enclosed to within $5\times10^{-20}$, a
-relative $10^{-12}$; the same problem with its
-data rounded to binary64 has an error that differs in the eighth digit. It falls by
-3.81, 3.92 and 3.97 per doubling for a three-dimensional mapping and by 3.73 and
-3.87 for one without stellarator symmetry (Figure~\ref{fig:conv}a), and its
-enclosures are identical at five times the pressure, which enters the radial
-force only as a flux function that the rule and its source share. The collocated
-system is the half-grid residual of the reconstruction at collocation points.
-VMEC's own discrete equations come from the variation of the energy with
-spectral condensation and a constraint on the $m=1$ modes, and they form the
-Jacobian and metric from the products whose difference from the
+relative $10^{-12}$ (Table~\ref{tab:results}). It falls by 3.81, 3.92 and 3.97
+per doubling for the three-dimensional mapping and by 3.73 and 3.87 for the one
+without stellarator symmetry (Figure~\ref{fig:conv}a). Its enclosures are
+identical at five times the pressure, which enters the radial force only as a
+flux function that the rule and its source share, and the same problem with its
+data rounded to binary64 has an error that differs in the eighth digit.
+
+Convergence also needs stability. Given a constant $S$, the same at every
+radial step, with $|x_h-x^*|\le S\,|r(x^*)-f|$, the theorem
+\code{lax\_second\_order} turns consistency into the second-order bound that
+\code{discretization\_is\_consistent} states.
+For the three-dimensional problem, $S_h=\|J_h^{-1}\|_\infty$ at $x^*$, with
+$J_h$ the Jacobian of the forced residual, is $0.0438$ at 9 surfaces and
+$0.0555$ at 1025 in floating point, each doubling from 65 surfaces on adding
+half as much as the one before, so that it tends to about $0.056$, while the
+consistency residual $|r(x^*)-f|$ falls from $1.9\times10^{-3}$ to
+$3.6\times10^{-7}$ (\code{gen/stability\_scan.py}). The hypothesis holds with
+one constant at every resolution measured, and it remains a hypothesis beyond
+them. The collocated system is the half-grid residual of the reconstruction at
+collocation points. VMEC's own discrete equations come from the variation of
+the energy with spectral condensation and a constraint on the $m=1$ modes, and
+they form the Jacobian and metric from the products whose difference from the
 reconstruction's \code{VmecKernel.v} gives exactly, at second order in $h$. The
-annulus keeps the axis, where the rule is first order, out of the problem. The
+annulus keeps the axis, where the rule is first order, out of the problem; the
 first-order radial convergence that~\cite{panici2023} report for VMEC is that of
 the force error of VMEC's own solutions averaged over $0.1\le s\le0.99$ of a
-discrete problem that contains the axis.
+discrete problem that contains the axis. On an equilibrium the collocated
+system has solutions as well: one, two and three surfaces of the Solov'ev
+equilibrium~\cite{soloviev1968} each have exactly one zero of the collocated
+residual in a box of radius $6.0\times10^{-10}$ to $7.7\times10^{-9}$ around a
+centre that Newton's method moved $1.8\times10^{-6}$ to $3.0\times10^{-6}$ from
+the file's coefficients.
 
 \begin{figure}[t]
 \centering
@@ -622,112 +682,115 @@ and 257 surfaces, and its 256-bit enclosures, narrower than the dots, at 65 to
 \end{figure}
 
 \paragraph{A forced current sheet.}
-On VMEC++'s circular tokamak ($R_0=6$, $a=2$) with $\iota=0.9-0.64s$, which is
-$1/2$ at $s=0.625$, and a $(1,1)$ boundary ripple of amplitude $0.03$, toroidal
-coupling drives a $(2,1)$ harmonic of the radial force on the rational surface.
-Its certified value is the rectangle rule for the integral of $r_s\cos(2u-v)$ on
-a $64\times32$ grid of angles, in T$^2$ like $r_s$, against $1.2\times10^3$~T$^2$
-for the integral of $B^2$ over the angles there. With each row of the grid
-evaluated and summed at 256 bits, \code{wdharm\_b\_correct} encloses it at the
-converged states of 65, 129, 257, 513 and 1025 surfaces to within a relative
-$2\times10^{-12}$ of $8.9208\times10^{-5}$, $8.9310\times10^{-5}$,
-$7.4567\times10^{-5}$, $5.3557\times10^{-5}$ and $3.8084\times10^{-5}$
-(Figure~\ref{fig:conv}c), and it is linear in the ripple. It rises by 0.11 per
-cent from 65 to 129 surfaces and then falls by 1.20, 1.39 and 1.41 per
-doubling, approaching the factor $\sqrt2$ of a decay as the square
-root of the radial step, while the axisymmetric harmonics $(2,0)$ and $(1,0)$ of
-the same reconstruction fall 3.7 to 4.1-fold per doubling in floating point up to
-513 surfaces, and 3.8 and 2.3-fold from 513 to 1025, and the $(3,1)$ sideband
-1.24 to 1.44-fold per doubling (Figure~\ref{fig:conv}b). In floating point the
-harmonic forms a layer about the rational surface, positive inside it and
-negative outside, whose extremes stay of order $10^{-4}$~T$^2$ while their
-separation shrinks only as $h^{1/2}$, from 0.156 to 0.033 in $s$ between 65 and
-1025 surfaces, and whose zero lies a fixed 2.4 to 3.9 radial steps outside the
-rational surface, so that the value on that surface, the layer's slope times
-the offset, falls as $h^{1/2}$. The same ripple on a transform
-profile with no low-order rational surface nearby leaves nothing behind. This is
-the response of a nested-surface field at a rational
-surface~\cite{grad1967,hahm1985,loizu2015b}, whose ideal limit is a current
-sheet and which~\cite{lazerson2016} studied in VMEC; three-dimensional equilibria
-with current sheets and stepped pressure exist~\cite{bruno1996,enciso2025}. In
-binary64 interval arithmetic (\code{dharm\_correct}) the enclosures at 65, 129
-and 257 surfaces widen about fourfold per doubling, from 1.1 to 21 per cent of
-the value, as second radial differences amplify the rounding by $h^{-2}$, and
-there the harmonic lies between $5.8\times10^{-5}$ and $9.4\times10^{-5}$ for
-every state within a relative $10^{-14}$ of the converged coefficients. The box
-is centred on the converged state, and on the rational surface the collocated
-Newton test, its centre refined on outputs read at 128 bits, certifies a
-discrete solution at 33 and at 65 surfaces, where the Jacobian's condition
-number is $1.4\times10^6$ and $3.0\times10^6$ in floating point. In
-SPEC~\cite{hudson2012}, two
-Beltrami volumes separated by an ideal
-interface at the rational surface carry the $(2,1)$ sheet as a jump of
-$1.47\times10^{-5}$ in the covariant poloidal field at ripple $0.03$, as in the
-equilibria of~\cite{loizu2015}, and with the rational surface inside a relaxed
-volume SPEC's field-line tracing finds a $(2,1)$ island whose width grows from
-$0.107$ to $0.173$ in the volume's radial coordinate as the ripple goes from
-$0.0075$ to $0.03$, as the ripple to the power 0.35.
+At a rational surface the discrete solution converges more slowly than
+anywhere else: the resonant harmonic of the force falls as the square root of
+the radial step. On VMEC++'s circular tokamak ($R_0=6$, $a=2$) with
+$\iota=0.9-0.64s$, which is $1/2$ at $s=0.625$, and a $(1,1)$ boundary ripple of
+amplitude $0.03$, toroidal coupling drives a $(2,1)$ harmonic of the radial
+force on the rational surface. Its certified value is the rectangle rule for
+the integral of $r_s\cos(2u-v)$ on a $64\times32$ grid of angles, in T$^2$ like
+$r_s$, against $1.2\times10^3$~T$^2$ for the integral of $B^2$ there. With each
+row of the grid evaluated and summed at 256 bits, \code{wdharm\_b\_correct}
+encloses it at the converged states of 65 to 1025 surfaces to within a relative
+$2\times10^{-12}$ (Table~\ref{tab:results}, Figure~\ref{fig:conv}c), and it is
+linear in the ripple. After a rise of 0.11 per cent from 65 to 129 surfaces it
+falls by 1.20, 1.39 and 1.41 per doubling, approaching the factor $\sqrt2$ of a
+decay as $h^{1/2}$, while the axisymmetric harmonics $(2,0)$ and $(1,0)$ of the
+same reconstruction fall about fourfold per doubling in floating point, and the
+$(3,1)$ sideband 1.24 to 1.44-fold (Figure~\ref{fig:conv}b). The same ripple on
+a transform profile with no low-order rational surface nearby leaves nothing
+behind.
+
+The slow fall comes from the shape of the harmonic across the surfaces. In
+floating point it forms a layer about the rational surface, positive inside it
+and negative outside. The layer's extremes stay of order $10^{-4}$~T$^2$ while
+its width shrinks only as $h^{1/2}$, from 0.156 to 0.033 in $s$ between 65 and
+1025 surfaces, and its zero lies a fixed 2.4 to 3.9 radial steps outside the
+rational surface, so the value on that surface, the layer's slope times the
+offset, falls as $h^{1/2}$. This is the response of a nested-surface field at a
+rational surface~\cite{grad1967,hahm1985,loizu2015b}, whose ideal limit is a
+current sheet and which~\cite{lazerson2016} studied in VMEC; three-dimensional
+equilibria with current sheets and stepped pressure
+exist~\cite{bruno1996,enciso2025}. SPEC~\cite{hudson2012} makes the sheet
+explicit. With two Beltrami volumes separated by an ideal interface at the
+rational surface it is a jump of $1.47\times10^{-5}$ in the covariant poloidal
+field at ripple $0.03$, as in the equilibria of~\cite{loizu2015}, and with the
+rational surface inside a relaxed volume SPEC's field-line tracing finds a
+$(2,1)$ island whose width grows from $0.107$ to $0.173$ in the volume's radial
+coordinate as the ripple goes from $0.0075$ to $0.03$, as the ripple to the
+power 0.35.
+
+The certified conclusion does not depend on the file's last digits or on the
+converged state being exact. In binary64 interval arithmetic
+(\code{dharm\_correct}) the harmonic lies between $5.8\times10^{-5}$ and
+$9.4\times10^{-5}$ for every state within a relative $10^{-14}$ of the
+converged coefficients at 65, 129 and 257 surfaces; these enclosures widen about
+fourfold per doubling, from 1.1 to 21 per cent of the value, as second radial
+differences amplify the rounding by $h^{-2}$. On the rational surface the
+collocated Newton test, its centre refined on outputs read at 128 bits,
+certifies a discrete solution at 33 and at 65 surfaces, where the Jacobian's
+condition number is $1.4\times10^6$ and $3.0\times10^6$ in floating point.
 
 \paragraph{Free-boundary balance.}
-At a free-boundary equilibrium $\mu_0p+B^2/2$ is continuous across the plasma
-boundary, where outside it is the pressure of the full vacuum field. VMEC++
-computes that field with NESTOR~\cite{merkel1986,hirshman1986}, and BIEST's
-virtual-casing field~\cite{malhotra2019,malhotra2020} gives it independently.
-The certificate sweeps the vacuum pressure over the segment between the two
-answers, $P_{\rm vac}=P_{\rm mid}+t\,\delta P$ with $t\in[-1,1]$, and takes the
-plasma side as VMEC's extrapolation of the two outermost half points to $s=1$.
-The sweep variable is a slot of the box, which \code{check\_bpcert\_correct}
-and \code{check\_btcert\_correct} quantify over separately at each point and in
-each cell, so $t$ may differ from point to point: every statement below holds
-for each vacuum pressure whose value at each point lies between the two answers
-there. On the
-CTH-like test case the largest jump on NESTOR's grid is enclosed in
-$[7.556,7.561]$, $[7.201,7.206]$, $[6.433,6.437]$, $[5.636,5.640]$ and
-$[4.9647,4.9673]\times10^{-4}$~T$^2$ at 25, 49, 97, 193 and 385 surfaces, for
-every $t$, where $B^2/2$ averages $0.18$~T$^2$ on the boundary. Each enclosure
-lies below the one before it, so the jump falls under radial
-refinement, but only by 1.05 to 1.14 per doubling. The two answers differ by
-up to $6.1\times10^{-4}$~T$^2$ on the grid, and with the sweep widened to
-five times that difference, $P_{\rm vac}=P_{\rm mid}+5t\,\delta P$, the
-largest jump is at most $1.87$, $1.89$, $1.81$, $1.73$ and
-$1.66\times10^{-3}$~T$^2$ at 25 to 385 surfaces, a hundredth of $B^2/2$,
-for every vacuum pressure within that band at each point. VMEC imposes the balance
-through the Fourier harmonics it retains, and in floating point the jump on
-NESTOR's grid lies almost wholly beyond them: at 49 surfaces its part in the
-retained harmonics is at most $2.4\times10^{-5}$ and the rest
-$7.2\times10^{-4}$. The retained part falls 3.3 and 1.9-fold per doubling from
-25 to 97 surfaces, while with NESTOR's poloidal grid fixed, retaining 5 to 12
-poloidal harmonics moves the jump between $4.0\times10^{-4}$ and
-$1.5\times10^{-3}$ without reducing it. Covered over the whole
-boundary by $512\times128$ cells per field period, with the vacuum side the
-trigonometric interpolant of each answer's grid, the jump is at most
-$8.47\times10^{-3}$ at 25 surfaces and $1.051\times10^{-2}$ at 385, 11 and 21
-times the bound on the grid. Between grid points the bound is set by that
-interpolant, whose angular resolution radial refinement leaves as it is, so it
-does not fall.
+At the free boundary the balance VMEC++ imposes leaves a pressure jump that
+radial refinement barely reduces. At a free-boundary equilibrium
+$\mu_0p+B^2/2$ is continuous across the plasma boundary, where outside it is the
+pressure of the full vacuum field. VMEC++ computes that field with
+NESTOR~\cite{merkel1986,hirshman1986}, and BIEST's virtual-casing
+field~\cite{malhotra2019,malhotra2020} gives it independently. The certificate
+sweeps the vacuum pressure over the segment between the two answers,
+$P_{\rm vac}=P_{\rm mid}+t\,\delta P$ with $t\in[-1,1]$, and takes the plasma
+side as VMEC's extrapolation of the two outermost half points to $s=1$. The
+sweep variable is a slot of the box, which \code{check\_bpcert\_correct} and
+\code{check\_btcert\_correct} quantify over separately at each point and in each
+cell, so every statement below holds for each vacuum pressure whose value at
+each point lies between the two answers there.
+
+On the CTH-like test case, where $B^2/2$ averages $0.18$~T$^2$ on the boundary,
+the largest jump on NESTOR's grid is enclosed in $[7.556,7.561]\times10^{-4}$~T$^2$
+at 25 surfaces and in $[4.9647,4.9673]\times10^{-4}$~T$^2$ at 385
+(Table~\ref{tab:results}). Each enclosure lies below the one before it, so the
+jump does fall, but only by 1.05 to 1.14 per doubling of the surfaces. The two
+answers differ by up to $6.1\times10^{-4}$~T$^2$ on the grid, and with the sweep
+widened to five times that difference the largest jump is at most
+$1.89\times10^{-3}$~T$^2$, a hundredth of $B^2/2$, at every resolution. Covered
+over the whole boundary by $512\times128$ cells per field period, with the
+vacuum side the trigonometric interpolant of each answer's grid, the jump is at
+most $8.47\times10^{-3}$~T$^2$ at 25 surfaces and $1.051\times10^{-2}$ at 385.
+Between grid points that interpolant sets the bound, and radial refinement
+leaves its angular resolution as it is.
+
+The jump lies almost wholly beyond the Fourier harmonics through which VMEC
+imposes the balance. In floating point at 49 surfaces its part in the retained
+harmonics is at most $2.4\times10^{-5}$~T$^2$ and the rest $7.2\times10^{-4}$;
+the retained part falls 3.3 and 1.9-fold per doubling from 25 to 97 surfaces,
+while with NESTOR's poloidal grid fixed, retaining 5 to 12 poloidal harmonics
+moves the jump between $4.0\times10^{-4}$ and $1.5\times10^{-3}$ without
+reducing it.
 
 \paragraph{The Mercier criterion at coarse resolution.}
-At $s=0.125$ of \code{up\_down\_asym} on 17 surfaces, with 2048 poloidal cells,
-the certified Mercier current term lies in $[-3.724,-3.716]\times10^{-3}$ where
-the file's difference quotients give $-6.1\times10^{-4}$, and the certified
-DMerc lies in $[-1.371,-1.205]\times10^{-3}$ where the file's is
-$+1.8\times10^{-3}$: the reconstruction's criterion is certified unstable where
-the file's is stable. From 33 to 257 surfaces both current terms tend to zero
-with the file's sign, the certified one from $[-1.092,-1.083]\times10^{-3}$ to
-$[-3.7,-1.8]\times10^{-5}$, and the certified DMerc is positive at each. At 17
-surfaces the radial derivatives set the sign, and both signs are certified.
+At coarse radial resolution the sign of the Mercier criterion depends on how
+its radial derivatives are taken, and the certificates prove both signs. At
+$s=0.125$ of \code{up\_down\_asym} on 17 surfaces, with 2048 poloidal cells, the
+criterion of the Hermite reconstruction is certified unstable: DMerc lies in
+$[-1.371,-1.205]\times10^{-3}$ and the current term in
+$[-3.724,-3.716]\times10^{-3}$, where the file's own difference quotients give a
+stable $+1.8\times10^{-3}$ and a current term of $-6.1\times10^{-4}$.
 \code{MercierFile.v} takes the four flux-function derivatives from the file's
-centred differences of its half-grid profiles, each an exact dyadic, and
-integrates the four angular integrands as before
-(\code{merc\_run\_q\_correct}): the current term then lies in
-$[-6.421,-6.366]\times10^{-4}$ and DMerc in $[1.711,1.875]\times10^{-3}$,
-which contains the file's floating-point value, where the Hermite
-reconstruction's derivatives give the certified negative DMerc above.
+centred differences of its half-grid profiles instead, each an exact dyadic,
+and integrates the same angular integrands (\code{merc\_run\_q\_correct}): DMerc
+then lies in $[1.711,1.875]\times10^{-3}$, which contains the file's value.
+The two certified answers differ only in the radial derivatives, so at 17
+surfaces those set the sign. From 33 to 257 surfaces both current terms tend to
+zero with the file's sign, the certified one from
+$[-1.092,-1.083]\times10^{-3}$ to $[-3.7,-1.8]\times10^{-5}$, and the certified
+DMerc is positive at each.
 
 \paragraph{An exact equilibrium.}
 Landreman's families~\cite{landreman2026} are three-dimensional equilibria with
 nested flux surfaces whose field $\mathbf{B}^*$ and flux label $\psi^*$ are
-elementary functions of the Cartesian position. \code{Landreman.v} and
+elementary functions of the Cartesian position, so a solver's distance from
+them is a true error. \code{Landreman.v} and
 \code{LandremanSheared.v} prove that both consist of ideal-MHD equilibria: the
 family with $\iota=2$ for all positive semiaxes wherever the radicand of
 $\mathbf{B}^*$ is positive, and the sheared family for all positive $\epsilon$
@@ -744,49 +807,50 @@ $\mathbf{B}$ the reconstructed field and $X$ its position, and $\psi^*(X)$ on a
 node surface. \code{LandremanExact.v} proves that the expressions behind those
 outputs evaluate to the field and flux label of \code{Landreman.v} and of
 \code{LandremanSheared.v} on those domains (\code{exact\_b\_iota2},
-\code{exact\_b\_sheared}). VMEC++'s solution of the sheared member with $\epsilon=0.6$, $S=2.2$,
-$\lambda=2.97$ and $k_b=0.2$, whose transform runs from 4.34 to 4.37, at 13
-surfaces with $m\le11$ and $|n|\le10$, and at 25, 50, 100 and 200 surfaces,
-is certified at every point of a $64\times32$ grid of a field period on its
-innermost, middle and outermost half-grid surfaces, where $|\mathbf{B}^*|$ lies
-between 0.30 and 0.38~T. On the outermost the largest component of
-$\mathbf{B}-\mathbf{B}^*$ is at most $8.25\times10^{-6}$, $2.00\times10^{-6}$,
-$5.67\times10^{-7}$, $1.02\times10^{-7}$ and $2.12\times10^{-8}$~T at 13, 25,
-50, 100 and 200 surfaces, and on the middle one, at $s$ near $1/2$,
-$1.32\times10^{-5}$, $2.93\times10^{-6}$, $5.39\times10^{-7}$,
-$1.12\times10^{-7}$ and $2.53\times10^{-8}$~T, falling 3.5 to 5.6-fold per
-doubling; on the innermost, at $s=0.125$, $0.062$, $0.031$, $0.015$ and
-$0.008$, it is at most $2.94\times10^{-5}$, $1.36\times10^{-5}$,
-$5.61\times10^{-6}$, $4.35\times10^{-6}$ and $3.34\times10^{-6}$~T, and stops
-falling at the axis. The outermost node surfaces lie within
-$2.32\times10^{-7}$, $4.95\times10^{-8}$, $1.77\times10^{-8}$,
-$1.70\times10^{-9}$ and $1.71\times10^{-10}$ of a level set of $\psi^*$, whose
-value at the boundary is $0.02$. Against the member with $\iota=2$, whose every
-surface is rational, VMEC++'s field does not converge: in floating point its
-distance from $\mathbf{B}^*$ at mid-radius is $8.4\times10^{-4}$,
-$2.3\times10^{-4}$, $1.9\times10^{-3}$ and $1.9\times10^{-4}$~T at 13, 25, 50
-and 100 surfaces, with 77 to 86 per cent of its spectral power in the
-resonant harmonics, which
-bend no field line when $\iota=2$ on every surface, so that VMEC's energy is
-flat along them.
+\code{exact\_b\_sheared}).
+
+Against the sheared family VMEC++'s field converges at about second order away
+from the axis. Its solution of the member with $\epsilon=0.6$, $S=2.2$,
+$\lambda=2.97$ and $k_b=0.2$, whose transform runs from 4.34 to 4.37, at 13 to
+200 surfaces with $m\le11$ and $|n|\le10$, is certified at every point of a
+$64\times32$ grid of a field period on its innermost, middle and outermost
+half-grid surfaces, where $|\mathbf{B}^*|$ lies between 0.30 and 0.38~T
+(Table~\ref{tab:results}). On the middle and outermost surfaces the largest
+component of $\mathbf{B}-\mathbf{B}^*$ falls from $1.32\times10^{-5}$ and
+$8.25\times10^{-6}$~T at 13 surfaces to $2.53\times10^{-8}$ and
+$2.12\times10^{-8}$~T at 200, by 3.5 to 5.6 per doubling. The innermost surface
+moves toward the axis as the surfaces double, from $s=0.125$ to $0.008$, and
+there the difference falls only from $2.94\times10^{-5}$ to
+$3.34\times10^{-6}$~T. At the points of the same grid the outermost node
+surface lies within $2.32\times10^{-7}$ of a level set of $\psi^*$ at 13
+surfaces and within $1.71\times10^{-10}$ at 200, where $\psi^*$ is $0.02$ on the
+boundary.
+
+Against the member with $\iota=2$, whose every surface is rational, VMEC++'s
+field does not converge. In floating point its distance from $\mathbf{B}^*$ at
+mid-radius is $8.4\times10^{-4}$, $2.3\times10^{-4}$, $1.9\times10^{-3}$ and
+$1.9\times10^{-4}$~T at 13, 25, 50 and 100 surfaces, with 77 to 86 per cent of
+its spectral power in the resonant harmonics. Those bend no field line when
+$\iota=2$ on every surface, so VMEC's energy is flat along them and nothing in
+the discrete problem fixes their amplitude.
 
 \paragraph{An optimized stellarator.}
-VMEC++'s solution of W7-X from its test data, at a volume-averaged $\beta$ of
-4.0 per cent with $m\le11$ and toroidal numbers up to 12 per field period,
-converged to $f_{sqr}<10^{-12}$ at 49, 97 and 193 surfaces, is certified at every
-point of a $64\times64$ grid of a field period on the surfaces $s=1/4$, $1/2$ and
-$3/4$ (\code{check\_cert\_correct}), and the same verdicts enclose the discrete
-harmonics of each component there at the 288 modes VMEC++ retains
-(\code{harm\_encloses}). The largest component of
-$\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ is at most $7.71$, $7.73$ and
-$7.82\times10^{-2}$~T$^2$ at 49, 97 and 193 surfaces, against a $B^2$ of about
-7~T$^2$, and the largest harmonic at a retained mode at most $5.49$, $5.49$ and
-$5.46\times10^{-4}$~T$^2$, at $m=10$, next to the edge of the retained band;
-neither falls as the surfaces double. With $m\le15$ and $m\le19$ at 49
-surfaces, toroidal numbers up to 16 and 20, the largest component is at most
-$5.72$ and $3.84\times10^{-2}$~T$^2$ and the largest retained harmonic at most
-$3.66$ and $1.51\times10^{-4}$~T$^2$. The residual of this solution is set by
-its Fourier truncation and not by its radial grid.
+On W7-X the certified force is set by the Fourier truncation and not by the
+radial grid. VMEC++'s solution of W7-X from its test data, at a volume-averaged
+$\beta$ of 4.0 per cent with $m\le11$ and toroidal numbers up to 12 per field
+period, converged to $f_{sqr}<10^{-12}$ at 49, 97 and 193 surfaces, is certified
+at every point of a $64\times64$ grid of a field period on the surfaces
+$s=1/4$, $1/2$ and $3/4$ (\code{check\_cert\_correct}), and the same verdicts
+enclose the discrete harmonics of each component there at the 288 modes VMEC++
+retains (\code{harm\_encloses}). At every resolution the largest component of
+$\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ is close to $7.7\times10^{-2}$~T$^2$,
+about a hundredth of $B^2$, and the largest harmonic at a retained mode close to
+$5.5\times10^{-4}$~T$^2$, at $m=10$, next to the edge of the retained band
+(Table~\ref{tab:results}). Raising the angular resolution does what doubling
+the surfaces does not: at 49 surfaces with $m\le15$ and $m\le19$, toroidal
+numbers up to 16 and 20, the largest component is at most $5.72$ and
+$3.84\times10^{-2}$~T$^2$ and the largest retained harmonic at most $3.66$ and
+$1.51\times10^{-4}$~T$^2$.
 
 \paragraph{Use in VMEC++.}
 The certified values are regression tests on a branch of VMEC++~\cite{branch},
@@ -812,6 +876,40 @@ educational\_VMEC to its iteration cap at $f_{sqr}=2.07\times10^{-2}$ instead of
 converging to $5.07\times10^{-12}$. It was reported as
 vmecpp\#788~\cite{issue788}, after which VMEC++ tests the
 determinant~\cite{pr789}, and as educational\_VMEC\#27~\cite{issue27}.
+
+\section{Consequences for users of VMEC}\label{sec:users}
+
+A converged run does not certify its field. VMEC's normalized force residual
+measures the Fourier harmonics the solver retains, and the force of the field
+its file defines can stay far above it: W7-X converged to $f_{sqr}<10^{-12}$
+carries a force near a hundredth of $B^2$ at points of its surfaces, and neither
+that force nor its largest retained harmonic falls as the surfaces double, while
+both fall as the poloidal and toroidal resolution rises. A convergence study of
+a stellarator equilibrium therefore has to vary the angular resolution as well
+as the number of surfaces, and a quantity computed from the field at points
+inherits an error that the angular truncation sets and the residual does not
+report.
+
+Radial convergence away from rational surfaces says little about their
+neighbourhood. Near a low-order rational surface the discrete solution forms a
+current layer whose resonant force harmonic falls only as $h^{1/2}$, so an
+equilibrium with such a surface in the plasma converges there far more slowly
+than elsewhere, and where every surface is rational, as in Landreman's family
+with $\iota=2$, the solution does not converge at all. At coarse radial
+resolution a quantity built from radial derivatives of the profiles can change
+sign with the way the derivatives are taken: at 17 surfaces the Mercier
+criterion of \code{up\_down\_asym} is certified unstable for the reconstruction
+and stable for the file's own differences, and from 33 surfaces on the
+certified criterion is stable. A Mercier sign near marginal stability from a
+coarse run is worth confirming at more surfaces.
+
+At a free boundary the pressure balance does not improve with radial
+resolution. The jump of $\mu_0p+B^2/2$ against the vacuum pressure on the
+CTH-like boundary falls only from $7.6$ to $5.0\times10^{-4}$~T$^2$, a few
+thousandths of $B^2/2$, as the surfaces go from 25 to 385, and retaining more
+poloidal harmonics on NESTOR's fixed grid moves it without reducing it. The
+residual, harmonic and Mercier checks run on any wout file, in seconds for
+points and hours for harmonics at 256 bits (Table~\ref{tab:cost}).
 
 \section{Related work}
 
