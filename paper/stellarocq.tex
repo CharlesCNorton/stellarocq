@@ -51,7 +51,8 @@ bound the difference between VMEC++'s field and the exact field at every point
 of grids on its flux surfaces, a difference that falls 3.5 to 5.6-fold per
 doubling of the surfaces away from the axis and stops falling at it, and the
 development proves in Rocq that the members of both his families are ideal-MHD
-equilibria.
+equilibria. On W7-X they bound the force pointwise and at every retained mode,
+both set by the Fourier truncation, not the radial grid.
 \end{abstract}
 
 \section{Introduction}
@@ -88,8 +89,9 @@ $10^{-12}$; a harmonic of the force on a rational surface, bounded away from
 zero over a box of states; the free-boundary pressure jump, enclosed for every
 vacuum field between the answers of two independent solvers; the Mercier
 criterion of a coarse equilibrium, whose sign depends on how the radial
-derivatives are taken; and the distance of VMEC++'s field from an exact
-three-dimensional equilibrium. Its certified values are regression tests on a
+derivatives are taken; the distance of VMEC++'s field from an exact
+three-dimensional equilibrium; and the force residual of W7-X, which its
+Fourier truncation sets. Its certified values are regression tests on a
 branch of VMEC++~\cite{branch}; its differential testing added tests of
 invariances and of the energy's gradient to VMEC++, and VMEC++'s continuous
 integration now measures its solutions against the exact
@@ -316,8 +318,8 @@ Table~\ref{tab:results} collects the certified results with the theorem each
 rests on. The manufactured problems are Stellarocq's collocated systems for the
 manufactured mappings of the VMEC++ pull request~\cite{pr784} that adds a
 force source to the solver, and every other case is a VMEC++ run or a file
-from its test data. The runs of Landreman's equilibrium and of the rippled
-tokamak are VMEC++ 0.4.7, and the free-boundary and Mercier runs the branch
+from its test data. The runs of Landreman's equilibrium, of the rippled
+tokamak and of W7-X are VMEC++ 0.4.7, and the free-boundary and Mercier runs the branch
 of~\cite{branch}, which reads NESTOR's vacuum field. A number
 called certified is an enclosure that a passing verdict proves, rounded outward.
 
@@ -336,7 +338,8 @@ called certified is an enclosure that a passing verdict proves, rounded outward.
 \cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.87$, $1.89$, $1.81$, $1.73$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[2pt]
 \cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{the same with the file's centred radial differences\newline\code{merc\_run\_q\_correct}} & \cellC{$[-6.421,-6.366]\times10^{-4}$ and $[1.711,1.875]\times10^{-3}$} \\[2pt]
-\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.67\times10^{-7}$; $4.35\times10^{-6}$, $1.12\times10^{-7}$, $1.02\times10^{-7}$; $3.34\times10^{-6}$, $2.53\times10^{-8}$, $2.12\times10^{-8}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\
+\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.67\times10^{-7}$; $4.35\times10^{-6}$, $1.12\times10^{-7}$, $1.02\times10^{-7}$; $3.34\times10^{-6}$, $2.53\times10^{-8}$, $2.12\times10^{-8}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\[2pt]
+\cellA{W7-X, $\beta=4$ per cent, 49/97/193 surfaces} & \cellB{largest component of $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ at a $64\times64$ grid of a field period on the surfaces $s=1/4$, $1/2$, $3/4$\newline\code{check\_cert\_correct}; the largest of its discrete harmonics at the 288 retained modes\newline\code{harm\_encloses}} & \cellC{at most $7.71$, $7.73$, $7.82\times10^{-2}$~T$^2$; at most $5.49$, $5.49$, $5.46\times10^{-4}$~T$^2$, where $B^2$ is about 7~T$^2$} \\
 \hline
 \end{tabular}
 \caption{Certified results on the manufactured problems and on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
@@ -766,6 +769,24 @@ and 100 surfaces, with 77 to 86 per cent of its spectral power in the
 resonant harmonics, which
 bend no field line when $\iota=2$ on every surface, so that VMEC's energy is
 flat along them.
+
+\paragraph{An optimized stellarator.}
+VMEC++'s solution of W7-X from its test data, at a volume-averaged $\beta$ of
+4.0 per cent with $m\le11$ and toroidal numbers up to 12 per field period,
+converged to $f_{sqr}<10^{-12}$ at 49, 97 and 193 surfaces, is certified at every
+point of a $64\times64$ grid of a field period on the surfaces $s=1/4$, $1/2$ and
+$3/4$ (\code{check\_cert\_correct}), and the same verdicts enclose the discrete
+harmonics of each component there at the 288 modes VMEC++ retains
+(\code{harm\_encloses}). The largest component of
+$\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ is at most $7.71$, $7.73$ and
+$7.82\times10^{-2}$~T$^2$ at 49, 97 and 193 surfaces, against a $B^2$ of about
+7~T$^2$, and the largest harmonic at a retained mode at most $5.49$, $5.49$ and
+$5.46\times10^{-4}$~T$^2$, at $m=10$, next to the edge of the retained band;
+neither falls as the surfaces double. With $m\le15$ and $m\le19$ at 49
+surfaces, toroidal numbers up to 16 and 20, the largest component is at most
+$5.72$ and $3.84\times10^{-2}$~T$^2$ and the largest retained harmonic at most
+$3.66$ and $1.51\times10^{-4}$~T$^2$. The residual of this solution is set by
+its Fourier truncation and not by its radial grid.
 
 \paragraph{Use in VMEC++.}
 The certified values are regression tests on a branch of VMEC++~\cite{branch},
