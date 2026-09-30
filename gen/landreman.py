@@ -27,12 +27,17 @@ member, each an exact dyadic in the file.
   python gen/landreman.py points WOUT sheared --eps 0.6 --S 2.2 --lam 2.97 \\
          --main PATH --out DIR [--nu 64 --nv 32] [--nodes 1,5,9]
 
+  python gen/landreman.py floor WOUT iota2 --eps 0.25 --main PATH --out DIR \\
+         [--nu 192 --nv 96] [--nodes J]
+
 `survey` prints the floating-point largest |B - B*| and the spread of psi* on
 every surface, from the same formulas; `run` writes, tightens and checks the
 certificates of every surface and component, and writes DIR/summary.json;
 `points` certifies each component at the points of a grid of a field period
 (STELLAROCQ-BPCERT, BoxCell.check_bpcert_correct) on every surface and writes
-DIR/points.json.
+DIR/points.json; `floor` bounds |B - B*| from below on the middle half-grid
+surface, or outside each node of --nodes, by a floor on the magnitude of the
+component at the grid point where it is largest, and writes DIR/floor.json.
 
   python gen/landreman.py spectrum WOUT iota2 --eps 0.25 --iota -2
 
@@ -199,11 +204,14 @@ def write_cert(w, j, kind, fam, p, c, comp, nu, nv, out):
     pathlib.Path(out).write_text("\n".join(L) + "\n")
 
 
-def write_points(w, j, kind, fam, p, c, comp, nu, nv, out):
+def write_points(w, j, kind, fam, p, c, comp, nu, nv, out, pts=None, mode=0):
     """The point certificate of one component on a grid of a field period of the
     surface: nu by nv angles, u = 2 pi (l + 1/2) / nu and v = (2 pi / nfp)
     (k + 1/2) / nv, each rounded to the angle slots' dyadic grid, with a
-    ceiling on |component| at each (mode 0) that `main --bp-tighten` fills in."""
+    ceiling on |component| at each (mode 0) that `main --bp-tighten` fills in.
+    Given pts, a list of angle mantissa pairs, the certificate names those
+    points instead, each with the claim of `mode`, 1 for a floor on
+    |component|."""
     K = len(w.xm)
     phip = float(w.phips[1])
     last = w.ns - 1
@@ -215,10 +223,11 @@ def write_points(w, j, kind, fam, p, c, comp, nu, nv, out):
     L += [f"{m} {n}" for m, n in zip(w.xm, w.xn, strict=True)]
     L += [f"NSLOTS {len(st)}", "STATE"] + [f"{m} {e} {d}" for m, e, d in st]
     L += ["SLOTS 1 2", f"COMP {comp}"]
-    us = 2.0 * np.pi * (np.arange(nu) + 0.5) / nu
-    vs = 2.0 * np.pi / nfp * (np.arange(nv) + 0.5) / nv
-    pts = [(round(u / 2.0**ANGLE_EXP), round(v / 2.0**ANGLE_EXP)) for v in vs for u in us]
-    L += [f"POINTS {len(pts)}"] + [f"{mu} {mv} 1 0 0" for mu, mv in pts]
+    if pts is None:
+        us = 2.0 * np.pi * (np.arange(nu) + 0.5) / nu
+        vs = 2.0 * np.pi / nfp * (np.arange(nv) + 0.5) / nv
+        pts = [(round(u / 2.0**ANGLE_EXP), round(v / 2.0**ANGLE_EXP)) for v in vs for u in us]
+    L += [f"POINTS {len(pts)}"] + [f"{mu} {mv} 1 0 {mode}" for mu, mv in pts]
     pathlib.Path(out).write_text("\n".join(L) + "\n")
 
 
@@ -263,6 +272,46 @@ def cmd_points(a):
         print(json.dumps(row), flush=True)
         rows.append(row)
     (out / "points.json").write_text(json.dumps(
+        {"wout": str(a.wout), "family": a.family, "params": p, "nu": a.nu, "nv": a.nv,
+         "rows": rows}, indent=1))
+
+
+def cmd_floor(a):
+    """|B - B*| bounded below on half-grid surfaces: at the point of a grid of
+    a field period and the component where the difference is largest in
+    floating point, a floor on the component's magnitude (mode 1), certified
+    at that point."""
+    w = Wout(a.wout)
+    calibrate_pressure(w)
+    p = params(a.family, a)
+    phip = float(w.phips[1])
+    out = pathlib.Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    U, V = grid(nfp_of(w), a.nu, a.nv)
+    MU, MV = np.round(U / 2.0**ANGLE_EXP), np.round(V / 2.0**ANGLE_EXP)
+    nodes = [int(x) for x in a.nodes.split(",")] if a.nodes else [(w.ns - 1) // 2]
+    rows = []
+    for j in nodes:
+        # the largest component at the points the certificate names
+        dB = np.abs(np.stack(field_ref(w, j, MU * 2.0**ANGLE_EXP, MV * 2.0**ANGLE_EXP,
+                                       a.family, p, phip)[:3]))
+        comp, i = (int(x) for x in np.unravel_index(np.argmax(dB), dB.shape))
+        src = out / f"pfloor_{j}_{comp}.txt"
+        tgt = out / f"pfloor_{j}_{comp}_t.txt"
+        write_points(w, j, "field", a.family, p, 0.0, comp, 0, 0, src,
+                     pts=[(int(MU[i]), int(MV[i]))], mode=1)
+        run_main(a.main, "--bp-tighten", str(src), str(tgt))
+        rc, o = run_main(a.main, "--bp", str(tgt))
+        m = re.search(r"\|component\| >= ([0-9.eE+-]+)", o)
+        v = re.search(r"verdict: (\w+)", o)
+        row = {"node": j, "s_half": float(w.s_half[j + 1]), "comp": comp,
+               "mantissas": [int(MU[i]), int(MV[i])], "float": float(dB[comp, i]),
+               "floor": float(m.group(1)) if m else None,
+               "verdict": v.group(1) if v else "NONE"}
+        src.unlink(missing_ok=True)
+        print(json.dumps(row), flush=True)
+        rows.append(row)
+    (out / "floor.json").write_text(json.dumps(
         {"wout": str(a.wout), "family": a.family, "params": p, "nu": a.nu, "nv": a.nv,
          "rows": rows}, indent=1))
 
@@ -383,18 +432,19 @@ def main():
     s.add_argument("--nv", type=int, default=64)
     s.add_argument("--nodes", default="")
     s.set_defaults(fn=cmd_spectrum)
-    for name, fn in (("survey", cmd_survey), ("run", cmd_run), ("points", cmd_points)):
+    for name, fn in (("survey", cmd_survey), ("run", cmd_run), ("points", cmd_points),
+                     ("floor", cmd_floor)):
         s = sub.add_parser(name)
         s.add_argument("wout")
         s.add_argument("family", choices=list(FAMILY))
         s.add_argument("--eps", type=float, required=True)
         s.add_argument("--S", type=float, default=0.0)
         s.add_argument("--lam", type=float, default=0.0)
-        if name in ("run", "points"):
+        if name in ("run", "points", "floor"):
             s.add_argument("--main", required=True)
             s.add_argument("--out", required=True)
-            s.add_argument("--nu", type=int, default=128)
-            s.add_argument("--nv", type=int, default=64)
+            s.add_argument("--nu", type=int, default=192 if name == "floor" else 128)
+            s.add_argument("--nv", type=int, default=96 if name == "floor" else 64)
             s.add_argument("--nodes", default="")
             s.add_argument("--keep", action="store_true")
         s.set_defaults(fn=fn)

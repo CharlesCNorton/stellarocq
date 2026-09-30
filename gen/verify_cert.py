@@ -33,12 +33,20 @@ The slot layout is the one theories/Physics.v fixes:
   + 3K Z rows | + 6K lambda rows (h-, h+) | and under lasym three more blocks
   | and after those, for a stream-function output, K coefficients then I and G
 
+The point, surface and harmonic certificates (BPCERT, BTCERT, HCERT, QCERT)
+carry that layout as one flat STATE block of mantissa, exponent and half-width
+triples, and each slot's interval is read against the file; at the boundary
+node the row outside repeats the node. The slots after the layout belong to
+the output, a member's parameters for Landreman's fields and the vacuum
+pressure for the free-boundary jump, and only their number is checked.
+
 Usage:  python gen/verify_cert.py wout.nc cert.txt
 """
 
 import argparse
 import pathlib
 import sys
+from fractions import Fraction
 
 import numpy as np
 
@@ -62,6 +70,13 @@ OUTPUT_WITH_MODE = ("harmonic", "covariant", "covariant-sin", "boozer")
 # the angles, so their S line is a grid value.
 OUTPUT_OFF_GRID = ("radial", "radial-axis", "radial-terms",
                    "radial-current-terms")
+
+# The certificates whose inputs are one flat STATE block.
+FLAT_KINDS = ("STELLAROCQ-BPCERT", "STELLAROCQ-BTCERT", "STELLAROCQ-HCERT",
+              "STELLAROCQ-QCERT")
+
+# The integers a profile carries inline after its name.
+PROFILE_EXTRA = {"TWOPOWER": 2, "RATIONAL": 2, "TWOPOWERGS": 3, "TWOLORENTZ": 4}
 
 
 def tokens(path):
@@ -101,6 +116,136 @@ def close(a, b, tol=0.0):
     if tol == 0.0:
         return float(a) == float(b)
     return abs(float(a) - float(b)) <= tol * max(1.0, abs(float(b)))
+
+
+def output_args(r, out):
+    """The integers an OUTPUT name carries after it, as the checker's parser
+    reads them."""
+    if out in ("covariant", "covariant-sin", "boozer", "harmonic", "weighted",
+               "newcomb", "iota"):
+        return [r.int(), r.int()]
+    if out == "jump":
+        nv = r.int()
+        return [nv] + [r.int() for _ in range(2 * nv)]
+    if out in ("coil", "exact-field", "exact-flux"):
+        return [r.int()]
+    return []
+
+
+def check_flat(r, kind, wf, pressure_tol):
+    """Every slot of a flat STATE block against the wout: the interval
+    (m - d) 2^e .. (m + d) 2^e of each slot holds the file's value exactly."""
+    problems = []
+    r.expect("PREC"); r.int()
+    r.expect("LASYM"); lasym = r.next() == "1"
+    r.expect("PROFILE")
+    prof = r.next()
+    for _ in range(PROFILE_EXTRA.get(prof, 0)):
+        r.int()
+    r.expect("OUTPUT")
+    out = r.next()
+    args = output_args(r, out)
+    r.expect("MODES")
+    K = r.int()
+    xm, xn, ns = wf["xm"], wf["xn"], wf["ns"]
+    if K != len(xm):
+        problems.append(f"MODES {K}, wout has {len(xm)} modes")
+    for k in range(K):
+        m, n = r.int(), r.int()
+        if k < len(xm) and (m != xm[k] or n != xn[k]):
+            problems.append(f"mode {k}: certificate ({m}, {n}), wout ({xm[k]}, {xn[k]})")
+    r.expect("NSLOTS")
+    nslots = r.int()
+    r.expect("STATE")
+    st = [(r.int(), r.int(), r.int()) for _ in range(nslots)]
+    r.expect("SLOTS")
+    varied = (r.int(), r.int())
+
+    def value(i):
+        m, e, _ = st[i]
+        return Fraction(m) * Fraction(2) ** e
+
+    def check(name, i, want):
+        m, e, d = st[i]
+        w = Fraction(float(want))
+        scale = Fraction(2) ** e
+        if not (Fraction(m - d) * scale <= w <= Fraction(m + d) * scale):
+            problems.append(f"{name} (slot {i}): certificate {float(value(i))!r} "
+                            f"+- {d} units, wout {float(want)!r}")
+
+    blocks_len = (16 if lasym else 8) * K
+    if nslots < 32 + blocks_len:
+        problems.append(f"NSLOTS {nslots} is shorter than the layout's {32 + blocks_len}")
+        return out, K, nslots, None, problems
+    h = 1.0 / (ns - 1)
+    j = int(round(float(value(5)) / h))
+    if not (1 <= j <= ns - 1):
+        problems.append(f"the node radius {float(value(5))} is not an interior node")
+        return out, K, nslots, j, problems
+    rows = (j - 1, j, j + 1) if j < ns - 1 else (j - 1, j, j)
+    halves = (rows[1], rows[2])
+    s_full, s_half = wf["s_full"], wf["s_half"]
+    if 0 not in varied:
+        check("s", 0, s_full[j])
+    check("phip", 3, wf["phips"][1])
+    for k, row in enumerate(rows):
+        check(f"node {j} s row {row}", 4 + k, s_full[row])
+    for k, row in enumerate(halves):
+        check(f"node {j} s_half {row}", 7 + k, s_half[row])
+        check(f"node {j} iota {row}", 9 + k, wf["iotas"][row])
+
+    am, pmass = wf["am"], wf["pmass"]
+    pedestal_off = prof == "POWER" and pmass == "pedestal"
+    shape = set(range(21)) - AMPLITUDE_SLOTS.get(prof, set(range(21)))
+    for i in sorted(shape):
+        want = am[i] if i < len(am) else 0.0
+        if pedestal_off and i >= 16:
+            want = 0.0
+        check(f"am[{i}]", 11 + i, want)
+    file_am = [float(value(11 + i)) for i in range(21)]
+    if prof in AMPLITUDE_SLOTS:
+        pres = wf["pres"]
+        if pres is None:
+            problems.append("the wout carries no pres to read the pressure against")
+        else:
+            prof_ = Profile(pmass, file_am)
+            for row in sorted(set(halves)):
+                got_p = prof_.raw(float(s_half[row]))[0]
+                if not close(got_p, float(pres[row]), 1e-9):
+                    problems.append(f"the certificate's pressure at s={s_half[row]:.6f} is "
+                                    f"{got_p!r}, the wout's pres {float(pres[row])!r}")
+    if prof == "CUBIC":
+        presf = wf["presf"]
+        s_here = float(s_full[j])
+        t = s_here - file_am[4]
+        p = file_am[0] + t * (file_am[1] + t * (file_am[2] + t * file_am[3]))
+        want = float(np.interp(s_here, s_full, presf))
+        if abs(p - want) > pressure_tol * max(abs(want), 1e-30):
+            problems.append(f"the pressure cubic gives {p!r} at s={s_here}, the wout's "
+                            f"presf {want!r}")
+
+    blocks = [("R", wf["rmnc"], rows), ("Z", wf["zmns"], rows), ("lambda", wf["lmns"], halves)]
+    if lasym:
+        asym = wf["lasym"]
+        blocks += [("R_A", wf["rmns"] if asym else None, rows),
+                   ("Z_A", wf["zmnc"] if asym else None, rows),
+                   ("lambda_A", wf["lmnc"] if asym else None, halves)]
+    i = 32
+    for tag, arr, rws in blocks:
+        for row in rws:
+            for k in range(K):
+                check(f"node {j} {tag} row {row} mode {k}", i,
+                      0.0 if arr is None else arr[row][k])
+                i += 1
+    tail = nslots - i
+    want_tail = {"exact-field": 4, "exact-flux": 4}.get(out)
+    if out == "jump":
+        want_tail = 4 * args[0] + 1
+    if out in ("harmonic", "weighted", "residual"):
+        want_tail = 0
+    if want_tail is not None and tail != want_tail:
+        problems.append(f"{tail} slots follow the layout, where OUTPUT {out} takes {want_tail}")
+    return out, K, nslots, j, problems
 
 
 def main():
@@ -145,6 +290,26 @@ def main():
 
     r = Reader(tokens(a.cert))
     kind = r.next()
+    if kind in FLAT_KINDS:
+        wf = {"ns": ns, "xm": xm, "xn": xn, "rmnc": rmnc, "zmns": zmns, "lmns": lmns,
+              "iotas": iotas, "phips": phips, "am": am, "pmass": pmass, "presf": presf,
+              "pres": pres, "s_full": s_full, "s_half": s_half, "lasym": lasym_w,
+              "rmns": rmns if lasym_w else None, "zmnc": zmnc if lasym_w else None,
+              "lmnc": lmnc if lasym_w else None}
+        out, K, nslots, j, problems = check_flat(r, kind, wf, a.pressure_tol)
+        print(f"{a.cert}")
+        print(f"  {kind}, {K} modes, {nslots} slots, node {j}, output {out}")
+        print(f"  checked against {a.wout}: ns={ns}, "
+              f"{'non-' if lasym_w else ''}stellarator-symmetric")
+        if problems:
+            print(f"\n  {len(problems)} disagreement(s) with the wout:")
+            for p in problems[:20]:
+                print(f"    {p}")
+            if len(problems) > 20:
+                print(f"    and {len(problems) - 20} more")
+            return 1
+        print("  every input slot matches the wout")
+        return 0
     if kind not in ("STELLAROCQ-CERT", "STELLAROCQ-CCERT"):
         raise SystemExit(f"not a certificate: {kind!r}")
     cells = kind.endswith("CCERT")

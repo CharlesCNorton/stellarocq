@@ -12,9 +12,9 @@
 \newcommand{\code}[1]{\texttt{#1}}
 \emergencystretch=3em
 \newcommand{\sqg}{\sqrt{g}}
-\newcommand{\cellA}[1]{\parbox[t]{3.3cm}{\raggedright\strut#1\strut}}
-\newcommand{\cellB}[1]{\parbox[t]{4.4cm}{\raggedright\strut#1\strut}}
-\newcommand{\cellC}[1]{\parbox[t]{7.6cm}{\raggedright\strut#1\strut}}
+\newcommand{\cellA}[1]{\parbox[t]{2.9cm}{\raggedright\strut#1\strut}}
+\newcommand{\cellB}[1]{\parbox[t]{5.1cm}{\raggedright\strut#1\strut}}
+\newcommand{\cellC}[1]{\parbox[t]{7.4cm}{\raggedright\strut#1\strut}}
 \newtheorem{theorem}{Theorem}
 \makeatletter
 \def\sq@slash{/}
@@ -47,9 +47,11 @@ free-boundary pressure jump that radial refinement barely reduces, for every
 vacuum field between the answers of two independent solvers; and a Mercier
 criterion whose sign at coarse resolution depends on how the radial derivatives
 are taken. The development proves both of Landreman's families of exact
-three-dimensional equilibria to be ideal-MHD equilibria, and against one of them
-VMEC++'s field converges at about second order away from the axis. On W7-X the
-certified force is set by the Fourier truncation, not the radial grid.
+three-dimensional equilibria to be ideal-MHD equilibria. Against a sheared
+member VMEC++'s field converges at about second order away from the axis, and
+against a member with $\iota=2$, whose every surface is rational, it stays more
+than $10^{-4}$~T away from 13 to 100 surfaces. On W7-X the certified force is set
+by the Fourier truncation, not the radial grid.
 \end{abstract}
 
 \section{Introduction}
@@ -317,8 +319,9 @@ types, divides the checking among processes and prints verdicts. The trusted
 components are the Rocq kernel and extraction, the OCaml toolchain, the
 implementation of Rocq's primitive 63-bit integers and binary64 floats, the
 driver's parser and its division of the work, and the correspondence between a
-certificate's numbers and the output or formulas they are taken from, which
-\code{gen/verify\_cert.py} checks for a wout file. The classical constructions behind Rocq's
+certificate's numbers and the file or formulas they are taken from, which
+\code{gen/verify\_cert.py} checks slot by slot against the wout file for the
+residual, cell, point, surface and harmonic certificates. The classical constructions behind Rocq's
 real numbers appear only in specifications, and extraction directives replace
 them by values that fail when consulted. The theorems named here rest on the
 two axioms of the standard library's classical Dedekind reals, excluded middle,
@@ -333,7 +336,12 @@ certificate evaluates the residual once per point, a cell certificate its
 derivatives over each cell and a harmonic every point of its grid, so the cost
 grows with the number of modes, with the number of points or cells, and with the
 precision: a harmonic whose rows are evaluated at 256 bits in software floating
-point takes hours where the same harmonic in binary64 takes seconds. The checker
+point takes hours where the same harmonic in binary64 takes seconds. The
+Mercier criterion integrates over the whole torus, and its cells must be narrow
+against the highest mode there for the enclosures over them to stay bounded:
+four coverings of 2048 cells take three minutes for the tokamak
+\code{up\_down\_asym}, while for W7-X, whose toroidal numbers reach 60 on the
+torus, a covering of $64\times16$ cells leaves enclosures unbounded. The checker
 divides a certificate's points, cells or rows among processes.
 
 \begin{table}[t]
@@ -348,7 +356,7 @@ cells, Solov'ev residual on a surface & 8--8192 cells & up to 16~s \\
 cells, free-boundary jump over the boundary & $512\times128$ cells per period & 48 and 68~min \\
 harmonic over a box of states, binary64 & $64\times32$ points & 3~s \\
 harmonic, rows at 256 bits & $64\times32$ points & 2.0--2.6~h \\
-Mercier criterion & four coverings of 2048 cells & 3~min \\
+Mercier criterion, tokamak & four coverings of 2048 cells & 3~min \\
 Newton existence, 120 or 128 bits & up to 423 unknowns & up to 44~min \\
 stability on the same box & 423 unknowns & 26~min \\
 W7-X points and projection & 4096 points, 288--800 modes & 21~min--2.8~h \\
@@ -369,27 +377,28 @@ tokamak and of W7-X are VMEC++ 0.4.7, and the free-boundary and Mercier runs the
 of~\cite{branch}, which reads NESTOR's vacuum field. A number
 called certified is an enclosure that a passing verdict proves, rounded outward.
 
-\begin{table}[t]
-\centering\small
+\begin{table}[tp]
+\centering\footnotesize
 \begin{tabular}{@{}lll@{}}
 \hline
 \cellA{Case} & \cellB{Certified quantity} & \cellC{Enclosure} \\
 \hline
-\cellA{manufactured, 3D} & \cellB{$\max|x_h-x^*|$, 9/17/33/65 surfaces\newline\code{colloc\_correct}} & \cellC{$2.73432936829\times10^{-6}$, $7.16912170772\times10^{-7}$, $1.83032585742\times10^{-7}$, $4.6074819334\times10^{-8}$} \\[2pt]
-\cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057043\times10^{-5}$, $7.20667053290\times10^{-6}$, $1.86266877703\times10^{-6}$} \\[2pt]
-\cellA{Solov'ev, 1--3 surfaces} & \cellB{zero of the collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one, in boxes of radius $6.0\times10^{-10}$ to $7.7\times10^{-9}$} \\[2pt]
-\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state, 65/129/257/513/1025 surfaces, at 256 bits\newline\code{wdharm\_b\_correct}; over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$8.9208$, $8.9310$, $7.4567$, $5.3557$ and 3.8084$\times10^{-5}$~T$^2$, each to a relative $2\times10^{-12}$; over the box $[8.81,9.03]$, $[8.51,9.35]$, $[5.80,9.11]\times10^{-5}$~T$^2$} \\[2pt]
-\cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]$, $[7.201,7.206]$, $[6.433,6.437]$, $[5.636,5.640]$ and $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[2pt]
-\cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[2pt]
-\cellA{CTH-like, free boundary} & \cellB{the largest jump on NESTOR's grid for every vacuum pressure within five times the two answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.87$, $1.89$, $1.81$, $1.73$ and $1.66\times10^{-3}$~T$^2$} \\[2pt]
-\cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[2pt]
-\cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{the same with the file's centred radial differences\newline\code{merc\_run\_q\_correct}} & \cellC{$[-6.421,-6.366]\times10^{-4}$ and $[1.711,1.875]\times10^{-3}$} \\[2pt]
-\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.67\times10^{-7}$; $4.35\times10^{-6}$, $1.12\times10^{-7}$, $1.02\times10^{-7}$; $3.34\times10^{-6}$, $2.53\times10^{-8}$, $2.12\times10^{-8}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\[2pt]
-\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{spread of $\psi^*$ about a level set at a $64\times32$ grid of a field period on the outermost node surface\newline\code{check\_bpcert\_correct}} & \cellC{$2.32\times10^{-7}$, $4.95\times10^{-8}$, $1.77\times10^{-8}$, $1.70\times10^{-9}$ and $1.71\times10^{-10}$, where $\psi^*$ is $0.02$ on the boundary} \\[2pt]
-\cellA{W7-X, $\beta=4$ per cent, 49/97/193 surfaces} & \cellB{largest component of $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ at a $64\times64$ grid of a field period on the surfaces $s=1/4$, $1/2$, $3/4$\newline\code{check\_cert\_correct}; the largest of its discrete harmonics at the 288 retained modes\newline\code{harm\_encloses}} & \cellC{at most $7.71$, $7.73$, $7.82\times10^{-2}$~T$^2$; at most $5.49$, $5.49$, $5.46\times10^{-4}$~T$^2$, where $B^2$ is about 7~T$^2$} \\
+\cellA{manufactured, 3D} & \cellB{$\max|x_h-x^*|$, 9/17/33/65 surfaces\newline\code{colloc\_correct}} & \cellC{$2.73432936829\times10^{-6}$, $7.16912170772\times10^{-7}$, $1.83032585742\times10^{-7}$, $4.6074819334\times10^{-8}$} \\[1pt]
+\cellA{manufactured, asymmetric} & \cellB{$\max|x_h-x^*|$, 9/17/33 surfaces\newline\code{colloc\_correct}} & \cellC{$2.69073057043\times10^{-5}$, $7.20667053290\times10^{-6}$, $1.86266877703\times10^{-6}$} \\[1pt]
+\cellA{Solov'ev, 1--3 surfaces} & \cellB{zero of the collocated residual\newline\code{colloc\_correct}} & \cellC{exactly one, in boxes of radius $6.0\times10^{-10}$ to $7.7\times10^{-9}$} \\[1pt]
+\cellA{rippled tokamak, $\iota=1/2$ at $s=0.625$} & \cellB{$(2,1)$ harmonic of $r_s$ at the converged state, 65/129/257/513/1025 surfaces, at 256 bits\newline\code{wdharm\_b\_correct}; over a box of relative width $10^{-14}$, 65/129/257 surfaces\newline\code{dharm\_correct}} & \cellC{$8.9208$, $8.9310$, $7.4567$, $5.3557$ and 3.8084$\times10^{-5}$~T$^2$, each to a relative $2\times10^{-12}$; over the box $[8.81,9.03]$, $[8.51,9.35]$, $[5.80,9.11]\times10^{-5}$~T$^2$} \\[1pt]
+\cellA{CTH-like, free boundary} & \cellB{largest jump of $\mu_0p+B^2/2$ against $B_{\rm vac}^2/2$ on NESTOR's grid, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$[7.556,7.561]$, $[7.201,7.206]$, $[6.433,6.437]$, $[5.636,5.640]$ and $[4.9647,4.9673]\times10^{-4}$~T$^2$, for every vacuum pressure between NESTOR's and BIEST's} \\[1pt]
+\cellA{CTH-like, free boundary} & \cellB{the same jump over the whole boundary, 25/385 surfaces\newline\code{check\_btcert\_correct}} & \cellC{at most $8.47\times10^{-3}$~T$^2$, at most $1.051\times10^{-2}$~T$^2$} \\[1pt]
+\cellA{CTH-like, free boundary} & \cellB{the same on NESTOR's grid for every vacuum pressure within five times the answers' disagreement, 25/49/97/193/385 surfaces\newline\code{check\_bpcert\_correct}} & \cellC{at most $1.87$, $1.89$, $1.81$, $1.73$ and $1.66\times10^{-3}$~T$^2$} \\[1pt]
+\cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{Mercier current term and DMerc\newline\code{merc\_run\_correct}} & \cellC{$[-3.724,-3.716]\times10^{-3}$ and $[-1.371,-1.205]\times10^{-3}$, where the file gives $-6.1\times10^{-4}$ and $+1.8\times10^{-3}$ in floating point} \\[1pt]
+\cellA{\code{up\_down\_asym}, $s=0.125$, 17 surfaces} & \cellB{the same with the file's centred radial differences\newline\code{merc\_run\_q\_correct}} & \cellC{$[-6.421,-6.366]\times10^{-4}$ and $[1.711,1.875]\times10^{-3}$} \\[1pt]
+\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{largest component of $\mathbf{B}-\mathbf{B}^*$ at a $64\times32$ grid of a field period on the innermost, middle and outermost half-grid surfaces\newline\code{check\_bpcert\_correct}} & \cellC{$2.94\times10^{-5}$, $1.32\times10^{-5}$, $8.25\times10^{-6}$; $1.36\times10^{-5}$, $2.93\times10^{-6}$, $2.00\times10^{-6}$; $5.61\times10^{-6}$, $5.39\times10^{-7}$, $5.67\times10^{-7}$; $4.35\times10^{-6}$, $1.12\times10^{-7}$, $1.02\times10^{-7}$; $3.34\times10^{-6}$, $2.53\times10^{-8}$, $2.12\times10^{-8}$~T, where $|\mathbf{B}^*|$ is $0.30$ to $0.38$~T} \\[1pt]
+\cellA{Landreman's sheared equilibrium, 13/25/50/100/200 surfaces} & \cellB{spread of $\psi^*$ about a level set at a $64\times32$ grid of a field period on the outermost node surface\newline\code{check\_bpcert\_correct}} & \cellC{$2.32\times10^{-7}$, $4.95\times10^{-8}$, $1.77\times10^{-8}$, $1.70\times10^{-9}$ and $1.71\times10^{-10}$, where $\psi^*$ is $0.02$ on the boundary} \\[1pt]
+\cellA{Landreman's equilibrium with $\iota=2$, 13/25/50/100 surfaces} & \cellB{a component of $\mathbf{B}-\mathbf{B}^*$ at one point of the middle half-grid surface\newline\code{check\_bpcert\_correct}} & \cellC{at least $7.97\times10^{-4}$, $2.04\times10^{-4}$, $1.73\times10^{-3}$ and $1.63\times10^{-4}$~T} \\[1pt]
+\cellA{W7-X, $\beta=4$ per cent, 49/97/193 surfaces} & \cellB{largest component of $\mu_0(\mathbf{J}\times\mathbf{B}-\nabla p)$ on a $64\times64$ grid of a field period of $s=1/4$, $1/2$, $3/4$\newline\code{check\_cert\_correct}; its largest harmonic at the 288 retained modes\newline\code{harm\_encloses}} & \cellC{at most $7.71$, $7.73$, $7.82\times10^{-2}$~T$^2$; at most $5.49$, $5.49$, $5.46\times10^{-4}$~T$^2$, where $B^2$ is about 7~T$^2$} \\
 \hline
 \end{tabular}
-\caption{Certified results on the manufactured problems and on VMEC++ equilibria, with the soundness theorem behind each.}\label{tab:results}
+\caption{Certified results, with the soundness theorem behind each.}\label{tab:results}
 \end{table}
 
 \paragraph{The order of the half-grid rule.}
@@ -827,12 +836,17 @@ surfaces and within $1.71\times10^{-10}$ at 200, where $\psi^*$ is $0.02$ on the
 boundary.
 
 Against the member with $\iota=2$, whose every surface is rational, VMEC++'s
-field does not converge. In floating point its distance from $\mathbf{B}^*$ at
-mid-radius is $8.4\times10^{-4}$, $2.3\times10^{-4}$, $1.9\times10^{-3}$ and
-$1.9\times10^{-4}$~T at 13, 25, 50 and 100 surfaces, with 77 to 86 per cent of
-its spectral power in the resonant harmonics. Those bend no field line when
-$\iota=2$ on every surface, so VMEC's energy is flat along them and nothing in
-the discrete problem fixes their amplitude.
+field does not converge. Its runs with $m\le9$ and $|n|\le8$ at 13, 25, 50 and
+100 surfaces end at their limit of 20000 iterations, their force residual
+wandering between $7\times10^{-14}$ and $4\times10^{-10}$ instead of approaching
+the tolerance of $10^{-18}$. At one point of the middle half-grid surface a
+component of $\mathbf{B}-\mathbf{B}^*$ is at least $7.97\times10^{-4}$,
+$2.04\times10^{-4}$, $1.73\times10^{-3}$ and $1.63\times10^{-4}$~T at the four
+resolutions, each a floor that \code{check\_bpcert\_correct} proves
+(Table~\ref{tab:results}). In floating point 77 to 86 per cent of the
+difference's spectral power lies in the resonant harmonics. Those bend no field
+line when $\iota=2$ on every surface, so VMEC's energy is flat along them and
+nothing in the discrete problem fixes their amplitude.
 
 \paragraph{An optimized stellarator.}
 On W7-X the certified force is set by the Fourier truncation and not by the
@@ -888,7 +902,9 @@ both fall as the poloidal and toroidal resolution rises. A convergence study of
 a stellarator equilibrium therefore has to vary the angular resolution as well
 as the number of surfaces, and a quantity computed from the field at points
 inherits an error that the angular truncation sets and the residual does not
-report.
+report. The point and harmonic checks measure that force on any wout file, in
+seconds at points and in hours for a harmonic at 256 bits
+(Table~\ref{tab:cost}).
 
 Radial convergence away from rational surfaces says little about their
 neighbourhood. Near a low-order rational surface the discrete solution forms a
@@ -901,15 +917,14 @@ sign with the way the derivatives are taken: at 17 surfaces the Mercier
 criterion of \code{up\_down\_asym} is certified unstable for the reconstruction
 and stable for the file's own differences, and from 33 surfaces on the
 certified criterion is stable. A Mercier sign near marginal stability from a
-coarse run is worth confirming at more surfaces.
+coarse run is worth confirming at more surfaces, and on a tokamak the certified
+criterion takes minutes.
 
-At a free boundary the pressure balance does not improve with radial
+At a free boundary the pressure balance barely improves with radial
 resolution. The jump of $\mu_0p+B^2/2$ against the vacuum pressure on the
 CTH-like boundary falls only from $7.6$ to $5.0\times10^{-4}$~T$^2$, a few
 thousandths of $B^2/2$, as the surfaces go from 25 to 385, and retaining more
-poloidal harmonics on NESTOR's fixed grid moves it without reducing it. The
-residual, harmonic and Mercier checks run on any wout file, in seconds for
-points and hours for harmonics at 256 bits (Table~\ref{tab:cost}).
+poloidal harmonics on NESTOR's fixed grid moves it without reducing it.
 
 \section{Related work}
 
