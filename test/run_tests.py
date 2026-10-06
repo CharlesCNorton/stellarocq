@@ -1,0 +1,1727 @@
+"""Regression suite for the checker.
+
+Each case generates a certificate from a wout, runs the checker over it, and
+compares the verdict and, where a certificate carries numbers, the numbers
+themselves against values recorded here. A case that reproduces a published
+figure is marked with the section of README.md it appears in, so a change that
+moves a published number fails rather than passing quietly.
+
+  python test/run_tests.py --data DIR [--main PATH] [--python PATH] [--slow]
+
+DIR holds the wout files named below. Cases whose files are absent are skipped
+and reported as such, so a partial data directory still exercises the rest,
+and --data may be omitted entirely: test/data holds committed certificates, so
+a fresh clone with no wout files still runs the checker over a verdict of each
+kind. What those cases cannot exercise is the generator, which needs a wout.
+"""
+
+import argparse
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import time
+
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parent
+GEN = ROOT / "gen" / "make_cert.py"
+
+
+class Case:
+    """One certificate: how to build it, how to run it, what to expect."""
+
+    def __init__(self, name, wout, gen_args, expect="VALID", run_args=(),
+                 tighten=False, integrate=None, worst=None, slow=False,
+                 published=None):
+        self.name = name
+        self.wout = wout
+        self.gen_args = gen_args
+        self.expect = expect
+        self.run_args = list(run_args)
+        self.tighten = tighten
+        self.integrate = integrate
+        self.worst = worst
+        self.slow = slow
+        self.published = published
+
+
+# Pointwise certificates over the two symmetry classes and four equilibria.
+POINT = [
+    Case("point/solovev", "wout_solovev.nc", "--nodes 6 --nu 8 --nv 4"),
+    Case("point/cma", "wout_cma.nc", "--nodes 6 --nu 8 --nv 4"),
+    Case("point/cth_like", "wout_cth_like_fixed_bdy.nc", "--nodes 6 --nu 8 --nv 4"),
+    Case("point/up_down_asym", "wout_up_down_asym.nc", "--nodes 6 --nu 8 --nv 4"),
+    # the antisymmetric path with zero antisymmetric coefficients has to
+    # reproduce the symmetric one; this reduction is the solver oracle
+    Case("point/solovev_lasym", "wout_solovev.nc",
+         "--nodes 6 --nu 8 --nv 4 --force-lasym"),
+    # the working precision steers the transcendental functions only, since
+    # the carrier is binary64 whatever it says, so both ends have to pass
+    Case("point/solovev_prec30", "wout_solovev.nc",
+         "--nodes 6 --nu 8 --nv 4 --prec 30"),
+    Case("point/solovev_prec100", "wout_solovev.nc",
+         "--nodes 6 --nu 8 --nv 4 --prec 100"),
+    # a denser sample than the six nodes the results table uses
+    Case("point/cma_dense", "wout_cma.nc", "--nodes 20 --nu 32 --nv 8",
+         slow=True),
+]
+
+# One perturbed coefficient has to break the verdict, in every block the
+# reconstruction reads and at magnitudes down to a part in ten thousand. The
+# claim is the unperturbed one: the bounds come from the converged file and
+# the coefficients from the perturbed one, since a generator that recomputes
+# its bounds from the perturbation would certify the perturbed equilibrium
+# and prove nothing. A check that only ever sees converged equilibria is not
+# being tested against the physics, only against the arithmetic.
+PERTURB = [
+    ("adversarial/rmnc_1e-3", "rmnc,22,1,0.001"),
+    ("adversarial/rmnc_1e-4", "rmnc,22,1,0.0001"),
+    ("adversarial/rmnc_1e-5", "rmnc,22,1,0.00001"),
+    ("adversarial/zmns_1e-3", "zmns,22,1,0.001"),
+    ("adversarial/lmns_1e-3", "lmns,22,1,0.001"),
+    ("adversarial/rmnc_m0_1e-4", "rmnc,22,0,0.0001"),
+]
+
+# Every pressure parameterization VMEC++ admits.
+FAMILIES = [
+    ("power_series", "wout_solovev.nc", "--nodes 6 --nu 8 --nv 4"),
+    ("two_power", "wout_cth_like_fixed_bdy.nc", "--nodes 6 --nu 8 --nv 4"),
+    ("two_power_gs", "wout_solovev_two_power_gs.nc", "--nodes 6 --nu 8 --nv 4"),
+    ("gauss_trunc", "wout_solovev_gauss_trunc.nc", "--nodes 6 --nu 8 --nv 4"),
+    ("two_lorentz", "wout_solovev_two_lorentz.nc", "--nodes 6 --nu 8 --nv 4"),
+    ("pedestal", "wout_solovev_pedestal.nc", "--nodes 6 --nu 8 --nv 4"),
+    ("rational", "wout_solovev_rational.nc", "--nodes 6 --nu 8 --nv 4"),
+    ("cubic_spline", "wout_solovev_cubic_spline.nc", "--node 22 --nu 8 --nv 4"),
+    ("akima_spline", "wout_solovev_akima_spline.nc", "--node 22 --nu 8 --nv 4"),
+    ("line_segment", "wout_solovev_line_segment.nc", "--node 22 --nu 8 --nv 4"),
+]
+POINT += [Case("pressure/" + n, w, a) for n, w, a in FAMILIES]
+
+# Cell certificates: the bound holds between the sampled angles.
+CELLS = [
+    Case("cell/solovev_512", "wout_solovev.nc", "--cells --node 22 --nu 512",
+         tighten=True),
+    Case("cell/solovev_8192", "wout_solovev.nc",
+         "--cells --nodes 6 --nu 8192", tighten=True, worst=1.323648e-05,
+         slow=True, published="Results, cells table"),
+    # the three terms the residual is the difference of, carried as the three
+    # components. They are far larger than it, which is what the covering pays
+    # for, so their cell bounds are far larger too.
+    Case("cell/solovev_terms", "wout_solovev.nc",
+         "--cells --node 22 --nu 256 --terms", tighten=True,
+         worst=1.291589e-02),
+    Case("cell/solovev_terms_radial", "wout_solovev.nc",
+         "--radial --node 22 --nu 128 --nrad 4 --terms", tighten=True,
+         worst=1.686738e-02),
+    # The quasisymmetry residual as the triple product
+    # grad s . (grad B x grad(B . grad B)). Every toroidal derivative in it
+    # carries an integer n, so for an axisymmetric field the whole residual
+    # is exactly zero and the enclosure comes back at the smallest claim the
+    # format holds: toroidal_terms3_vanish and qs_triple_zero of
+    # theories/Identities.v, read back by the evaluator rather than argued.
+    Case("cell/solovev_quasisym", "wout_solovev.nc",
+         "--cells --node 22 --nu 256 --quasisym", tighten=True,
+         worst=4.201968e-256, published="Quasisymmetry"),
+    # The two-term form, which reads only first angular derivatives of the
+    # square field and so covers a three-dimensional surface at the cost of a
+    # force residual, where the triple product cannot be afforded.
+    Case("cell/solovev_quasitwo", "wout_solovev.nc",
+         "--cells --node 22 --nu 256 --quasisym-two", tighten=True,
+         worst=1.177794e+00),
+    Case("cell/cth_quasitwo", "wout_cth_like_fixed_bdy.nc",
+         "--cells --node 12 --nu 64 --nv 16 --surface --quasisym-two",
+         tighten=True, worst=2.526032e-07, published="Quasisymmetry"),
+    Case("cell/qh_quasitwo", "wout_nfp4_QH_ns50.nc",
+         "--cells --node 25 --nu 64 --nv 16 --surface --quasisym-two",
+         tighten=True, worst=1.611466e-05, published="Quasisymmetry"),
+]
+
+# Angular integrals, against the intervals quoted in the README.
+INTEGRALS = [
+    Case("integral/geometry", "wout_solovev.nc",
+         "--cells --node 22 --nu 512 --geometry", tighten=True,
+         integrate={"sqrt(g)": (-1.262214040e+02, -1.262202659e+02),
+                    "B_u": (1.441907735e+00, 1.442042819e+00)},
+         published="Integrals over a surface"),
+    Case("integral/mercier_a", "wout_solovev.nc",
+         "--cells --node 22 --nu 512 --mercier a", tighten=True,
+         integrate={"tpp": (-3.287709630e+03, -3.287507349e+03),
+                    "tbb": (-5.085479847e+00, -5.084537113e+00),
+                    "tjb": (2.806504072e+00, 2.813083414e+00)},
+         published="Mercier"),
+    Case("integral/mercier_b", "wout_solovev.nc",
+         "--cells --node 22 --nu 512 --mercier b", tighten=True,
+         integrate={"tjj": (-1.569705226e+00, -1.535477750e+00)},
+         published="Mercier"),
+]
+
+# The radius as a varied slot: the bound holds between surfaces.
+RADIAL = [
+    Case("radial/solovev_node22", "wout_solovev.nc",
+         "--radial --node 22 --nu 512 --nrad 8", tighten=True,
+         worst=1.050222e-03),
+    # widened to the toroidal angle: for an axisymmetric case the bound must
+    # not move, since that derivative is the zero expression
+    Case("radial/three_slots", "wout_solovev.nc",
+         "--radial --node 22 --nu 256 --nrad 8", tighten=True,
+         run_args=("--slot3", "2", "3600000000000000")),
+    Case("radial/solovev_volume", "wout_solovev.nc",
+         "--radial --nodes 52 --nu 128 --nrad 8", tighten=True,
+         worst=5.606857e-01, slow=True, published="Over the volume"),
+    # the third slot carried by the file rather than by the command line, so
+    # what the run produces is a certificate another party re-checks. The
+    # bound has to be the one the two-slot covering gave, since the toroidal
+    # derivative of an axisymmetric reconstruction is the zero expression
+    Case("radial/slot3_file", "wout_solovev.nc",
+         "--radial --node 22 --nu 256 --nrad 8 --slot3 2", tighten=True,
+         worst=2.170772e-03),
+    # a piecewise pressure covered radially across its knots: the covering is
+    # split at each knot and every node block carries the cubic of its piece
+    Case("radial/spline_pieces", "wout_solovev_cubic_spline.nc",
+         "--radial --nodes 10 --nu 64 --nrad 8", tighten=True,
+         worst=1.314896e+00),
+    # the innermost interval, between the first two half points, where the
+    # coefficients come from the two innermost nodes because no inner half
+    # point exists
+    Case("radial/axis_piece", "wout_solovev.nc",
+         "--radial --axis --node 1 --nu 64 --nrad 64", tighten=True,
+         worst=3.325667e-01),
+    # the outermost interval, between the last two nodes, which is where a
+    # covering built on half points stops short of the boundary
+    Case("radial/edge_piece", "wout_solovev.nc",
+         "--radial --edge --nu 128 --nrad 32", tighten=True,
+         worst=2.247683e-03),
+]
+
+# The reconstruction against VMEC's own field arrays. Physics.v is
+# definitional, and its float reference is by the same hand, so this is the
+# check that reaches outside the development: at a half point the wout stores
+# B^u, B^v and sqrt(g), and the reconstruction has to reproduce them. Both
+# symmetry classes and both dimensionalities are here, since the antisymmetric
+# half and the toroidal one are where an encoding slip would hide.
+FIELD = [
+    ("field/solovev", "wout_solovev.nc", 2.0e-06),
+    ("field/cth_like", "wout_cth_like_fixed_bdy.nc", 2.0e-05),
+    ("field/cma", "wout_cma.nc", 2.0e-04),
+    ("field/up_down_asym", "wout_up_down_asym.nc", 5.0e-04),
+    # the worst of the published table, where what is left over is the
+    # difference between an exact product of series and the Nyquist fit VMEC
+    # stores for it, and the mode set barely resolves the equilibrium
+    ("field/li383_low_res", "wout_li383_low_res.nc", 2.5e-02),
+]
+
+
+# What the checker refuses. An integral is a statement about a tiling, so a
+# covering that leaves gaps has to be turned away rather than summed, and a
+# three-dimensional surface covered by curves is not covered. Both are checks
+# on the gap between what a theorem assumes and what the driver does, which is
+# the gap this whole development exists to close.
+REFUSALS = [
+    ("refuses/gapped_integral", "wout_solovev.nc",
+     "--cells --node 22 --nu 64 --geometry --wscale 0.5", True,
+     "--integrate", "leave a gap"),
+]
+
+
+# The criterion over a profile rather than one surface, which is where it says
+# something about an equilibrium rather than about a flux surface. On the
+# Solov'ev equilibrium the geodesic term is a difference of two numbers that
+# agree to about ten digits, so no enclosure decides the criterion at any
+# surface; what the case checks is that every surface runs and carries its
+# sensitivity columns.
+PROFILE = [
+    ("mercier/solovev_profile", "wout_solovev.nc", 4, 128, 0),
+]
+
+
+# The Boozer angles. The stream function is float data the certificate
+# carries, so what makes it usable is the certified defect of the two
+# relations that define it, and the harmonics computed from it carry the
+# Jacobian of the angle map, whose integral has to be 4 pi^2 because the map
+# is a bijection of the torus.
+BOOZER = [
+    ("boozer/solovev_node22", "wout_solovev.nc", 22, 512,
+     # the defect of each relation, at most
+     (5.0e-05, 5.0e-04),
+     # B_00 of |B| in the Boozer angles
+     (2.051610939e-01, 2.051685015e-01)),
+]
+
+
+# The certified residual against resolution. These need a family of the same
+# equilibrium at several resolutions, which gen/families.py produces with
+# VMEC++; without them the cases skip. The first requires the measured order in
+# the grid spacing to be second, which is what discretization_is_consistent
+# assumes, and the second requires each enlargement of the mode set to buy a
+# factor, which is what says a flat radial family is at its spectral floor.
+CONVERGENCE = [
+    ("convergence/solovev_order",
+     ["wout_solovev_m12_ns13.nc", "wout_solovev_m12_ns25.nc",
+      "wout_solovev_m12_ns51.nc"],
+     "--half-grid", "order", (1.7, 2.2)),
+    ("convergence/li383_spectral",
+     ["wout_li383_m4n3.nc", "wout_li383_m6n4.nc", "wout_li383_m8n6.nc"],
+     "--half-grid --nu 256", "ratio", (3.0, 1.0e9)),
+    # a stellarator whose radial grid does nothing: every ratio near one
+    ("convergence/cma_flat",
+     ["wout_cma_ns15.nc", "wout_cma_ns25.nc", "wout_cma_ns51.nc",
+      "wout_cma_ns101.nc"],
+     "--half-grid --nu 128", "ratio", (0.9, 1.2)),
+]
+
+
+# How far the residual is from the three terms it is the difference of. Where
+# they agree to several digits the bound is a cancellation defect and a finer
+# covering reaches it; where they do not, the reconstruction is out of balance
+# by something of its own size and no refinement of the arithmetic does. The
+# separation between solovev and the rest is the published figure, so each case
+# requires the measured factor to stay in its band.
+CANCEL = [
+    ("cancel/solovev", "wout_solovev.nc", "--nodes 8 --nu 128", (5.0e2, 5.0e4)),
+    ("cancel/cth_like", "wout_cth_like_fixed_bdy.nc", "--nodes 5 --nu 64",
+     (0.5, 30.0)),
+    ("cancel/cma", "wout_cma.nc", "--nodes 5 --nu 128", (0.9, 1.2)),
+    ("cancel/up_down_asym", "wout_up_down_asym.nc", "--nodes 5 --nu 64",
+     (0.4, 6.0)),
+    ("cancel/li383", "wout_li383_low_res.nc", "--nodes 5 --nu 64", (0.4, 3.0)),
+]
+
+
+# The claim itself, that enlarging the mode set raises the cancellation: the
+# largest ratio over the profile at the largest mode set has to exceed the one
+# at the smallest by the recorded factor.
+MODESETS = [
+    ("modes/cth_like_rises", "wout_cthS_ns51_m5n4.nc", "wout_cthS_ns51_m9n8.nc",
+     "--nodes 4 --nu 64", 2.0),
+    ("modes/li383_rises", "wout_li383_m4n3.nc", "wout_li383_m8n6.nc",
+     "--nodes 4 --nu 128", 5.0),
+]
+
+
+# A floor over a box of coefficients rather than at one field. The cells range
+# over one rmnc coefficient and the poloidal angle, so a passing verdict
+# excludes every field whose coefficient lies in that interval, at every angle
+# the cells cover. The box is offset from the converged value, since a box
+# containing it contains a field that does balance.
+COEFBOX = [
+    ("obstruction/coefbox_rmnc", "wout_solovev.nc",
+     "--cells --node 22 --nu 256 --coefbox rmnc,1,1,0.0005 "
+     "--perturb rmnc,22,1,0.001", 231),
+]
+
+# The certified enclosure at a cell centre against an independently written
+# float implementation of the same reconstruction. A disagreement means the
+# physics was encoded into `expr` wrongly, which no amount of interval
+# soundness would catch, so this is the case that guards the correspondence
+# between theories/Physics.v and the rule it is supposed to state.
+REFERENCE = [
+    ("reference/solovev_node22", "wout_solovev.nc", 22,
+     "--radial --node 22 --nu 8 --nrad 8", 0.39930555555555625),
+]
+
+# The certified quasisymmetry residual at a cell centre against the float
+# reference of the same triple product, which proto/continuum_ref.py builds
+# by a generic product rule from the series rather than by expanding the
+# derivatives as theories/Physics.v does. On the axisymmetric case both are
+# exactly zero, which is the theorem read as a number; on the
+# three-dimensional one the enclosure has to bracket the reference.
+QSREF = [
+    ("reference/quasisym_solovev", "wout_solovev.nc", 22, 8, 0),
+    ("reference/quasisym_cth", "wout_cth_like_fixed_bdy.nc", 12, 8, 4),
+]
+
+# Certificates carry their inputs, and nothing inside the proof ties those
+# inputs to a wout. gen/verify_cert.py reads both and compares; these cases
+# check that it passes what belongs together and rejects what does not, which
+# is the only guard against a certificate that is sound about the wrong
+# equilibrium.
+#
+# Every form the generator writes is here, because a guard that reads only
+# some of them leaves the rest tied to nothing. A radial covering repeats a
+# node with SAME and carries its own pressure piece; a stream function arrives
+# with two flux functions beside it; a third slot adds two numbers to every
+# bound line; and four of the outputs put a mode pair on the OUTPUT line.
+CORRESPOND = [
+    ("correspond/solovev", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 64", True),
+    ("correspond/wrong_wout", "wout_solovev.nc", "wout_cma.nc",
+     "--cells --node 22 --nu 64", False),
+    ("correspond/radial", "wout_solovev.nc", "wout_solovev.nc",
+     "--radial --node 22 --nu 32 --nrad 4", True),
+    ("correspond/radial_wrong", "wout_solovev.nc", "wout_cma.nc",
+     "--radial --node 22 --nu 32 --nrad 4", False),
+    ("correspond/slot3", "wout_solovev.nc", "wout_solovev.nc",
+     "--radial --node 22 --nu 32 --nrad 4 --slot3 2", True),
+    ("correspond/axis_piece", "wout_solovev.nc", "wout_solovev.nc",
+     "--radial --axis --node 1 --nu 32 --nrad 4", True),
+    ("correspond/edge_piece", "wout_solovev.nc", "wout_solovev.nc",
+     "--radial --edge --nu 32 --nrad 4", True),
+    ("correspond/stream", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --stream-defect", True),
+    ("correspond/covariant", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --covariant 1,0", True),
+    ("correspond/lasym", "wout_up_down_asym.nc", "wout_up_down_asym.nc",
+     "--cells --node 8 --nu 32 --nv 4 --surface", True),
+    ("correspond/terms", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --terms", True),
+    ("correspond/terms_radial", "wout_solovev.nc", "wout_solovev.nc",
+     "--radial --node 22 --nu 32 --nrad 4 --terms", True),
+    ("correspond/current", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --current", True),
+    ("correspond/current_radial", "wout_solovev.nc", "wout_solovev.nc",
+     "--radial --node 22 --nu 32 --nrad 4 --current", True),
+    # the piecewise pressures, whose cubic is the one block a wout constrains
+    # only through presf: once per node under a radial covering, and once for
+    # the file when a single surface resolves it
+    ("correspond/spline_pieces", "wout_solovev_cubic_spline.nc",
+     "wout_solovev_cubic_spline.nc", "--radial --nodes 6 --nu 16 --nrad 4",
+     True),
+    ("correspond/spline_node", "wout_solovev_cubic_spline.nc",
+     "wout_solovev_cubic_spline.nc", "--node 22 --nu 8 --nv 4", True),
+    ("correspond/akima_node", "wout_solovev_akima_spline.nc",
+     "wout_solovev_akima_spline.nc", "--node 22 --nu 8 --nv 4", True),
+    ("correspond/segment_node", "wout_solovev_line_segment.nc",
+     "wout_solovev_line_segment.nc", "--node 22 --nu 8 --nv 4", True),
+    # a pedestal, whose am block the generator carries whole when the tanh
+    # term is on and truncates to its polynomial when the width switches it off
+    ("correspond/pedestal", "wout_solovev_pedestal.nc",
+     "wout_solovev_pedestal.nc", "--node 22 --nu 8 --nv 4", True),
+    # a profile run with PRES_SCALE, which the wout does not carry: the
+    # certificate's amplitude differs from the file's am by that factor and
+    # the guard reads the pressure back against pres instead
+    ("correspond/pres_scale", "wout_cth_like_fixed_bdy.nc",
+     "wout_cth_like_fixed_bdy.nc", "--node 12 --nu 8 --nv 4", True),
+    ("correspond/quasisym", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --quasisym", True),
+    # the two-term form carries one more input, the flux function the ratio
+    # is claimed to equal, on an FZERO line the guard reads back
+    ("correspond/quasitwo", "wout_solovev.nc", "wout_solovev.nc",
+     "--cells --node 22 --nu 32 --quasisym-two", True),
+    ("correspond/quasitwo_wrong", "wout_solovev.nc", "wout_cma.nc",
+     "--cells --node 22 --nu 32 --quasisym-two", False),
+]
+
+# The Mercier criterion of one surface in one run, theories/MercierRun.v. Each
+# case writes the four coverings and runs `main --mercier-run`, which
+# integrates them over the angular torus and assembles the terms, and compares
+# the verdict and the terms with the wout's own D* arrays. The verdict, read
+# off DMerc's enclosure, has to be the one recorded. Where the case brackets,
+# the file's number has to lie inside the certified enclosure of every term;
+# where it does not, the file's DMerc has to have the other sign, which is
+# the disagreement the case records.
+MERCIER = [
+    # flat iota and finite pressure: the well is certified, and the geodesic
+    # term cancels to about ten digits, beyond any enclosure
+    ("mercier/solovev_node22", "wout_solovev.nc", 22, 256, "OPEN", True),
+    # strong shear, no pressure, non-stellarator-symmetric: DShear, DCurr and
+    # DGeod all contribute and DWell is zero
+    ("mercier/up_down_asym_node8", "wout_up_down_asym.nc", 8, 512, "STABLE", True),
+    # the paper's case at s = 0.125 of 17 surfaces: unstable where the file
+    # reads stable
+    ("mercier/up_down_asym_node2", "wout_up_down_asym.nc", 2, 2048, "UNSTABLE", False),
+]
+
+
+# Certificates committed beside the suite, so a clone with no wout files can
+# still run the checker over a verdict of each kind.
+STANDALONE = [
+    ("standalone/points", "cert_solovev_points.txt", (), "VALID"),
+    ("standalone/cells", "cert_solovev_cells.txt", (), "VALID"),
+    ("standalone/cells_taylor", "cert_solovev_cells.txt", ("--taylor",), "VALID"),
+]
+
+# The Taylor bound carried in a certificate file, which another party
+# re-checks with check_ccert_t rather than trusting the run that wrote it, the
+# way a SLOT3 file is re-checked. The generator marks the file, --tighten
+# --taylor writes the ten-number bounds, and an ordinary run establishes them.
+TAYLORFILE = [
+    Case("taylor/solovev_file", "wout_solovev.nc",
+         "--cells --node 22 --nu 256 --taylor", tighten=True,
+         run_args=("--taylor",), worst=3.706373e-04),
+]
+
+ALL = POINT + CELLS + INTEGRALS + RADIAL + TAYLORFILE
+
+# The cases whose time is the checker's over thousands of cells, longest first.
+HEAVY = [
+    "mercier/up_down_asym_node2",
+    "radial/spline_pieces", "radial/axis_piece", "mercier/solovev_profile",
+    "modes/cth_like_rises", "modes/li383_rises", "cancel/cma",
+    "mercier/up_down_asym_node8", "mercier/solovev_node22",
+    "boozer/solovev_node22", "convergence/cma_flat", "cancel/cth_like",
+    "cell/qh_quasitwo", "cell/cth_quasitwo", "radial/solovev_node22",
+    "reference/quasisym_cth", "radial/edge_piece", "radial/slot3_file",
+    "radial/three_slots", "cell/solovev_512", "integral/geometry",
+    "integral/mercier_a", "integral/mercier_b", "cancel/solovev",
+    "cancel/up_down_asym", "cancel/li383", "convergence/solovev_order",
+    "convergence/li383_spectral",
+]
+
+
+import threading
+
+# The checker workers a case may use, set per pool thread by the scheduler
+# below and read by every command a case runs; the tools a case calls pass it
+# on through the environment.
+_local = threading.local()
+
+
+def run(cmd, cwd=None):
+    """Run a command and return (returncode, combined output)."""
+    env = dict(os.environ)
+    jobs = getattr(_local, "jobs", None)
+    if jobs is not None:
+        env["STELLAROCQ_JOBS"] = str(jobs)
+    p = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, env=env)
+    return p.returncode, p.stdout
+
+
+def check_case(c, data, main, python, tmp):
+    """Build, run and compare one case. Returns (status, detail)."""
+    wout = data / c.wout
+    if not wout.exists():
+        return "skip", f"{c.wout} absent"
+    src = tmp / (c.name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" {c.gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+
+    target = src
+    if c.tighten:
+        target = tmp / (src.stem + "_c.txt")
+        rc, out = run(f'"{main}" --tighten "{src}" "{target}"')
+        if rc != 0:
+            return "fail", "tighten: " + out.strip().splitlines()[-1]
+        if c.worst is not None:
+            m = re.search(r"worst cell bound ([0-9.e+-]+)", out)
+            if not m:
+                return "fail", "tighten printed no worst bound"
+            got = float(m.group(1))
+            if abs(got - c.worst) > 1e-9 * abs(c.worst):
+                return "fail", f"worst bound {got:.6e}, recorded {c.worst:.6e}"
+
+    if c.integrate is not None:
+        rc, out = run(f'"{main}" --integrate "{target}"')
+        if rc != 0:
+            return "fail", "integrate: " + out.strip().splitlines()[-1]
+        for label, (lo, hi) in c.integrate.items():
+            m = re.search(re.escape(label) + r"\s+\[([0-9.e+-]+), ([0-9.e+-]+)\]", out)
+            if not m:
+                return "fail", f"integrate printed no {label}"
+            glo, ghi = float(m.group(1)), float(m.group(2))
+            if abs(glo - lo) > 1e-9 * abs(lo) or abs(ghi - hi) > 1e-9 * abs(hi):
+                return "fail", (f"{label} [{glo:.9e}, {ghi:.9e}], recorded "
+                                f"[{lo:.9e}, {hi:.9e}]")
+        return "ok", "integrals match"
+
+    rc, out = run(f'"{main}" {" ".join(c.run_args)} "{target}"')
+    m = re.search(r"verdict: (\w+)", out)
+    got = m.group(1) if m else "NONE"
+    if got != c.expect:
+        return "fail", f"verdict {got}, expected {c.expect}"
+    return "ok", got
+
+
+def check_mercier(name, wout, node, nu, expect, bracket, main, python):
+    """The assembled criterion against the wout's own Mercier arrays."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "mercier.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --node {node} --nu {nu} '
+                  f'--main "{main}"')
+    if rc != 0 and "verdict" not in out:
+        return "fail", "mercier: " + out.strip().splitlines()[-1]
+    m = re.search(r"verdict: (\w+)", out)
+    got = m.group(1) if m else "NONE"
+    if got != expect:
+        return "fail", f"verdict {got}, expected {expect}"
+    # every term of the file has to sit inside the certified enclosure
+    terms = {}
+    for label in ("DShear", "DCurr", "DWell", "DGeod", "DMerc"):
+        m = re.search(r"  " + label + r"\s+\[([0-9.e+-]+), ([0-9.e+-]+)\]", out)
+        if not m:
+            return "fail", f"no enclosure for {label}"
+        terms[label] = (float(m.group(1)), float(m.group(2)))
+    theirs = {}
+    for label in ("DShear", "DCurr", "DWell", "DGeod", "DMerc"):
+        m = re.search(r"  " + label + r"\s+([0-9.e+-]+)\n", out)
+        if m:
+            theirs[label] = float(m.group(1))
+    if not bracket:
+        # the case records a disagreement: the file's DMerc has the other sign
+        fm = theirs.get("DMerc")
+        if fm is None:
+            return "fail", "no DMerc of the file"
+        if (got == "UNSTABLE" and fm <= 0) or (got == "STABLE" and fm >= 0):
+            return "fail", f"{got}, and the file's DMerc {fm:.6e} agrees"
+        return "ok", f"{got} where the file's DMerc is {fm:+.6e}"
+    for label, v in theirs.items():
+        lo, hi = terms[label]
+        # the enclosures are of the reconstruction's own criterion, and V''
+        # differs from the file's difference quotient by a fraction of a
+        # percent, so DWell and the terms carrying it are allowed that much
+        pad = 0.02 * max(abs(lo), abs(hi))
+        if not (lo - pad <= v <= hi + pad):
+            return "fail", (f"{label} {v:.6e} outside the certified "
+                            f"[{lo:.6e}, {hi:.6e}]")
+    return "ok", f"{got}, all five terms bracket the file"
+
+
+def check_correspondence(name, made_from, checked_against, gen_args, agree,
+                         python, tmp):
+    """A certificate against the wout it is claimed to describe."""
+    for w in (made_from, checked_against):
+        if not w.exists():
+            return "skip", f"{w.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{made_from}" "{src}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    ver = ROOT / "gen" / "verify_cert.py"
+    rc, out = run(f'"{python}" "{ver}" "{checked_against}" "{src}"')
+    matched = rc == 0
+    if matched != agree:
+        return "fail", ("accepted a certificate about a different wout"
+                        if matched else
+                        "rejected a certificate about its own wout")
+    return "ok", ("inputs match the wout" if agree else
+                  "rejected, as it describes a different equilibrium")
+
+
+def check_field(name, wout, tol, python):
+    """The reconstructed field against the wout's own arrays."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "proto" / "field_check.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}"')
+    if rc != 0:
+        return "fail", "field_check: " + out.strip().splitlines()[-1]
+    m = re.search(r"worst relative difference from the wout's own field: "
+                  r"([0-9.e+-]+)", out)
+    if not m:
+        return "fail", "no worst difference reported"
+    got = float(m.group(1))
+    if got > tol:
+        return "fail", f"{got:.3e} from the wout's own field, over {tol:.0e}"
+    return "ok", f"{got:.3e} from the wout's own field"
+
+
+def check_refusal(name, wout, gen_args, tighten, run_args, expect, main,
+                  python, tmp):
+    """A run that has to fail, with the reason it has to give."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    target = src
+    if tighten:
+        target = tmp / (src.stem + "_c.txt")
+        rc, out = run(f'"{main}" --tighten "{src}" "{target}"')
+        if rc != 0:
+            return "fail", "tighten: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" {run_args} "{target}"')
+    if rc == 0:
+        return "fail", "the run was accepted when it had to be refused"
+    if expect not in out:
+        return "fail", f"refused, but not for {expect!r}"
+    return "ok", f"refused: {expect}"
+
+
+def check_profile(name, wout, nodes, nu, least_unstable, main, python):
+    """The criterion at every surface of one equilibrium."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "mercier.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --profile {nodes} --nu {nu} '
+                  f'--main "{main}"')
+    if rc != 0 and "surfaces proven" not in out:
+        return "fail", "profile: " + out.strip().splitlines()[-1]
+    m = re.search(r"(\d+) surfaces proven unstable, (\d+) proven stable, "
+                  r"(\d+) undecided", out)
+    if not m:
+        return "fail", "no profile summary"
+    uns, sta, opn = (int(m.group(i)) for i in (1, 2, 3))
+    if uns < least_unstable:
+        return "fail", f"{uns} surfaces proven unstable, wanted "\
+                       f"{least_unstable}"
+    # every surface carries what a relative error in each input does to the
+    # criterion, which is what says whether the data determines it
+    if not re.search(r"averages", out):
+        return "fail", "no sensitivity columns"
+    return "ok", f"{uns} unstable, {sta} stable, {opn} undecided"
+
+
+def check_boozer(name, wout, node, nu, defect_max, b00, main, python):
+    """The stream function's defect, and the spectrum it gives."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "boozer.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --node {node} --nu {nu} '
+                  f'--defect --spectrum 0,0')
+    if rc != 0:
+        return "fail", "boozer: " + out.strip().splitlines()[-1]
+    du = re.search(r"d_u w - \(B_u - I\)\s+at most ([0-9.e+-]+)", out)
+    dv = re.search(r"d_v w - \(B_v - G\)\s+at most ([0-9.e+-]+)", out)
+    if not du or not dv:
+        return "fail", "no defect bounds"
+    if float(du.group(1)) > defect_max[0] or float(dv.group(1)) > defect_max[1]:
+        return "fail", (f"defect {du.group(1)}, {dv.group(1)} above "
+                        f"{defect_max}")
+    if "DOES NOT bracket" in out:
+        return "fail", "the Jacobian of the angle map does not integrate to "\
+                       "4 pi^2"
+    m = re.search(r"B cos\s+\[([0-9.e+-]+), ([0-9.e+-]+)\]", out)
+    if not m:
+        return "fail", "no B_00"
+    lo, hi = float(m.group(1)), float(m.group(2))
+    if abs(lo - b00[0]) > 1e-9 * abs(b00[0]) or \
+       abs(hi - b00[1]) > 1e-9 * abs(b00[1]):
+        return "fail", (f"B_00 [{lo:.9e}, {hi:.9e}], recorded "
+                        f"[{b00[0]:.9e}, {b00[1]:.9e}]")
+    return "ok", f"defect {du.group(1)}, B_00 [{lo:.6e}, {hi:.6e}]"
+
+
+def check_convergence(name, wouts, args, column, bounds, data, main, python):
+    """The measured order, or the gain per mode set, inside its bounds."""
+    missing = [w for w in wouts if not (data / w).exists()]
+    if missing:
+        return "skip", f"{missing[0]} absent"
+    tool = ROOT / "gen" / "convergence.py"
+    rc, out = run(f'"{python}" "{tool}" {args} --data "{data}" --main "{main}" '
+                  + " ".join(wouts))
+    if rc != 0:
+        return "fail", "convergence: " + out.strip().splitlines()[-1]
+    got = []
+    for line in out.splitlines():
+        f = line.split()
+        # ns modes h s residual ratio [order]
+        if len(f) >= 6 and f[0].isdigit() and f[1].isdigit():
+            if column == "ratio" and len(f) >= 6:
+                got.append(float(f[5]))
+            elif column == "order" and len(f) >= 7:
+                got.append(float(f[6]))
+    if not got:
+        return "fail", f"no {column} column in the output"
+    lo, hi = bounds
+    bad = [x for x in got if not (lo <= x <= hi)]
+    if bad:
+        return "fail", f"{column} {bad[0]:.2f} outside [{lo}, {hi}]"
+    shown = ", ".join(f"{x:.2f}" for x in got)
+    return "ok", f"{column} {shown}"
+
+
+def check_coefbox(name, wout, gen_args, expect_cells, main, python, tmp):
+    """A floor proven over an interval of one coefficient."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    dst = tmp / (name.replace("/", "_") + "_c.txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" --tighten --lower --filter "{src}" "{dst}"')
+    if rc != 0:
+        return "fail", "tighten: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" --lower "{dst}"')
+    m = re.search(r"(\d+) of (\d+) cells proven out of force balance", out)
+    if not m:
+        return "fail", "no count of cells out of balance"
+    got, total = int(m.group(1)), int(m.group(2))
+    if got != total:
+        return "fail", f"{got} of {total} cells carried a floor"
+    if got != expect_cells:
+        return "fail", f"{got} cells kept, recorded {expect_cells}"
+    return "ok", f"{got} cells, every field in the box out of balance"
+
+
+def check_perturbed(name, wout, perturb, main, python, tmp):
+    """The unperturbed claim, read against perturbed coefficients."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    good = tmp / (name.replace("/", "_") + "_good.txt")
+    bad = tmp / (name.replace("/", "_") + "_bad.txt")
+    args = "--node 22 --nu 8 --nv 1"
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{good}" {args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{bad}" {args} '
+                  f'--perturb {perturb}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    claim = {}
+    for line in good.read_text().splitlines():
+        if line.startswith(("EPS_S", "EPS_U", "EPS_V")):
+            claim[line.split()[0]] = line
+    spliced = []
+    for line in bad.read_text().splitlines():
+        tag = line.split()[0] if line else ""
+        spliced.append(claim[tag] if tag in claim else line)
+    mixed = tmp / (name.replace("/", "_") + "_mixed.txt")
+    mixed.write_text("\n".join(spliced) + "\n")
+    rc, out = run(f'"{main}" "{mixed}"')
+    m = re.search(r"verdict: (\w+)", out)
+    got = m.group(1) if m else "NONE"
+    if got != "INVALID":
+        return "fail", f"the perturbed coefficients still pass: {got}"
+    return "ok", "INVALID against the converged claim"
+
+
+def check_halfgrid(name, wout, node, main, python, tmp):
+    """The pointwise residual against an implementation that shares no code.
+
+    proto/continuum_ref.py --half-grid writes VMEC's parity rule out again,
+    from the rule rather than from the expression builders, so a disagreement
+    means one of the two has the physics wrong. The reference has to agree
+    with the generator's own float pass, and the checker has to accept a bound
+    a hair above what the reference says and reject one just below it, which
+    brackets the certified enclosure against a number nothing in the
+    development produced twice.
+    """
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    ref = ROOT / "proto" / "continuum_ref.py"
+    rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --nu 8 '
+                  f'--half-grid')
+    if rc != 0:
+        return "fail", "reference: " + out.strip().splitlines()[-1]
+    m = re.search(r"worst per component: ([0-9.e+-]+) ([0-9.e+-]+) "
+                  r"([0-9.e+-]+)", out)
+    if not m:
+        return "fail", "the reference printed no value"
+    want = [float(m.group(i)) for i in (1, 2, 3)]
+
+    src = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" --node {node} '
+                  f'--nu 8 --nv 1 --slack 1.0001')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    m = re.search(r"\|r\|max = ([0-9.e+-]+) ([0-9.e+-]+) ([0-9.e+-]+)", out)
+    if not m:
+        return "fail", "the generator printed no maximum"
+    got = [float(m.group(i)) for i in (1, 2, 3)]
+    # the generator prints three decimals, which is what limits this
+    for k, (g, w_) in enumerate(zip(got, want, strict=True)):
+        if abs(g - w_) > 1e-3 * abs(w_):
+            return "fail", (f"component {k}: the generator says {g:.9e}, the "
+                            f"reference {w_:.9e}")
+    rc, out = run(f'"{main}" "{src}"')
+    if "verdict: VALID" not in out:
+        return "fail", "a bound a hair above the reference was rejected"
+
+    tight = tmp / (name.replace("/", "_") + "_tight.txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{tight}" --node {node} '
+                  f'--nu 8 --nv 1 --slack 0.99')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" "{tight}"')
+    if "verdict: INVALID" not in out:
+        return "fail", "a bound below the reference was accepted"
+    return "ok", f"brackets the reference {want[0]:.6e} from both sides"
+
+
+def check_terms_reference(name, wout, node, nu, main, python):
+    """The three certified terms against a float reference of the same three.
+
+    Nothing about a verdict says the components of a terms certificate are the
+    terms the residual is assembled from: they are three more expressions the
+    checker bounds, and it would bound the wrong three as readily. The
+    reference is written from the rule rather than from the expression
+    builders, and it also reports its own difference of the three against its
+    own residual, so a mis-wiring shows up as a disagreement rather than as a
+    plausible table.
+    """
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    ref = ROOT / "proto" / "continuum_ref.py"
+    rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --nu {nu} '
+                  f'--half-grid --cells')
+    if rc != 0:
+        return "fail", "reference: " + out.strip().splitlines()[-1]
+    m = re.search(r"terms\s+([0-9.e+-]+)\s+([0-9.e+-]+)\s+([0-9.e+-]+)", out)
+    d = re.search(r"their difference ([0-9.e+-]+) against r_s ([0-9.e+-]+)",
+                  out)
+    if not m or not d:
+        return "fail", "the reference printed no terms"
+    want = [float(m.group(i)) for i in (1, 2, 3)]
+    if abs(float(d.group(1)) - float(d.group(2))) > 1e-12 * abs(want[0]):
+        return "fail", "the reference's own three terms do not give its r_s"
+
+    tool = ROOT / "gen" / "cancellation.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --node {node} --nu {nu} '
+                  f'--main "{main}"')
+    if rc != 0:
+        return "fail", "cancellation: " + out.strip().splitlines()[-1]
+    row = None
+    for line in out.splitlines():
+        f = line.split()
+        # s u t1 t2 t3 r_s ratio share
+        if len(f) == 8:
+            try:
+                s = float(f[0])
+            except ValueError:
+                continue
+            if 0.0 <= s <= 1.0:
+                row = [float(x) for x in f[2:5]]
+    if row is None:
+        return "fail", "no terms row in the output"
+    # each certified magnitude is an upper bound grown until the check passed,
+    # so it sits a hair above the reference and never below it
+    for k, (got, w) in enumerate(zip(row, want, strict=True)):
+        if got < w * (1 - 1e-9):
+            return "fail", (f"term {k} certified {got:.9e} below the "
+                            f"reference {w:.9e}")
+        if got > w * 1.001:
+            return "fail", (f"term {k} certified {got:.9e} far above the "
+                            f"reference {w:.9e}")
+    return "ok", ("the three terms bracket the reference, whose own "
+                  "difference is its r_s")
+
+
+def cancellation_ratios(wout, args, main, python):
+    """The per-node cancellation factors gen/cancellation.py prints."""
+    tool = ROOT / "gen" / "cancellation.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" {args} --main "{main}"')
+    if rc != 0:
+        return None, "cancellation: " + out.strip().splitlines()[-1]
+    got = []
+    for line in out.splitlines():
+        f = line.split()
+        # s u t1 t2 t3 r_s ratio share
+        if len(f) == 8:
+            try:
+                s, ratio = float(f[0]), float(f[6])
+            except ValueError:
+                continue
+            if 0.0 <= s <= 1.0:
+                got.append(ratio)
+    if not got:
+        return None, "no cancellation column in the output"
+    return got, None
+
+
+def check_terms_reference_radial(name, wout, node, nu, nrad, main, python):
+    """The three certified terms of the free-radius residual against the float
+    reference at the same point.
+
+    A volume covering's worst cell sits at a radius between the half points and
+    an angle between the samples, so the reference is read at exactly that
+    point rather than on a grid of its own.
+    """
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "cancellation.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --radial --node {node} '
+                  f'--nu {nu} --nrad {nrad} --exact --main "{main}"')
+    if rc != 0:
+        return "fail", "cancellation: " + out.strip().splitlines()[-1]
+    rows = []
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        f = line.split()
+        if len(f) == 8:
+            try:
+                s = float(f[0])
+            except ValueError:
+                continue
+            if 0.0 <= s <= 1.0 and i + 1 < len(lines):
+                m = re.search(r"exact s=([0-9.e+-]+) u=([0-9.e+-]+)",
+                              lines[i + 1])
+                if m:
+                    rows.append((float(m.group(1)), float(m.group(2)),
+                                 [float(x) for x in f[2:5]]))
+    if not rows:
+        return "fail", "no worst cell with an exact position"
+    ref = ROOT / "proto" / "continuum_ref.py"
+    for s, u, got in rows:
+        rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --nu 1 '
+                      f'--at {s!r} --u {u!r}')
+        if rc != 0:
+            return "fail", "reference: " + out.strip().splitlines()[-1]
+        m = re.search(r"terms\s+([0-9.e+-]+)\s+([0-9.e+-]+)\s+([0-9.e+-]+)",
+                      out)
+        if not m:
+            return "fail", "the reference printed no terms"
+        want = [float(m.group(i)) for i in (1, 2, 3)]
+        for k, (g, w) in enumerate(zip(got, want, strict=True)):
+            if g < w * (1 - 1e-9):
+                return "fail", (f"term {k} certified {g:.9e} below the "
+                                f"reference {w:.9e} at s={s:.5f}")
+            if g > w * 1.001:
+                return "fail", (f"term {k} certified {g:.9e} far above the "
+                                f"reference {w:.9e} at s={s:.5f}")
+    return "ok", (f"{len(rows)} radial cells, the three terms bracket the "
+                  f"reference at each")
+
+
+def check_cancellation(name, wout, args, band, main, python):
+    """The residual against the terms it is the difference of."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    got, why = cancellation_ratios(wout, args, main, python)
+    if got is None:
+        return "fail", why
+    lo, hi = band
+    bad = [x for x in got if not (lo <= x <= hi)]
+    if bad:
+        return "fail", f"a factor of {bad[0]:.3g} outside [{lo:g}, {hi:g}]"
+    return "ok", f"{min(got):.3g} to {max(got):.3g}"
+
+
+def check_modesets(name, coarse, fine, args, factor, main, python):
+    """Adding modes has to raise the cancellation by the recorded factor."""
+    for w in (coarse, fine):
+        if not w.exists():
+            return "skip", f"{w.name} absent"
+    lo, why = cancellation_ratios(coarse, args, main, python)
+    if lo is None:
+        return "fail", why
+    hi, why = cancellation_ratios(fine, args, main, python)
+    if hi is None:
+        return "fail", why
+    gain = max(hi) / max(lo)
+    if gain < factor:
+        return "fail", (f"the largest factor rose from {max(lo):.3g} to "
+                        f"{max(hi):.3g}, under the recorded {factor:g}")
+    return "ok", f"the largest factor rises from {max(lo):.3g} to {max(hi):.3g}"
+
+
+def swap_coefficients(lines):
+    """Two entries of one coefficient row exchanged, which is what a
+    transposed array would do to a whole block."""
+    idx = next((i for i, l in enumerate(lines) if l.strip() == "RNODES"), None)
+    if idx is None:
+        return None, "no RNODES block in the certificate"
+    row = lines[idx + 1].split()
+    if len(row) < 4:
+        return None, "the coefficient row is too short to permute"
+    row[0], row[1], row[2], row[3] = row[2], row[3], row[0], row[1]
+    lines[idx + 1] = " ".join(row)
+    return lines, None
+
+
+def rescale_pressure_piece(lines):
+    """A node's pressure cubic halved, which is what a calibration read from
+    the wrong quantity would do to every piece of a covering."""
+    idx = next((i for i, l in enumerate(lines) if l.startswith("AMLOCAL")),
+               None)
+    if idx is None:
+        return None, "no AMLOCAL block in the certificate"
+    for k in range(1, 5):
+        f = lines[idx + k].split()
+        lines[idx + k] = f"{f[0]} {int(f[1]) - 1}"
+    return lines, None
+
+
+def unscale_amplitude(lines):
+    """The profile's amplitude halved, which is a certificate about a
+    pressure the equilibrium does not balance, with every other coefficient
+    the file's own."""
+    idx = next((i for i, l in enumerate(lines) if l.startswith("AM ")), None)
+    if idx is None:
+        return None, "no AM block in the certificate"
+    f = lines[idx + 1].split()
+    lines[idx + 1] = f"{f[0]} {int(f[1]) - 1}"
+    return lines, None
+
+
+def relabel_output(lines):
+    """A volume covering called a surface one. Every number stays where it is
+    and the statement the file makes changes, which is the one error a verdict
+    reports nothing about."""
+    idx = next((i for i, l in enumerate(lines) if l == "OUTPUT radial"), None)
+    if idx is None:
+        return None, "no radial OUTPUT line in the certificate"
+    lines[idx] = "OUTPUT residual"
+    return lines, None
+
+
+# Each entry damages a certificate the guard accepts, in a way a generator
+# could plausibly produce, and requires the guard to catch it and to name the
+# right reason.
+MUTATE = [
+    ("correspond/swapped_row", "wout_solovev.nc",
+     "--cells --node 22 --nu 64", swap_coefficients, "RNODES row"),
+    ("correspond/swapped_radial", "wout_solovev.nc",
+     "--radial --node 22 --nu 32 --nrad 4", swap_coefficients, "RNODES row"),
+    ("correspond/rescaled_piece", "wout_solovev_cubic_spline.nc",
+     "--radial --nodes 6 --nu 16 --nrad 4", rescale_pressure_piece,
+     "local pressure cubic"),
+    ("correspond/relabelled", "wout_solovev.nc",
+     "--radial --node 22 --nu 32 --nrad 4", relabel_output,
+     "evaluated radius"),
+    ("correspond/unscaled_pressure", "wout_cth_like_fixed_bdy.nc",
+     "--node 12 --nu 8 --nv 4", unscale_amplitude, "certificate's pressure"),
+]
+
+
+def check_mutation(name, wout, gen_args, mutate, reason, python, tmp):
+    """A certificate the guard accepts, damaged, has to be rejected.
+
+    gen/verify_cert.py is the only thing tying a slot to a wout field, so it
+    has to be exercised against the failures it exists for rather than only
+    against files that match.
+    """
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    lines, why = mutate(src.read_text().splitlines())
+    if lines is None:
+        return "fail", why
+    bad = tmp / (name.replace("/", "_") + "_damaged.txt")
+    bad.write_text("\n".join(lines) + "\n")
+    ver = ROOT / "gen" / "verify_cert.py"
+    rc, out = run(f'"{python}" "{ver}" "{wout}" "{bad}"')
+    if rc == 0:
+        return "fail", "the damaged certificate passed"
+    if reason not in out:
+        return "fail", f"rejected, but not for the {reason}"
+    rc2, _ = run(f'"{python}" "{ver}" "{wout}" "{src}"')
+    if rc2 != 0:
+        return "fail", "the undamaged certificate was rejected"
+    return "ok", f"caught at the {reason}, the original passes"
+
+
+def check_stub_surface(main):
+    """The classical reals are stubbed where Extract.v says and nowhere else.
+
+    theories/Extract.v extracts the axiom behind Rocq's classical reals and
+    the reals 0 and 1 built from it as values that fail when consulted, so
+    nothing of them runs when the checker starts. The built extraction is
+    checked to carry exactly those three stubs, and otherwise only the
+    branches extraction marks as absurd inside the classical-real layer.
+    """
+    extract = pathlib.Path(main).resolve().parent.parent.parent
+    if not (extract / "Rdefinitions.ml").exists():
+        return "skip", "no extraction beside the checker"
+    expected = {("ClassicalDedekindReals.ml", "sig_forall_dec"),
+                ("Rdefinitions.ml", "coq_R0"), ("Rdefinitions.ml", "coq_R1")}
+    # the modules of the classical-real layer, which the checker never enters
+    spec_only = {"ClassicalDedekindReals.ml", "Rdefinitions.ml",
+                 "ConstructiveCauchyReals.ml", "ConstructiveRcomplete.ml",
+                 "ConstructiveEpsilon.ml"}
+    stub = re.compile(r"\s*let (\w+) = (\(Obj\.magic )?\(fun _ -> assert false\)\)?\s*$")
+    stubs, absurd, stray = set(), [], []
+    for f in sorted(extract.glob("*.ml")):
+        for i, line in enumerate(f.read_text(errors="replace").splitlines()):
+            if "assert false" not in line:
+                continue
+            m = stub.match(line)
+            if m:
+                stubs.add((f.name, m.group(1)))
+            elif f.name in spec_only and "absurd case" in line:
+                # extraction writes one of these for a branch it has proven
+                # cannot be taken
+                absurd.append(f"{f.name}:{i + 1}")
+            else:
+                stray.append(f"{f.name}:{i + 1}")
+    if stray:
+        return "fail", f"an unexplained assert false at {stray[0]}"
+    if stubs != expected:
+        extra = sorted(stubs - expected)
+        missing = sorted(expected - stubs)
+        return "fail", f"stubs {extra} beyond Extract.v, {missing} absent"
+    return "ok", (f"{len(stubs)} stubs and {len(absurd)} absurd branches, all "
+                  f"inside the classical-real layer")
+
+
+def check_certfile_widths(tmp):
+    """The bound-line reader takes its width from the header.
+
+    A bound line is eight integers ordinarily, ten when the file carries a
+    third varied slot, and ten again under a Taylor bound, with the two wide
+    forms putting the cell bound in different places. A reader that assumes
+    eight fields reads the wrong pair out of either, which is a wrong number
+    rather than a failure, so both wide forms are built here from the
+    committed certificate and read back.
+    """
+    src = HERE / "data" / "cert_solovev_cells.txt"
+    if not src.exists():
+        return "skip", "cert_solovev_cells.txt absent"
+    sys.path.insert(0, str(ROOT / "gen"))
+    try:
+        from certfile import Cert
+    except ImportError as e:
+        return "fail", f"certfile does not import: {e}"
+
+    def widen(marker, insert_at, pad):
+        """The committed certificate with a marker and wider bound lines."""
+        out, left = [], 0
+        for line in src.read_text().splitlines():
+            if line.startswith("SLOTS"):
+                out += [line, marker]
+                continue
+            if line.startswith("CELLS"):
+                left = 3 * int(line.split()[1])
+                out.append(line)
+                continue
+            if left:
+                f = line.split()
+                out.append(" ".join(f[:insert_at] + pad + f[insert_at:]))
+                left -= 1
+                continue
+            out.append(line)
+        return "\n".join(out) + "\n"
+
+    plain = Cert.read(src)
+    if plain.bound_width != 8 or plain.cell_index != 6:
+        return "fail", (f"an ordinary file read as width {plain.bound_width}, "
+                        f"cell bound at {plain.cell_index}")
+    want = plain.cell_bound(plain.nodes[0].cells[0].s)
+
+    # a third slot appends its own pair, so the cell bound stays at six
+    p3 = tmp / "certfile_slot3.txt"
+    p3.write_text(widen("SLOT3 2 3537118876014220", 8, ["1", "-900"]))
+    c3 = Cert.read(p3)
+    if c3.bound_width != 10 or c3.cell_index != 6:
+        return "fail", (f"a SLOT3 file read as width {c3.bound_width}, "
+                        f"cell bound at {c3.cell_index}")
+    if c3.cell_bound(c3.nodes[0].cells[0].s) != want:
+        return "fail", "a SLOT3 file gave a different cell bound"
+
+    # a Taylor line carries two more pairs before it, so it moves to eight
+    pt = tmp / "certfile_taylor.txt"
+    pt.write_text(widen("TAYLOR", 4, ["1", "-900"]))
+    ct = Cert.read(pt)
+    if ct.bound_width != 10 or ct.cell_index != 8:
+        return "fail", (f"a TAYLOR file read as width {ct.bound_width}, "
+                        f"cell bound at {ct.cell_index}")
+    got = ct.cell_bound(ct.nodes[0].cells[0].s)
+    if got != want:
+        return "fail", f"a TAYLOR file gave {got:.6e}, not {want:.6e}"
+    return "ok", "the cell bound is read from the width the header names"
+
+
+def check_spline_agreement():
+    """The two writings of each piecewise pressure against each other.
+
+    VMEC's cubic spline, its Akima spline and its piecewise linear profile are
+    each implemented twice: gen/make_cert.py resolves the piece a node falls
+    in and writes its cubic into the certificate, and proto/pressure_ref.py
+    writes the same family from its definition for the reference and the
+    correspondence guard. The two share no code and had nothing comparing
+    them, so a drift would put a cubic in the certificate that the guard would
+    then approve against its own matching mistake.
+
+    The knots here are synthetic, so this runs with no wout files.
+    """
+    try:
+        import numpy as np
+    except ImportError as e:
+        return "skip", f"numpy absent: {e}"
+    sys.path.insert(0, str(ROOT / "gen"))
+    sys.path.insert(0, str(ROOT / "proto"))
+    import importlib.util
+
+    def load(nm, path):
+        spec = importlib.util.spec_from_file_location(nm, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    try:
+        mc = load("_mc", ROOT / "gen" / "make_cert.py")
+        pr = load("_pr", ROOT / "proto" / "pressure_ref.py")
+    except Exception as e:  # noqa: BLE001
+        return "fail", f"could not load the two implementations: {e}"
+
+    xx = np.array([0.0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1.0])
+    yy = np.array([1.0, 0.94, 0.80, 0.63, 0.45, 0.28, 0.13, 0.0])
+    pts = [0.03, 0.1, 0.17, 0.25, 0.33, 0.5, 0.62, 0.7, 0.78, 0.9, 0.99]
+    tol = 1e-12
+
+    def gap(a, b):
+        return abs(a - b) / max(abs(b), 1e-30)
+
+    worst = 0.0
+    y2 = mc.spline_second_derivatives(xx, yy)
+    M = pr.clamped_spline_second_derivatives(xx, yy)
+    for s in pts:
+        v, d = pr.cubic_spline(xx, yy, M, s)
+        worst = max(worst, gap(mc.spline_eval(xx, yy, y2, s), v))
+        knot, a0, a1, a2, a3 = mc.spline_piece(xx, yy, y2, s)
+        t = s - knot
+        worst = max(worst, gap(a0 + t * (a1 + t * (a2 + t * a3)), v))
+        worst = max(worst, gap(a1 + t * (2 * a2 + 3 * a3 * t), d))
+    if worst > tol:
+        return "fail", f"the two cubic splines differ by {worst:.3e}"
+
+    aworst = 0.0
+    for s in pts:
+        v, d = pr.akima(xx, yy, s)
+        aworst = max(aworst, gap(mc.akima_eval(xx, yy, s), v))
+        knot, a, b, c, dd = mc.akima_piece(xx, yy, s)
+        t = s - knot
+        aworst = max(aworst, gap(a + t * (b + t * (c + dd * t)), v))
+        aworst = max(aworst, gap(b + t * (2 * c + 3 * dd * t), d))
+    if aworst > tol:
+        return "fail", f"the two Akima splines differ by {aworst:.3e}"
+
+    lworst = 0.0
+    for s in pts:
+        v, d = pr.line_segment(xx, yy, s)
+        knot, val, slope = mc.line_segment_piece(xx, yy, s)
+        lworst = max(lworst, gap(val + (s - knot) * slope, v))
+        lworst = max(lworst, abs(slope - d))
+    if lworst > tol:
+        return "fail", f"the two line segments differ by {lworst:.3e}"
+
+    return "ok", (f"cubic {worst:.1e}, akima {aworst:.1e}, "
+                  f"segment {lworst:.1e} apart")
+
+
+def check_reference(name, wout, node, gen_args, radius, main, python, tmp):
+    """The certified enclosure at a cell centre against the float reference."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    # the reference is read at the centre of the first cell, whose angle the
+    # file carries, so the two are compared at one point whatever the covering
+    lines = src.read_text().splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith("NANGLES"))
+    f = lines[i + 1].split()
+    u = int(f[0]) * 2.0 ** int(f[1])
+    ref = ROOT / "proto" / "continuum_ref.py"
+    rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --nu 1 '
+                  f'--at {radius!r} --u {u!r}')
+    if rc != 0:
+        return "fail", "reference: " + out.strip().splitlines()[-1]
+    m = re.search(r"worst \|r\| over 1 angles: ([0-9.e+-]+)", out)
+    if not m:
+        return "fail", "the reference printed no value"
+    want = float(m.group(1))
+    env = dict(os.environ, STELLAROCQ_JOBS="1", STELLAROCQ_DEBUG="1")
+    p = subprocess.run(f'"{main}" "{src}"', shell=True, env=env,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True)
+    m = re.search(r"component r_s: needed centre=([0-9.e+-]+)", p.stdout)
+    if not m:
+        return "fail", "the checker printed no centre enclosure"
+    got = float(m.group(1))
+    # the enclosure of |r_s| has to contain the reference and sit close to it
+    if got < abs(want) * (1 - 1e-9):
+        return "fail", (f"enclosure {got:.9e} below the reference "
+                        f"{abs(want):.9e}")
+    if got > abs(want) * 1.001:
+        return "fail", (f"enclosure {got:.9e} far above the reference "
+                        f"{abs(want):.9e}")
+    return "ok", (f"enclosure {got:.6e} against reference {abs(want):.6e}, "
+                  f"{(got / abs(want) - 1) * 1e6:.1f} ppm wider")
+
+
+def check_qs_reference(name, wout, node, nu, nv, main, python, tmp):
+    """The certified quasisymmetry residual at the centre of the first cell
+    against the float reference of the same triple product, read at exactly
+    the angle the certificate carries."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    src = tmp / (name.replace("/", "_") + ".txt")
+    surface = f" --nv {nv} --surface" if nv else ""
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{src}" --cells --node {node} '
+                  f'--nu {nu}{surface} --quasisym')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    # the centre of the first cell, from the file, so the reference is read
+    # at the angle the checker uses and not at one rounded from it
+    lines = src.read_text().splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith("NANGLES"))
+    f = lines[i + 1].split()
+    u = int(f[0]) * 2.0 ** int(f[1])
+    v = int(f[2]) * 2.0 ** int(f[3])
+    ref = ROOT / "proto" / "continuum_ref.py"
+    rc, out = run(f'"{python}" "{ref}" "{wout}" --node {node} --quasisym '
+                  f'--u {u!r} --v {v!r}')
+    if rc != 0:
+        return "fail", "reference: " + out.strip().splitlines()[-1]
+    m = re.search(r"triple product ([0-9.e+-]+)", out)
+    if not m:
+        return "fail", "the reference printed no triple product"
+    want = float(m.group(1))
+    env = dict(os.environ, STELLAROCQ_JOBS="1", STELLAROCQ_DEBUG="1")
+    p = subprocess.run(f'"{main}" "{src}"', shell=True, env=env,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True)
+    m = re.search(r"component r_s: needed centre=([0-9.e+-]+)", p.stdout)
+    if not m:
+        return "fail", "the checker printed no centre enclosure"
+    got = float(m.group(1))
+    if want == 0.0:
+        # The axisymmetric case, where every toroidal derivative is an
+        # integer zero and the residual is exactly zero. A claim is carried
+        # as N * 2^q with the exponent floored, so what an exact zero comes
+        # back as is the smallest number the format holds rather than the
+        # literal 0.0.
+        if got > 1e-300:
+            return "fail", (f"enclosure {got:.3e} where the reference is "
+                            f"exactly zero")
+        return "ok", f"{got:.3e} at the centre, an exact zero in the format"
+    # The reference divides by the Jacobian at every stage where the
+    # certificate is polynomial in it, and the triple product is a deep
+    # cancellation, so the two agree to about a part in ten million rather
+    # than to rounding. The finite-difference check of the reference sits at
+    # the same order, which is what says the gap is the reference's.
+    tol = 1e-5
+    if got < want * (1 - tol):
+        return "fail", f"enclosure {got:.9e} below the reference {want:.9e}"
+    if got > want * (1 + tol):
+        return "fail", f"enclosure {got:.9e} far above the reference {want:.9e}"
+    return "ok", (f"enclosure {got:.6e} against reference {want:.6e}, "
+                  f"{(got / want - 1) * 1e6:.2f} ppm apart")
+
+
+def check_project(name, wout, main, python, tmp):
+    """The certified harmonics of a node against a float sum of the reference."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    cert = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{GEN}" "{wout}" "{cert}" --node 22 --nu 32')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" --project "{cert}"')
+    m = re.search(r"largest over the nodes:\s+r_s (\S+)\s+r_u (\S+)\s+r_v (\S+)",
+                  out)
+    if rc != 0 or not m:
+        return "fail", "no projection reported"
+    got = [float(x) for x in m.groups()]
+    # the same sums in floating point, from the generator's own reference
+    code = (
+        "import sys, numpy as np; sys.path.insert(0, sys.argv[1]);"
+        "import make_cert as mc; w = mc.Wout(sys.argv[2]);"
+        "mc.calibrate_pressure(w); phip = float(w.phips[1]);"
+        "us = 2 * np.pi * np.arange(32) / 32;"
+        "r = np.array([mc.residual_ref(w, 22, u, 0.0, phip)[:3] for u in us]);"
+        "ms = np.array(sorted({int(m) for m in w.xm}));"
+        "c = np.cos(np.outer(ms, us)); s = np.sin(np.outer(ms, us));"
+        "print(*[max(np.abs(c @ r[:, k]).max(), np.abs(s @ r[:, k]).max()) / 32"
+        " for k in range(3)])"
+    )
+    rc, ref = run(f'"{python}" -c "{code}" "{GEN.parent}" "{wout}"')
+    if rc != 0:
+        return "fail", "reference: " + ref.strip().splitlines()[-1]
+    want = [float(x) for x in ref.split()]
+    for g, w_ in zip(got, want):
+        if not w_ * (1 - 1e-6) <= g <= w_ * 1.01:
+            return "fail", f"certified {g:.6e} against a float sum of {w_:.6e}"
+    # The spectrum over the band the grid resolves: every harmonic up to half
+    # the poloidal count is listed, the largest of them is the one the summary
+    # names, and the solver's own (2,0) reads the same off either mode set.
+    rc, out = run(f'"{main}" --project --spectrum --band "{cert}"')
+    if rc != 0:
+        return "fail", "no spectrum reported"
+    lines = re.findall(r"^\s+\((\d+),(-?\d+)\) (cos|sin)  r_s \[(\S+), (\S+)\]",
+                       out, re.M)
+    if not lines:
+        return "fail", "the spectrum printed no harmonic"
+    ms = {int(m) for m, _, _, _, _ in lines}
+    if max(ms) != 16 or {int(n) for _, n, _, _, _ in lines} != {0}:
+        return "fail", f"the band ran to m = {max(ms)} and n other than zero"
+    big = max(max(abs(float(lo)), abs(float(hi))) for _, _, _, lo, hi in lines)
+    m2 = re.search(r"largest over the nodes:\s+r_s (\S+)", out)
+    if abs(float(m2.group(1)) - big) > 1e-6 * big:
+        return "fail", (f"the largest harmonic {float(m2.group(1)):.6e} is not "
+                        f"the largest of the spectrum {big:.6e}")
+    rc, narrow = run(f'"{main}" --project --spectrum "{cert}"')
+    pick = lambda txt: re.search(r"^\s+\(2,0\) cos  r_s \[(\S+), (\S+)\]",  # noqa: E731
+                                 txt, re.M).groups()
+    if pick(out) != pick(narrow):
+        return "fail", "the (2,0) harmonic differs between the two mode sets"
+    return "ok", (f"r_s {got[0]:.3e}, r_u {got[1]:.3e}, r_v {got[2]:.3e}, "
+                  f"each within one per cent above the float sum; the band "
+                  f"spectrum lists {len(lines)} harmonics")
+
+
+# The two-term quasisymmetry ratio read off certified harmonics: the span of
+# the ratios of matching harmonics of the defect and the product, which one
+# constant would make zero. The axisymmetric case spans what its residual
+# leaves, and the QH case spans order one.
+QUASISYM = [
+    ("quasisym/qh_node24", "wout_nfp4_QH_ns50.nc", 24, 32, 16, 1.686e+00),
+    ("quasisym/solovev_node24", "wout_solovev.nc", 24, 32, 16, 2.046e-04),
+]
+
+
+def check_quasisym(name, wout, node, nu, nv, span, main, python):
+    """The span of the certified harmonic ratios against the recorded one."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "quasisym.py"
+    rc, out = run(f'"{python}" "{tool}" "{wout}" --nodes {node} --nu {nu} '
+                  f'--nv {nv} --main "{main}"')
+    if rc != 0:
+        return "fail", "quasisym: " + out.strip().splitlines()[-1]
+    m = re.search(r"not one constant: (\d+) of (\d+) pairs.*span (\S+)", out)
+    if not m:
+        return "fail", "the ratio was not decided"
+    got = float(m.group(3))
+    if abs(got - span) > 1e-6 * span:
+        return "fail", f"the ratios span {got:.6e}, recorded {span:.6e}"
+    return "ok", f"{m.group(1)} of {m.group(2)} pairs disjoint, span {got:.3e}"
+
+
+# The interval Newton test of theories/Newton.v on the circle system: at the
+# zero it passes, with the centre moved past the radius the first step fails,
+# and with a contraction constant the rows do not meet it fails.
+NEWTON = [
+    ("newton/circle", "", "VALID"),
+    ("newton/circle_offset", "--offset 1e-6", "INVALID"),
+    ("newton/circle_constant", "--k -30", "INVALID"),
+]
+
+
+def check_newton(name, gen_args, expect, main, python, tmp):
+    """The Newton certificate the generator writes, against the verdict."""
+    tool = ROOT / "gen" / "newton_circle.py"
+    cert = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{tool}" "{cert}" {gen_args}')
+    if rc != 0:
+        return "fail", "generator: " + out.strip().splitlines()[-1]
+    rc, out = run(f'"{main}" --newton "{cert}"')
+    m = re.search(r"verdict: (\w+)", out)
+    got = m.group(1) if m else "NONE"
+    if got != expect:
+        return "fail", f"verdict {got}, expected {expect}"
+    return "ok", got
+
+
+# The collocated residual of a band of surfaces as an interval Newton system:
+# a zero of it exists in a box shaped to the coefficients, none of whose radii
+# exceeds the recorded one, and is the only one in the box, which is
+# Colloc.colloc_correct.
+COLLOC = [
+    ("newton/colloc_solovev_2", "wout_solovev.nc", "22:23", "", 2.9e-09),
+]
+
+
+def check_colloc(name, wout, rows, extra, radius, main, python, tmp):
+    """A discrete equilibrium near the wout, established by the checker."""
+    if not wout.exists():
+        return "skip", f"{wout.name} absent"
+    tool = ROOT / "gen" / "newton_colloc.py"
+    cert = tmp / (name.replace("/", "_") + ".txt")
+    rc, out = run(f'"{python}" "{tool}" "{wout}" "{cert}" --rows {rows} {extra} '
+                  f'--main "{main}"')
+    m = re.search(r"check: VALID with K (\S+), r (\d+) \((\S+) to (\S+) in", out)
+    if rc != 0 or not m:
+        return "fail", "colloc: " + out.strip().splitlines()[-1]
+    got = float(m.group(4))
+    if got > radius:
+        return "fail", f"the box radius {got:.3e} exceeds the recorded {radius:.1e}"
+    rc, out = run(f'"{main}" --newton "{cert}"')
+    if "verdict: VALID" not in out:
+        return "fail", "the written certificate was not established again"
+    return "ok", f"K {float(m.group(1)):.3f}, radius {got:.2e}"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default=None,
+                    help="directory holding the wout files; without it only "
+                    "the committed certificates are checked")
+    ap.add_argument("--main", default=str(ROOT / "extract" / "_build" / "default" / "main.exe"))
+    ap.add_argument("--python", default=sys.executable)
+    ap.add_argument("--tmp", default=None)
+    ap.add_argument("--slow", action="store_true", help="include the long cases")
+    ap.add_argument("--only", default=None, help="substring filter on case names")
+    ap.add_argument("--jobs", type=int, default=None,
+                    help="cases run at once; the checker's own workers are "
+                    "divided among them through STELLAROCQ_JOBS")
+    a = ap.parse_args()
+
+    data = pathlib.Path(a.data) if a.data else HERE / "_absent"
+    tmp = pathlib.Path(a.tmp) if a.tmp else HERE / "_work"
+    tmp.mkdir(parents=True, exist_ok=True)
+    if not pathlib.Path(a.main).exists():
+        print(f"checker not found at {a.main}; run make first")
+        return 2
+    cpus = os.cpu_count() or 1
+    jobs = a.jobs or max(1, min(8, cpus // 2))
+
+    # Every case is a name and a thunk; they share nothing but the checker
+    # binary and the data directory, and each writes its own files under tmp,
+    # so they run in a pool and are reported as they finish.
+    work = []
+
+    def add(name, fn, case=None):
+        if a.only and a.only not in name:
+            return
+        work.append((name, fn, case))
+
+    for c in [c for c in ALL if a.slow or not c.slow]:
+        add(c.name, lambda c=c: check_case(c, data, a.main, a.python, tmp), c)
+
+    def standalone(name, cert, run_args, expect):
+        src = HERE / "data" / cert
+        if not src.exists():
+            return "skip", f"{cert} absent"
+        # the checker writes its working files beside the certificate, so a
+        # case takes its own copy
+        own = tmp / (name.replace("/", "_") + ".txt")
+        own.write_text(src.read_text())
+        rc, out = run(f'"{a.main}" {" ".join(run_args)} "{own}"')
+        m = re.search(r"verdict: (\w+)", out)
+        got = m.group(1) if m else "NONE"
+        if got != expect:
+            return "fail", f"verdict {got}, expected {expect}"
+        return "ok", got
+
+    for name, cert, run_args, expect in STANDALONE:
+        add(name, lambda name=name, cert=cert, run_args=run_args, expect=expect:
+            standalone(name, cert, run_args, expect))
+    for name, wout, node, nu, expect, bracket in MERCIER:
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, expect=expect,
+            bracket=bracket:
+            check_mercier(name, data / wout, node, nu, expect, bracket, a.main,
+                          a.python))
+    for name, made_from, checked_against, gen_args, agree in CORRESPOND:
+        add(name, lambda name=name, made_from=made_from, checked_against=checked_against,
+            gen_args=gen_args, agree=agree:
+            check_correspondence(name, data / made_from, data / checked_against,
+                                 gen_args, agree, a.python, tmp))
+    for name, wout, tol in FIELD:
+        add(name, lambda name=name, wout=wout, tol=tol:
+            check_field(name, data / wout, tol, a.python))
+    for name, wout, gen_args, tg, run_args, expect in REFUSALS:
+        add(name, lambda name=name, wout=wout, gen_args=gen_args, tg=tg,
+            run_args=run_args, expect=expect:
+            check_refusal(name, data / wout, gen_args, tg, run_args, expect,
+                          a.main, a.python, tmp))
+    for name, wout, nodes, nu, least in PROFILE:
+        add(name, lambda name=name, wout=wout, nodes=nodes, nu=nu, least=least:
+            check_profile(name, data / wout, nodes, nu, least, a.main, a.python))
+    for name, wout, node, nu, dmax, b00 in BOOZER:
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, dmax=dmax, b00=b00:
+            check_boozer(name, data / wout, node, nu, dmax, b00, a.main, a.python))
+    for name, wouts, args, column, bounds in CONVERGENCE:
+        add(name, lambda name=name, wouts=wouts, args=args, column=column, bounds=bounds:
+            check_convergence(name, wouts, args, column, bounds, data, a.main,
+                              a.python))
+    add("reference/terms_node22",
+        lambda: check_terms_reference("reference/terms_node22",
+                                      data / "wout_solovev.nc", 22, 64, a.main,
+                                      a.python))
+    add("reference/terms_radial",
+        lambda: check_terms_reference_radial("reference/terms_radial",
+                                             data / "wout_solovev.nc", 22, 32, 4,
+                                             a.main, a.python))
+    for name, wout, args, band in CANCEL:
+        add(name, lambda name=name, wout=wout, args=args, band=band:
+            check_cancellation(name, data / wout, args, band, a.main, a.python))
+    for name, coarse, fine, args, factor in MODESETS:
+        add(name, lambda name=name, coarse=coarse, fine=fine, args=args, factor=factor:
+            check_modesets(name, data / coarse, data / fine, args, factor,
+                           a.main, a.python))
+    for name, wout, gen_args, cells in COEFBOX:
+        add(name, lambda name=name, wout=wout, gen_args=gen_args, cells=cells:
+            check_coefbox(name, data / wout, gen_args, cells, a.main, a.python,
+                          tmp))
+    for name, perturb in PERTURB:
+        add(name, lambda name=name, perturb=perturb:
+            check_perturbed(name, data / "wout_solovev.nc", perturb, a.main,
+                            a.python, tmp))
+    # every pressure parameterization, since the pressure gradient is the one
+    # term of the residual that differs between them and the one the wout
+    # constrains only through its stored pressure
+    for name, wout, node in (
+            [("reference/halfgrid_node22", "wout_solovev.nc", 22)]
+            + [(f"reference/halfgrid_{n}", w, 22) for n, w, _ in FAMILIES
+               if n != "power_series"]):
+        add(name, lambda name=name, wout=wout, node=node:
+            check_halfgrid(name, data / wout, node, a.main, a.python, tmp))
+    add("project/solovev_node22",
+        lambda: check_project("project/solovev_node22",
+                              data / "wout_solovev.nc", a.main, a.python, tmp))
+    for name, gen_args, expect in NEWTON:
+        add(name, lambda name=name, gen_args=gen_args, expect=expect:
+            check_newton(name, gen_args, expect, a.main, a.python, tmp))
+    for name, wout, rows, extra, radius in COLLOC:
+        add(name, lambda name=name, wout=wout, rows=rows, extra=extra, radius=radius:
+            check_colloc(name, data / wout, rows, extra, radius, a.main,
+                         a.python, tmp))
+    for name, wout, node, nu, nv, span in QUASISYM:
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, nv=nv, span=span:
+            check_quasisym(name, data / wout, node, nu, nv, span, a.main,
+                           a.python))
+    for name, wout, gen_args, mutate, reason in MUTATE:
+        add(name, lambda name=name, wout=wout, gen_args=gen_args, mutate=mutate,
+            reason=reason:
+            check_mutation(name, data / wout, gen_args, mutate, reason,
+                           a.python, tmp))
+    add("reference/spline_pair", check_spline_agreement)
+    add("reader/bound_widths", lambda: check_certfile_widths(tmp))
+    add("audit/stub_surface", lambda: check_stub_surface(a.main))
+    for name, wout, node, gen_args, radius in REFERENCE:
+        add(name, lambda name=name, wout=wout, node=node, gen_args=gen_args,
+            radius=radius:
+            check_reference(name, data / wout, node, gen_args, radius, a.main,
+                            a.python, tmp))
+    for name, wout, node, nu, nv in QSREF:
+        add(name, lambda name=name, wout=wout, node=node, nu=nu, nv=nv:
+            check_qs_reference(name, data / wout, node, nu, nv, a.main,
+                               a.python, tmp))
+
+    width = max([len(name) for name, _, _ in work] + [1])
+    counts = {"ok": 0, "fail": 0, "skip": 0}
+    failures = []
+    t0 = time.time()
+
+    # The long cases are coverings of thousands of cells, whose time is the
+    # checker's and falls with its workers, so they start first and take a
+    # larger share of the processors; the rest are a generator and a short
+    # run, and take two. HEAVY names them, longest first.
+    heavy_at_once = max(1, min(4, jobs // 2))
+    heavy_jobs = max(2, cpus // heavy_at_once)
+    light_jobs = max(1, min(2, cpus // jobs))
+    order = {n: i for i, n in enumerate(HEAVY)}
+    work.sort(key=lambda w: order.get(w[0], len(HEAVY)))
+    gate = threading.Semaphore(heavy_at_once)
+
+    def one(item):
+        name, fn, case = item
+        heavy = name in order
+        if heavy:
+            gate.acquire()
+        _local.jobs = heavy_jobs if heavy else light_jobs
+        t = time.time()
+        try:
+            status, detail = fn()
+        except Exception as e:  # noqa: BLE001
+            status, detail = "fail", f"{type(e).__name__}: {e}"
+        finally:
+            if heavy:
+                gate.release()
+        return name, case, status, detail, time.time() - t
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    print(f"{len(work)} cases, {jobs} at a time; {heavy_at_once} long ones "
+          f"with {heavy_jobs} checker workers each, the rest with {light_jobs}",
+          flush=True)
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(one, item) for item in work]
+        for fut in as_completed(futures):
+            name, case, status, detail, dt = fut.result()
+            counts[status] += 1
+            mark = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}[status]
+            print(f"{mark} {name:<{width}}  {detail}  ({dt:.1f} s)", flush=True)
+            if status == "fail":
+                failures.append((name, case, detail))
+
+    print(f"\n{counts['ok']} passed, {counts['fail']} failed, "
+          f"{counts['skip']} skipped in {time.time() - t0:.1f} s")
+    for name, case, detail in failures:
+        if case is not None and case.published:
+            print(f"  {name} carries a figure published under "
+                  f"\"{case.published}\" in README.md")
+    return 1 if counts["fail"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

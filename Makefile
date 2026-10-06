@@ -1,0 +1,104 @@
+# Stellarocq: proofs -> extraction -> checker binary.
+#
+# Needs the opam switch described in README.md active, and COQRUN_STUBS
+# pointing at rocq-runtime's C stubs archive if it is not at the default
+# opam location.
+
+OPAM_SWITCH ?= stellarocq
+OPAM_LIB    := $(shell opam var lib --switch=$(OPAM_SWITCH) 2>/dev/null)
+KERNEL      := $(OPAM_LIB)/rocq-runtime/kernel
+export COQRUN_STUBS ?= $(OPAM_LIB)/rocq-runtime/vm/libcoqrun_stubs.a
+
+# What the trust base names. A switch that differs is not the one the audit
+# was run against, so the checker refuses to claim its numbers.
+EXPECT := rocq-core:9.1.1 coq-stdlib:9.2.0 coq-interval:4.11.4 \
+          coq-flocq:4.2.2 coq-coquelicot:3.4.5 \
+          coq-mathcomp-ssreflect:2.4.0 ocaml:4.14.2
+
+.PHONY: all proofs extract checker static kam esc c3 audit versions clean
+
+versions:
+	@opam list --switch=$(OPAM_SWITCH) --installed --short --columns=name,version > .versions.tmp 2>/dev/null; \
+	ok=1; \
+	for pv in $(EXPECT); do \
+	  p=$${pv%%:*}; want=$${pv##*:}; \
+	  got=$$(awk -v p="$$p" '$$1==p {print $$2; exit}' .versions.tmp); \
+	  if [ "$$got" = "$$want" ]; then \
+	    printf '  ok   %-24s %s\n' "$$p" "$$got"; \
+	  else \
+	    printf '  DIFF %-24s installed %s, trust base names %s\n' "$$p" "$${got:-absent}" "$$want"; ok=0; \
+	  fi; \
+	done; \
+	rm -f .versions.tmp; \
+	[ $$ok = 1 ] || { echo "the switch differs from the one the audit was run against"; exit 1; }
+
+all: checker
+
+proofs: Makefile.coq
+	$(MAKE) -f Makefile.coq
+
+Makefile.coq: _CoqProject
+	coq_makefile -f _CoqProject -o Makefile.coq
+
+extract: proofs
+	mkdir -p extract
+	cd extract && rm -f *.ml *.mli && \
+	rocq compile -R ../theories Stellarocq ../theories/Extract.v
+	cp $(KERNEL)/uint63.ml $(KERNEL)/float64.ml \
+	   $(KERNEL)/float64_common.ml extract/
+	cp driver/main.ml driver/dune driver/dune-project extract/
+
+checker: extract
+	cd extract && dune build ./main.exe
+	@echo "checker: extract/_build/default/main.exe"
+
+# The same checker linked statically, for distribution on Linux.
+static: extract
+	cd extract && dune build --profile static ./main.exe
+	@echo "checker: extract/_build/default/main.exe, statically linked"
+
+# The checker of the KAM certificate KFinal.cert_ok: its six parts, extracted
+# over 192-bit fixed-point intervals with Zarith, and the driver kam/main.ml.
+kam: proofs
+	mkdir -p kam/_ext
+	cd kam/_ext && rm -f *.ml *.mli && rocq compile -R ../../theories Stellarocq ../KCertExt.v
+	python3 kam/stub_reals.py kam/_ext
+	cp kam/main.ml kam/par.ml kam/dune kam/_ext/
+	cd kam/_ext && printf '(lang dune 3.0)\n' > dune-project && dune build ./main.exe
+	@echo "KAM checker: kam/_ext/_build/default/main.exe"
+
+# The escape checker KLohner.check_lescape over binary64 intervals, extracted
+# with the kernel's float and integer modules, and the driver esc/main.ml.
+# Extraction writes KLohner.mli with CoqInterval's lazy type __hidden_constant
+# equated to hidden_constant, which OCaml rejects, so that interface is
+# inferred instead.
+esc: proofs
+	mkdir -p esc/_ext
+	cd esc/_ext && rm -f *.ml *.mli && rocq compile -R ../../theories Stellarocq ../EscExt.v
+	rm -f esc/_ext/KLohner.mli
+	cp $(KERNEL)/uint63.ml $(KERNEL)/float64.ml $(KERNEL)/float64_common.ml esc/_ext/
+	python3 kam/stub_reals.py esc/_ext
+	cp esc/main.ml kam/par.ml esc/dune esc/_ext/
+	cd esc/_ext && printf '(lang dune 3.0)\n' > dune-project && dune build ./main.exe
+	@echo "escape checker: esc/_ext/_build/default/main.exe"
+
+# The stability checker of the three-dimensional manufactured problem: the
+# cell functions of CellTM and the assembly Final3d.assemble3d, extracted with
+# the kernel's float and integer modules, and the driver colloc3d/main.ml,
+# linked statically. gen/stab3d_inverse.py gives the commands of its result.
+c3: proofs
+	mkdir -p colloc3d/_ext
+	cd colloc3d/_ext && rm -f *.ml *.mli && rocq compile -R ../../theories Stellarocq ../C3Ext.v
+	cp $(KERNEL)/uint63.ml $(KERNEL)/float64.ml $(KERNEL)/float64_common.ml colloc3d/_ext/
+	python3 kam/stub_reals.py colloc3d/_ext
+	cp colloc3d/main.ml colloc3d/dune colloc3d/_ext/
+	cd colloc3d/_ext && printf '(lang dune 3.0)\n' > dune-project && dune build ./main.exe
+	@echo "stability checker: colloc3d/_ext/_build/default/main.exe"
+
+audit: proofs
+	rocq compile -R theories Stellarocq theories/Audit.v
+
+clean:
+	$(MAKE) -f Makefile.coq clean 2>/dev/null || true
+	rm -f Makefile.coq Makefile.coq.conf
+	cd extract && rm -rf _build *.ml *.mli *.vo *.glob
